@@ -109,6 +109,8 @@ Pipeline::Pipeline(const Config& config, std::unique_ptr<RowRenderer> renderer, 
   try {
     nlohmann::json backend = {{"describe", s.renderer->Describe()}, {"self_check", s.renderer->SelfCheck()}};
     WriteJsonAtomic(s.root / "config" / "backend.json", backend);
+    const auto assets=s.renderer->EvaluationAssets();
+    if(!assets.is_null()) WriteJsonAtomic(s.root / "evaluation" / "optical_assets.json",assets);
   } catch (const std::exception& e) {
     WriteJsonAtomic(s.root / "session.json", {{"schema", "ssb.session.v1"}, {"status", "failed"},
                                               {"error", std::string("backend self-check: ") + e.what()}});
@@ -383,6 +385,7 @@ nlohmann::json Pipeline::Wait() {
       {"render_queue_limit_batches", s.config.max_queued_batches},
       {"batches", s.batches},
       {"batch_rows", s.config.batch_rows},
+      {"backend_final", s.renderer->Describe()},
       {"note", "wall_seconds starts after the backend self-check; the rates start at the first pose sample"}};
   WriteJsonAtomic(s.root / "logs" / "performance.json", {{"summary", performance}, {"progress", s.progress}});
   WriteJsonAtomic(s.root / "metadata" / "manifest.json", s.metadata_tables);
@@ -408,6 +411,8 @@ nlohmann::json Pipeline::Wait() {
                            "evaluation/truth.json", "evaluation/config_source.yaml", "evaluation/manifest.json",
                            "metadata/manifest.json", "raw/index.json"})
     files[name] = Sha256File(s.root / name);
+  if(std::filesystem::exists(s.root / "evaluation" / "optical_assets.json"))
+    files["evaluation/optical_assets.json"]=Sha256File(s.root / "evaluation" / "optical_assets.json");
   const nlohmann::json summary = {{"schema", "ssb.session.v1"},
                                   {"status", "complete"},
                                   {"files", files},

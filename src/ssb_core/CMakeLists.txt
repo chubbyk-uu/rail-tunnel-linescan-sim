@@ -14,7 +14,7 @@ find_package(OpenSSL REQUIRED)
 
 # Timing, geometry and storage: no GPU dependency, so it is testable anywhere.
 add_library(ssb_timing STATIC
-  src/crossing.cpp src/config.cpp src/sha256.cpp src/timing.cpp src/kinematic.cpp src/camera_model.cpp)
+  src/crossing.cpp src/config.cpp src/sha256.cpp src/timing.cpp src/kinematic.cpp src/camera_model.cpp src/stage_b_assets.cpp src/surface_recipe.cpp)
 set_target_properties(ssb_timing PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(ssb_timing PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
@@ -39,21 +39,25 @@ if(NOT CUDAToolkit_ROOT AND EXISTS "/usr/local/cuda")
   set(CUDAToolkit_ROOT "/usr/local/cuda")
 endif()
 find_package(CUDAToolkit REQUIRED)
+set(CMAKE_CUDA_ARCHITECTURES 75)
+set(CMAKE_CUDA_COMPILER "${CUDAToolkit_NVCC_EXECUTABLE}")
+enable_language(CUDA)
+set(CMAKE_CUDA_STANDARD 17)
 set(SSB_PTX "${CMAKE_CURRENT_BINARY_DIR}/ssb_scan.ptx")
 add_custom_command(OUTPUT "${SSB_PTX}"
   COMMAND ${CUDAToolkit_NVCC_EXECUTABLE} --ptx -O3 -std=c++17 -arch=compute_75
           -I${SSB_OPTIX_SDK}/include -I${CMAKE_CURRENT_SOURCE_DIR}/include
           ${CMAKE_CURRENT_SOURCE_DIR}/src/optix/scan.cu -o "${SSB_PTX}"
-  DEPENDS src/optix/scan.cu src/optix/launch_params.h include/ssb_core/texture.hpp
+  DEPENDS src/optix/scan.cu src/optix/launch_params.h include/ssb_core/texture.hpp include/ssb_core/surface_types.hpp include/ssb_core/crack_integral.hpp
   COMMENT "Compiling OptiX PTX")
 add_custom_target(ssb_ptx ALL DEPENDS "${SSB_PTX}")
 
-add_library(ssb_core SHARED src/optix/optix_renderer.cpp src/session.cpp src/pipeline.cpp)
+add_library(ssb_core SHARED src/optix/optix_renderer.cpp src/optix/surface_recipe.cu src/session.cpp src/pipeline.cpp)
 add_dependencies(ssb_core ssb_ptx ssb_build_stamp)
 target_include_directories(ssb_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>
   PRIVATE ${SSB_OPTIX_SDK}/include ${SSB_STAMP_DIR})
-target_compile_options(ssb_core PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(ssb_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic> $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
 target_compile_definitions(ssb_core PRIVATE
   SSB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   SSB_PTX_INSTALL_PATH="${CMAKE_INSTALL_PREFIX}/share/${PROJECT_NAME}/ptx/ssb_scan.ptx")
@@ -63,7 +67,11 @@ add_executable(ssb_render tools/ssb_render.cpp)
 target_link_libraries(ssb_render ssb_core)
 add_executable(ssb_selfcheck tools/ssb_selfcheck.cpp)
 target_link_libraries(ssb_selfcheck ssb_core)
-install(TARGETS ssb_render ssb_selfcheck DESTINATION lib/${PROJECT_NAME})
+add_executable(ssb_probe tools/ssb_probe.cpp)
+target_link_libraries(ssb_probe ssb_core)
+add_executable(ssb_recipe_probe tools/ssb_recipe_probe.cpp)
+target_link_libraries(ssb_recipe_probe ssb_core)
+install(TARGETS ssb_render ssb_selfcheck ssb_probe ssb_recipe_probe DESTINATION lib/${PROJECT_NAME})
 install(TARGETS ssb_core EXPORT export_ssb_core ARCHIVE DESTINATION lib LIBRARY DESTINATION lib)
 install(FILES "${SSB_PTX}" DESTINATION share/${PROJECT_NAME}/ptx)
 
@@ -81,7 +89,7 @@ if(BUILD_TESTING)
 
   # GPU tests run inside the OptiX runtime wrapper against the build-tree PTX.
   set(SSB_WRAPPER "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/with_optix_runtime.sh")
-  ament_add_gtest_executable(test_render test/test_render.cpp)
+  ament_add_gtest_executable(test_render test/test_render.cpp test/test_surface_render.cpp)
   target_link_libraries(test_render ssb_core)
   target_compile_definitions(test_render PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
   set(SSB_RENDER_XML "${AMENT_TEST_RESULTS_DIR}/${PROJECT_NAME}/test_render.gtest.xml")

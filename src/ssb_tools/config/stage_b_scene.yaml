@@ -1,0 +1,71 @@
+schema: ssb.scene_spec.v1
+seed: 20260929
+panels:
+  ring_width_m: 1.2
+  angles_deg: [10, 67, 72, 72, 72, 67]
+  alternating_stagger_deg: 18.0
+  angular_step_deg: 0.5       # chord sag <=0.027 mm at R=2.75 m
+  # Initial unfilled joint preview; filled/damaged variants remain to implement.
+  joint_width_m: 0.012
+  joint_depth_m: 0.035
+track:
+  gauge_m: 1.435
+  head_width_m: 0.073
+  rail_height_m: 0.176
+  foot_width_m: 0.150
+  web_width_m: 0.0165
+  bed_width_m: 2.3
+robot:
+  total_mass_kg: 120.0
+  wheelbase_m: 0.7
+  wheel_diameter_m: 0.2
+  head_cradle_length_m: 0.56 # updated machine photos; unmeasured envelope estimate
+  head_floor_depth_m: 0.215 # floor centre below shaft; lowered by 10 mm
+  post_top_spacing_m: 0.62   # nearly vertical, outside the U cradle
+  post_diameter_m: 0.036
+  brace_diameter_m: 0.024   # provisional tube size, front-left / rear-right
+  camera_front_glass_offset_m: 0.035 # visual estimate, ahead of projection centre
+  lamp_heatsink_width_m: 0.08 # user confirmed 80 x 80 mm; height estimated
+  lamp_length_m: 0.020       # user confirmed 20 x 20 mm COB emitting patch
+  lamp_width_m: 0.020
+  lamp_wall_footprint_m: [1.2, 0.12]
+  lamp_offset_axial_m: -0.115 # light / camera / slip ring along the common x shaft
+  lamp_offset_tangential_m: 0.0
+  lamp_offset_radial_m: 0.0   # effective optical exit plane, parallel to camera
+preview:
+  ambient_rgb: [0.35, 0.35, 0.35] # weak GUI surroundings, not camera photometry
+  strip_light_enabled: true    # attached Ogre2 projector; OptiX remains the imager
+materials:
+  sources: [plastered_wall_04, Concrete030, plastered_wall_03]
+  # Concrete030 has no verified physical coverage size: explicit initial assumption.
+  source_width_m: {plastered_wall_04: 3.2, Concrete030: 2.0, plastered_wall_03: 4.0}
+  reference: plastered_wall_04
+  brightness_factors: [1.0, 0.8, 0.65]
+  min_repeat_distance_x_m: 5.0
+  tile_core_pixels: 1024
+  tile_gutter_pixels: 4
+  background_texel_m: 0.0002
+  gui_preview_texel_m: 0.002 # per-panel preview from actual baked albedo
+cracks:
+  width_min_mm: 0.2
+  width_max_mm: 0.6
+  width_mean_mm: 0.4
+  width_std_mm: 0.1
+  types: [longitudinal, transverse, diagonal, curved, branching, network]
+  # Initial appearance mix, not a measured tunnel defect prevalence.
+  # Count each connected network as one instance; its branches are not extra instances.
+  composition_weights: {long_slender: 0.80, short_slender: 0.15, network: 0.05}
+  branch_probability_in_slender: 0.08  # provisional small subset inside BOTH slender classes
+  required_long_crack_length_m: 10.0
+  # Length/density/depth selected after candidate review, not inferred from source PNG.
+resources:
+  # Hard limits for preparation stages which implement the relevant allocation.
+  asset_working_set_bytes: 536870912
+  max_download_bytes: 2147483648
+  # Precision takes priority; independent bounded GPU and CPU texture caches.
+  gpu_texture_budget_bytes: 2147483648
+  cpu_texture_cache_bytes: 1073741824
+  gpu_preview_texture_budget_bytes: 805306368 # separate GUI RGBA8 + mip allowance
+  max_mesh_triangles: 150000
+  max_scene_vertices: 300000
+  overview_max_side: 2048

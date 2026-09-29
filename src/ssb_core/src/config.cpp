@@ -47,7 +47,9 @@ Config Config::Load(const std::filesystem::path& path) {
   if (!in) throw std::runtime_error("config: cannot open " + path.string());
   std::stringstream buffer;
   buffer << in.rdbuf();
-  return Parse(buffer.str());
+  Config c = Parse(buffer.str());
+  if (!c.optical_scene.empty()) c.optical_scene = std::filesystem::weakly_canonical(path.parent_path() / c.optical_scene);
+  return c;
 }
 
 Config Config::Parse(const std::string& text) {
@@ -127,6 +129,7 @@ Config Config::Parse(const std::string& text) {
   c.debug_column_stride = Get<int>(render, "debug_column_stride", "render.");
   c.max_queued_batches = Get<int>(render, "max_queued_batches", "render.");
   c.debug_delay_per_batch_s = Get<double>(render, "debug_delay_per_batch_s", "render.");
+  if (render["optical_scene"]) c.optical_scene = render["optical_scene"].as<std::string>();
 
   const auto storage = Require(root, "storage", "");
   c.block_rows = Get<int>(storage, "block_rows", "storage.");

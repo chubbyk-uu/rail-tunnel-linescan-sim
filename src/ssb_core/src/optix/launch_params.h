@@ -1,5 +1,6 @@
 #pragma once
 #include <optix.h>
+#include "ssb_core/surface_types.hpp"
 
 // Row frame: world translated so the row's optical centre has x = 0. The tunnel is
 // x-invariant, so float ray origins keep sub-micrometre precision at any track position;
@@ -9,6 +10,8 @@ struct DeviceRow {
   float origin_y, origin_z;
   float optical[3];
   float line[3];
+  float scan[3];
+  double optical_q;  // Per-exposure-frame beam centre, shared by all pixel samples.
 };
 
 struct LaunchParams {
@@ -19,7 +22,28 @@ struct LaunchParams {
   double radius, axis_z, x_min, x_max;
   unsigned char* pixels;
   unsigned* invalid;             // per row: rays that missed the wall or left its x range
+  unsigned* invalid_flags;
+  unsigned* invalid_column;
   const int* debug_slot;         // per column: debug slot or -1
   unsigned debug_count;
   double* debug_hits;            // [row][slot][x, q]
+  unsigned stage_b, row_stride, area_samples, time_samples, light_samples;
+  float pixel_step, response_gain;
+  const ssb::SurfaceTexel* const* tiles;
+  unsigned tile_core, tile_gutter, tile_side, tiles_x, tiles_q, pixels_x, pixels_q;
+  double tex_x0, tex_q0, tex_dx, tex_dq, tex_period;
+  const float3* vertices;
+  const uint3* triangles;
+  const unsigned* face_material;
+  const unsigned* critical_edges;
+  const ssb::CrackSegment* cracks;
+  const unsigned* crack_offsets;
+  const unsigned* crack_indices;
+  double crack_x0, crack_q0, crack_cell;
+  unsigned crack_nx, crack_nq;
+  unsigned light_enabled, shadows;
+  unsigned convex_panel_visibility, adaptive_area;
+  unsigned integrated_cracks;
+  unsigned texture_footprint_samples, texture_prefilter;
+  float lamp_length, footprint_x, footprint_q, lamp_tangential, lamp_radial, lamp_axial, lamp_width;
 };

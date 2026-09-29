@@ -7,6 +7,7 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/ssb_tools']),
         ('share/ssb_tools', ['package.xml']),
+        ('share/ssb_tools/config', ['config/stage_b_scene.yaml']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -17,5 +18,14 @@ setup(
     tests_require=['pytest'],
     entry_points={'console_scripts': [
         'validate_stage_a = ssb_tools.validate_stage_a:main',
+        'validate_stage_b_smoke = ssb_tools.validate_stage_b:main',
+        'prepare_stage_b_scene = ssb_tools.stage_b_scene:main',
+        'stage_b_materials = ssb_tools.stage_b_materials:main',
+        'stage_b_cracks = ssb_tools.stage_b_cracks:main',
+        'stage_b_surface = ssb_tools.stage_b_surface:main',
+        'stage_b_runtime_surface = ssb_tools.stage_b_runtime_surface:main',
+        'stage_b_tag_cracks = ssb_tools.stage_b_surface:tag_main',
+        'stage_b_defects = ssb_tools.stage_b_defects:main',
+        'stage_b_optics = ssb_tools.stage_b_optics:main',
     ]},
 )

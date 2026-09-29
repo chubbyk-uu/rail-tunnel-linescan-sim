@@ -1,0 +1,41 @@
+#pragma once
+#include <set>
+#include <map>
+#include "ssb_core/camera_model.hpp"
+#include "ssb_core/surface_types.hpp"
+#include "ssb_core/surface_recipe.hpp"
+
+namespace ssb {
+struct OpticalVertex { float x, y, z; };
+struct OpticalTriangle { unsigned a, b, c; };
+struct StageBAssets {
+  explicit StageBAssets(const Config& config);
+  std::filesystem::path path, surface_path, defect_path;
+  nlohmann::json scene, surface, defects;
+  std::unique_ptr<SurfaceRecipe> recipe;
+  std::string scene_hash, surface_hash, defect_hash;
+  unsigned core=0, gutter=0, side=0, nx=0, nq=0, pixel_x=0, pixel_q=0;
+  double x0=0, q0=0, dx=0, dq=0, period=0, max_radius=0;
+  unsigned area_samples=2, time_samples=2, light_samples=3;
+  bool light_enabled=true, shadows=true;
+  bool convex_panel_visibility=false, adaptive_area=false;
+  bool integrated_cracks=false;
+  // Background texture taps per axis over the pixel footprint (integrated path only).
+  unsigned texture_footprint_samples=1;
+  bool texture_prefilter=false;
+  double response_gain=1, lamp_length=.3, footprint_x=1.2, footprint_q=.12;
+  double lamp_tangential=.2, lamp_radial=.025, lamp_axial=0, lamp_width=0;
+  size_t gpu_budget=0, cpu_budget=0, tile_bytes=0, cache_slots=0;
+  std::vector<OpticalVertex> vertices;
+  std::vector<OpticalTriangle> triangles;
+  std::vector<unsigned> face_material;
+  std::vector<unsigned> critical_edges;
+  std::vector<CrackSegment> segments;
+  std::vector<unsigned> offsets, indices;
+  double crack_x0=0, crack_q0=0, crack_cell=0;
+  unsigned crack_nx=0, crack_nq=0;
+  std::vector<SurfaceTexel> ReadTile(unsigned index) const;
+  std::set<unsigned> Footprint(const HeadPose& h, double pixel_tangent_step, double max_tangent) const;
+  bool CpuHit(const HeadPose& h, double tangent, double scan_tangent, double* x, double* q) const;
+};
+}

@@ -46,6 +46,7 @@ struct Config {
   double debug_delay_per_batch_s = 0;
   int block_rows = 0;
   size_t write_queue_bytes = 0;
+  std::filesystem::path optical_scene;  // optional scene truth; not a reconstruction input
 
   // Raw bytes and hash of the file this config was loaded from.
   std::string source_text, source_sha256;

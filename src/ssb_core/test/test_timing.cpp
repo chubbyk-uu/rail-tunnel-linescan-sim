@@ -10,6 +10,15 @@
 
 using namespace ssb;
 
+TEST(StageB, LensProjectionAndSynchronizedMotionUseUpdatedBaseline) {
+  const auto c = Config::Load(std::string(SSB_CONFIG_DIR) + "/stage_b.yaml");
+  const double f = 0.09, R = 2.75;
+  EXPECT_NEAR(c.FocalLength(), f * R / (R - f), 1e-12);
+  EXPECT_NEAR(c.RowsPerRev(), 10000.0 * 128 / 15, 1e-9);
+  EXPECT_NEAR(c.advance_per_rev_m * c.NominalOmega() / (2 * M_PI), 0.2, 1e-12);
+  EXPECT_NEAR(c.NominalOmega() * 60 / (2 * M_PI), 20, 1e-12);
+}
+
 namespace {
 
 Config BaseConfig() { return Config::Load(std::string(SSB_CONFIG_DIR) + "/stage_a.yaml"); }

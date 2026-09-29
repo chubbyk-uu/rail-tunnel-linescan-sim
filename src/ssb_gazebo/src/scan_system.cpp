@@ -11,9 +11,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "ssb_core/optix_renderer.hpp"
 #include "ssb_core/pipeline.hpp"
@@ -28,8 +30,8 @@ class ScanSystem final : public gz::sim::System,
   ~ScanSystem() override {
     if (!pipeline_) return;
     try {
-      pipeline_->Finish();
-      const auto summary = pipeline_->Wait();
+      if (!completion_.valid()) FinishInBackground();
+      const auto summary = completion_.get();
       std::cout << "[ssb] session data complete, motion complete: " << summary.at("motion").at("complete") << ", "
                 << summary.at("rows") << " rows, "
                 << summary.at("performance").at("wall_seconds_after_finish") << " s after dynamics ended"
@@ -76,6 +78,14 @@ class ScanSystem final : public gz::sim::System,
     carriage_ = joint("carriage_joint");
     scan_ = joint("scan_joint");
     wheel_ = joint("wheel_joint");
+    if (sdf->HasElement("follower_wheel_joint")) {
+      for (auto element = sdf->FindElement("follower_wheel_joint"); element;
+           element = element->GetNextElement("follower_wheel_joint")) {
+        gz::sim::Joint follower(model.JointByName(ecm, element->Get<std::string>()));
+        if (!follower.Valid(ecm)) throw std::runtime_error("ssb ScanSystem: follower wheel joint not found");
+        follower_wheels_.push_back(follower);
+      }
+    }
     scan_.ResetPosition(ecm, {config_.start_theta_rad});
 
     const double omega = config_.NominalOmega();
@@ -112,6 +122,14 @@ class ScanSystem final : public gz::sim::System,
     }
   }
 
+  // Complete and measure capture when motion ends, without closing the GUI or
+  // blocking physics on queued rendering. Destructor joins before pipeline dies.
+  void FinishInBackground() {
+    if (completion_.valid()) return;
+    pipeline_->Finish();
+    completion_ = std::async(std::launch::async, [this] { return pipeline_->Wait(); });
+  }
+
  public:
   void PreUpdate(const gz::sim::UpdateInfo& info, gz::sim::EntityComponentManager& ecm) override {
     if (info.paused) return;
@@ -123,6 +141,7 @@ class ScanSystem final : public gz::sim::System,
     const double factor = t <= end ? ssb::EvaluateProfile(config_.profile, t).factor : 0.0;
     scan_.SetVelocity(ecm, {scan_rate_ * factor});
     wheel_.SetVelocity(ecm, {wheel_rate_ * factor});
+    for (auto& follower : follower_wheels_) follower.SetVelocity(ecm, {wheel_rate_ * factor});
     carriage_.SetVelocity(ecm, {car_rate_ * factor});
   }
 
@@ -135,7 +154,7 @@ class ScanSystem final : public gz::sim::System,
       std::cerr << "[ssb] physics step changed to " << dt << " s at sim time " << t << "; capture stopped"
                 << std::endl;
       finished_ = true;
-      pipeline_->Finish();
+      FinishInBackground();
       return;
     }
     const auto x = carriage_.Position(ecm), v = carriage_.Velocity(ecm);
@@ -146,7 +165,7 @@ class ScanSystem final : public gz::sim::System,
                      wv->front()});
     if (t >= config_.profile.back()[0]) {
       finished_ = true;
-      pipeline_->Finish();
+      FinishInBackground();
       std::cout << "[ssb] motion profile complete at sim time " << t << " s; imaging continues" << std::endl;
     }
   }
@@ -155,7 +174,9 @@ class ScanSystem final : public gz::sim::System,
   ssb::Config config_;
   std::string config_path_, session_;
   std::unique_ptr<ssb::Pipeline> pipeline_;
+  std::future<nlohmann::json> completion_;
   gz::sim::Joint carriage_, scan_, wheel_;
+  std::vector<gz::sim::Joint> follower_wheels_;
   double step_ = 0, scan_rate_ = 0, wheel_rate_ = 0, car_rate_ = 0;
   bool finished_ = false;
 };

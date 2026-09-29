@@ -7,8 +7,8 @@
 
 namespace ssb {
 
-// OptiX line-scan backend. Stage A scene: analytic tunnel cylinder with the procedural
-// wall albedo; no lighting. There is no fallback backend: construction throws if
+// OptiX line-scan backend. Stage A uses an analytic cylinder; an explicit Stage B
+// scene enables textured meshes, metric cracks and rotating illumination. Construction throws if
 // CUDA/OptiX cannot be initialised.
 class OptixRenderer final : public RowRenderer {
  public:
@@ -19,6 +19,7 @@ class OptixRenderer final : public RowRenderer {
 
   void Render(const std::vector<RowJob>& rows, std::vector<uint8_t>& pixels, std::vector<double>& hits) override;
   nlohmann::json Describe() const override;
+  nlohmann::json EvaluationAssets() const override;
   nlohmann::json SelfCheck() override;
 
  private:

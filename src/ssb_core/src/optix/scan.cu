@@ -2,6 +2,7 @@
 
 #include "launch_params.h"
 #include "ssb_core/texture.hpp"
+#include "ssb_core/crack_integral.hpp"
 
 extern "C" {
 __constant__ LaunchParams params;
@@ -39,9 +40,12 @@ extern "C" __global__ void __closesthit__tunnel() {
 
 extern "C" __global__ void __miss__primary() { optixSetPayload_2(0u); }
 
+__device__ void StageBScan(unsigned u, unsigned r);
+
 extern "C" __global__ void __raygen__scan() {
   const uint3 idx = optixGetLaunchIndex();
   const unsigned u = idx.x, r = idx.y;
+  if (params.stage_b) { StageBScan(u, r); return; }
   const DeviceRow row = params.rows[r];
   const float tan_u = params.tangents[u];
   float3 d = make_float3(row.optical[0] + tan_u * row.line[0], row.optical[1] + tan_u * row.line[1],
@@ -70,4 +74,344 @@ extern "C" __global__ void __raygen__scan() {
     out[0] = valid ? x : nan("");
     out[1] = valid ? q : nan("");
   }
+}
+
+extern "C" __global__ void __closesthit__wall() {
+  const double t=optixGetRayTmax();
+  optixSetPayload_0(Lo(t));optixSetPayload_1(Hi(t));optixSetPayload_2(1u);
+  optixSetPayload_3(optixGetPrimitiveIndex());
+}
+namespace {
+__device__ float3 Add(float3 a,float3 b) { return make_float3(a.x+b.x,a.y+b.y,a.z+b.z); }
+__device__ float3 Sub(float3 a,float3 b) { return make_float3(a.x-b.x,a.y-b.y,a.z-b.z); }
+__device__ float3 Mul(float3 a,float b) { return make_float3(a.x*b,a.y*b,a.z*b); }
+__device__ float Dot(float3 a,float3 b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
+__device__ float3 Cross(float3 a,float3 b) {return make_float3(a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x);}
+__device__ float3 Unit(float3 a) { return Mul(a,rsqrtf(fmaxf(Dot(a,a),1e-20f))); }
+__device__ double WrapQ(double q) {
+  if(q>=params.tex_q0 && q<params.tex_q0+params.tex_period) return q;
+  double f=fmod(q-params.tex_q0,params.tex_period);
+  return params.tex_q0+(f<0?f+params.tex_period:f);
+}
+__device__ float4 Texel(const ssb::SurfaceTexel& t) {return make_float4(t.albedo/65535.f,t.roughness/255.f,t.nx/32767.f,t.nq/32767.f);}
+__device__ float4 Mix(float4 a,float4 b,float w) {return make_float4(a.x+(b.x-a.x)*w,a.y+(b.y-a.y)*w,a.z+(b.z-a.z)*w,a.w+(b.w-a.w)*w);}
+__device__ bool Surface(double x,double q,float4* result,unsigned* guard=nullptr) {
+  q=WrapQ(q);
+  double xp=(x-params.tex_x0)/params.tex_dx,qp=(q-params.tex_q0)/params.tex_dq;
+  int ix=min(int(params.tiles_x)-1,max(0,int(floor(xp))/int(params.tile_core)));
+  int iq=min(int(params.tiles_q)-1,max(0,int(floor(qp))/int(params.tile_core)));
+  const auto* tile=params.tiles[iq*params.tiles_x+ix];if(!tile) return false;
+  double u=xp-.5-ix*params.tile_core+params.tile_gutter,v=qp-.5-iq*params.tile_core+params.tile_gutter;
+  int left=int(floor(u)),top=int(floor(v));
+  if(left<0||top<0||left+1>=int(params.tile_side)||top+1>=int(params.tile_side)) return false;
+  float fx=u-left,fy=v-top;
+  auto a=Mix(Texel(tile[top*params.tile_side+left]),Texel(tile[top*params.tile_side+left+1]),fx);
+  auto b=Mix(Texel(tile[(top+1)*params.tile_side+left]),Texel(tile[(top+1)*params.tile_side+left+1]),fx);
+  *result=Mix(a,b,fy);
+  if(guard) *guard=tile[top*params.tile_side+left].reserved | tile[top*params.tile_side+left+1].reserved |
+                   tile[(top+1)*params.tile_side+left].reserved | tile[(top+1)*params.tile_side+left+1].reserved;
+  return true;
+}
+__device__ bool Crack(double x,double q) {
+  q=WrapQ(q);
+  int ix=int(floor((x-params.crack_x0)/params.crack_cell)),iq=int(floor((q-params.crack_q0)/params.crack_cell));
+  if(ix<0||iq<0||ix>=int(params.crack_nx)||iq>=int(params.crack_nq)) return false;
+  unsigned cell=iq*params.crack_nx+ix;
+  for(unsigned k=params.crack_offsets[cell];k<params.crack_offsets[cell+1];++k) {
+    auto s=params.cracks[params.crack_indices[k]];
+    double dx=s.x1-s.x0,dq=s.q1-s.q0,px=x-s.x0,pq=q-s.q0;
+    double t=fmin(1.,fmax(0.,(px*dx+pq*dq)/(dx*dx+dq*dq)));
+    double radius=s.r0+(s.r1-s.r0)*t;
+    if((px-t*dx)*(px-t*dx)+(pq-t*dq)*(pq-t*dq)<=radius*radius) return true;
+  }
+  return false;
+}
+__device__ float TriangleMargin(float3 point,unsigned primitive) {
+  uint3 tri=params.triangles[primitive];float3 a=params.vertices[tri.x],b=params.vertices[tri.y],c=params.vertices[tri.z];
+  float3 n=Unit(Cross(Sub(b,a),Sub(c,a)));
+  float m0=fabsf(Dot(Cross(Sub(b,a),Sub(point,a)),n))/sqrtf(Dot(Sub(b,a),Sub(b,a)));
+  float m1=fabsf(Dot(Cross(Sub(c,b),Sub(point,b)),n))/sqrtf(Dot(Sub(c,b),Sub(c,b)));
+  float m2=fabsf(Dot(Cross(Sub(a,c),Sub(point,c)),n))/sqrtf(Dot(Sub(a,c),Sub(a,c)));
+  return fminf(m0,fminf(m1,m2));
+}
+__device__ float CriticalMargin(float3 point,unsigned primitive) {
+  unsigned mask=params.critical_edges[primitive];if(!mask)return 1e10f;
+  uint3 tri=params.triangles[primitive];float3 v[3]={params.vertices[tri.x],params.vertices[tri.y],params.vertices[tri.z]};
+  float3 n=Unit(Cross(Sub(v[1],v[0]),Sub(v[2],v[0])));float margin=1e10f;
+  for(unsigned e=0;e<3;++e)if(mask&(1u<<e)) {
+    float3 edge=Sub(v[(e+1)%3],v[e]);
+    margin=fminf(margin,fabsf(Dot(Cross(edge,Sub(point,v[e])),n))/sqrtf(Dot(edge,edge)));
+  }
+  return margin;
+}
+__device__ bool Hit(const DeviceRow& row,float tangent,float scan_tangent,double* x,double* q,
+                     float3* point,float3* direction,unsigned* primitive) {
+  *direction=Unit(make_float3(row.optical[0]+tangent*row.line[0]+scan_tangent*row.scan[0],
+                         row.optical[1]+tangent*row.line[1]+scan_tangent*row.scan[1],
+                         row.optical[2]+tangent*row.line[2]+scan_tangent*row.scan[2]));
+  unsigned lo=0,hi=0,hit=0,tri=0;
+  float3 origin=make_float3(float(row.origin_x),row.origin_y,row.origin_z);
+  optixTrace(params.handle,origin,*direction,0.f,1e3f,0.f,255,OPTIX_RAY_FLAG_DISABLE_ANYHIT,0,1,0,lo,hi,hit,tri);
+  if(!hit) return false;
+  double t=Join(lo,hi);
+  // Use the actual float ray origin in a triangle scene; mixing in its unrounded
+  // double origin would falsely claim hit accuracy absent from the traced ray.
+  *x=double(origin.x)+t*direction->x;
+  double y=origin.y+t*direction->y,z=origin.z+t*direction->z;
+  *q=params.radius*atan2(y,z-params.axis_z);
+  *point=make_float3(float(*x),float(y),float(z));*primitive=tri;
+  return *x>=params.x_min&&*x<=params.x_max;
+}
+// Same finite-source sample positions for shading and the slot visibility guard.
+// New COB mode uses 2x2 Gauss quadrature over an equivalent source patch; the
+// custom lens angular redistribution remains the empirical beam envelope below.
+__device__ float3 LampSample(const DeviceRow& row,unsigned i) {
+  const float3 scan=make_float3(row.scan[0],row.scan[1],row.scan[2]);
+  const float3 optical=make_float3(row.optical[0],row.optical[1],row.optical[2]);
+  const float3 axis=Unit(Cross(scan,optical));
+  float s=((i+.5f)/params.light_samples-.5f)*params.lamp_length,w=0;
+  if(params.lamp_width>0) {
+    s=(i&1?1.f:-1.f)*.288675134595f*params.lamp_length;
+    w=(i&2?1.f:-1.f)*.288675134595f*params.lamp_width;
+  }
+  float3 centre=make_float3(float(row.origin_x)+params.lamp_axial,row.origin_y,row.origin_z);
+  return Add(centre,Add(Mul(optical,params.lamp_radial),
+                       Add(Mul(scan,params.lamp_tangential+w),Mul(axis,s))));
+}
+__device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned primitive,double x,double q,float4 tex,float coverage=-1.f,unsigned visibility=~0u) {
+  uint3 tri=params.triangles[primitive];
+  float3 normal=Unit(Cross(Sub(params.vertices[tri.y],params.vertices[tri.x]),Sub(params.vertices[tri.z],params.vertices[tri.x])));
+  if(Dot(normal,view)>0) normal=Mul(normal,-1.f); // double-sided optical lining, inward visible normal
+  bool joint=params.face_material[primitive]!=0;
+  float albedo=joint ? .14f : tex.x;
+  if(!joint) {if(coverage>=0)albedo=tex.x+coverage*(.035f-tex.x);else if(Crack(x,q))albedo=.035f;}
+  if(!params.light_enabled) return albedo;
+  if(!joint) {
+    float3 tangent=Unit(Sub(make_float3(1,0,0),Mul(normal,normal.x)));
+    float3 bitangent=Unit(Cross(normal,tangent));
+    // At theta=0 the positive q tangent is +y; inward normal cross +x is -y.
+    bitangent=Mul(bitangent,-1.f);
+    float nz=sqrtf(fmaxf(0.f,1.f-tex.z*tex.z-tex.w*tex.w));
+    normal=Unit(Add(Mul(normal,nz),Add(Mul(tangent,tex.z),Mul(bitangent,tex.w))));
+  }
+  double dqx=q-row.optical_q;
+  if(dqx>params.tex_period*.5) dqx-=params.tex_period;
+  if(dqx<-params.tex_period*.5) dqx+=params.tex_period;
+  float ax=2.f*float(x-row.origin_x-params.lamp_axial)/params.footprint_x,aq=2.f*float(dqx)/params.footprint_q;
+  ax*=ax;ax*=ax;ax*=ax;aq*=aq;aq*=aq;aq*=aq;
+  float beam=expf(-.69314718056f*(ax+aq));
+  float intensity=0;
+  const bool trace_shadows=visibility==~0u && params.shadows &&
+    !(params.convex_panel_visibility && !joint && TriangleMargin(point,primitive)>.001f);
+  for(unsigned i=0;i<params.light_samples;++i) {
+    if(visibility!=~0u && !(visibility&(1u<<i)))continue;
+    float3 light=LampSample(row,i);
+    float3 delta=Sub(light,point);float distance=sqrtf(Dot(delta,delta));float3 L=Mul(delta,1.f/distance);
+    // An inward panel far from its rim sees an axial emitter through the convex
+    // tunnel interior. Slot floors/edges still require actual shadow rays. Enable
+    // this only for the generated wall+outward slots, with no interior occluders.
+    if(trace_shadows) {
+      unsigned lo=0,hi=0,hit=0,ignored=0;
+      // Offset towards the emitter, avoiding self hits without widening the seam.
+      optixTrace(params.handle,Add(point,Mul(L,2e-5f)),L,0.f,fmaxf(0.f,distance-4e-5f),0.f,255,
+                 OPTIX_RAY_FLAG_DISABLE_ANYHIT|OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT,0,1,0,lo,hi,hit,ignored);
+      if(hit) continue;
+    }
+    float ndl=fmaxf(0.f,Dot(normal,L));
+    // Relative rough diffuse approximation. Absolute photometry and
+    // measured camera gain remain uncalibrated; no claim of lux or SNR.
+    float rough=joint?.9f:tex.y;
+    float diffuse=ndl*(1.f-.12f*rough*rough);
+    intensity+=diffuse*float(params.radius*params.radius)/(distance*distance);
+  }
+  return albedo*beam*intensity/params.light_samples;
+}
+}
+// Local affine footprint in metric (x,q); curvature across a ~0.2 mm pixel
+// is negligible compared with the float triangle intersection precision.
+__device__ double2 MetricDelta(float3 delta,float3 point) {
+  double y=point.y,z=double(point.z)-params.axis_z;
+  return make_double2(delta.x,params.radius*(z*delta.y-y*delta.z)/(y*y+z*z));
+}
+__device__ float3 PixelWorldDelta(const DeviceRow& row,float3 point,float tangent,unsigned primitive,bool across) {
+  uint3 tri=params.triangles[primitive];
+  float3 normal=Unit(Cross(Sub(params.vertices[tri.y],params.vertices[tri.x]),Sub(params.vertices[tri.z],params.vertices[tri.x])));
+  float3 raw=make_float3(row.optical[0]+tangent*row.line[0],row.optical[1]+tangent*row.line[1],row.optical[2]+tangent*row.line[2]);
+  float3 axis=across?make_float3(row.line[0],row.line[1],row.line[2]):make_float3(row.scan[0],row.scan[1],row.scan[2]);
+  float3 origin=make_float3(float(row.origin_x),row.origin_y,row.origin_z);
+  float travel=Dot(Sub(point,origin),normal)/Dot(raw,normal);
+  return Mul(Sub(axis,Mul(raw,Dot(axis,normal)/Dot(raw,normal))),travel*params.pixel_step);
+}
+// On a single slot face, test the corners of the complete space/time footprint.
+// This guard is specific to the generated convex lining and wide rectangular
+// slots, without interior occluders. Any visibility change retains full rays.
+__device__ bool SlotVisibility(const DeviceRow& first,const DeviceRow& last,float3 point,
+                               float3 a,float3 b,float3 motion,unsigned* visibility) {
+  unsigned mask=0;
+  for(unsigned i=0;i<params.light_samples;++i) {
+    int previous=-1;
+    for(unsigned t=0;t<2;++t)for(unsigned corner=0;corner<4;++corner) {
+      float3 p=Add(point,Add(Mul(a,corner&1?.5f:-.5f),Add(Mul(b,corner&2?.5f:-.5f),Mul(motion,t?.5f:-.5f))));
+      // Extrapolate sample positions to the actual exposure endpoints.
+      float3 p0=LampSample(first,i),p1=LampSample(last,i);
+      float3 light=t?Add(p1,Mul(Sub(p1,p0),.25f)):Add(p0,Mul(Sub(p0,p1),.25f));
+      float3 delta=Sub(light,p);float distance=sqrtf(Dot(delta,delta));float3 L=Mul(delta,1.f/distance);
+      unsigned lo=0,hi=0,hit=0,ignored=0;
+      optixTrace(params.handle,Add(p,Mul(L,2e-5f)),L,0.f,fmaxf(0.f,distance-4e-5f),0.f,255,
+                 OPTIX_RAY_FLAG_DISABLE_ANYHIT|OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT,0,1,0,lo,hi,hit,ignored);
+      if(previous>=0 && int(hit)!=previous)return false;
+      previous=int(hit);
+    }
+    if(previous==0)mask|=1u<<i;
+  }
+  *visibility=mask;return true;
+}
+__device__ __noinline__ float CrackFallback(double x,double q,double2 a,double2 b,double2 motion) {
+  unsigned covered=0;
+  #pragma unroll 1
+  for(unsigned t=0;t<8;++t) {
+  #pragma unroll 1
+  for(unsigned v=0;v<16;++v) {
+  #pragma unroll 1
+  for(unsigned u=0;u<16;++u) {
+    double sx=(u+.5)/16-.5,sy=(v+.5)/16-.5,st=(t+.5)/8-.5;
+    covered+=Crack(x+a.x*sx+b.x*sy+motion.x*st,q+a.y*sx+b.y*sy+motion.y*st);
+  }
+  }}
+  return covered/2048.f;
+}
+__device__ float IntegratedCrack(double x,double q,double2 a,double2 b,double2 motion) {
+  q=WrapQ(q);
+  double hx=.5*(fabs(a.x)+fabs(b.x)+fabs(motion.x));
+  double hq=.5*(fabs(a.y)+fabs(b.y)+fabs(motion.y));
+  int lo_x=max(0,int(floor((x-hx-params.crack_x0)/params.crack_cell)));
+  int hi_x=min(int(params.crack_nx)-1,int(floor((x+hx-params.crack_x0)/params.crack_cell)));
+  int lo_q=max(0,int(floor((q-hq-params.crack_q0)/params.crack_cell)));
+  int hi_q=min(int(params.crack_nq)-1,int(floor((q+hq-params.crack_q0)/params.crack_cell)));
+  int selected=-1;double fraction=0;
+  for(int iq=lo_q;iq<=hi_q;++iq)for(int ix=lo_x;ix<=hi_x;++ix) {
+    unsigned cell=iq*params.crack_nx+ix;
+    for(unsigned k=params.crack_offsets[cell];k<params.crack_offsets[cell+1];++k) {
+      unsigned id=params.crack_indices[k];if(int(id)==selected)continue;
+      auto s=params.cracks[id];double dx=double(s.x1)-s.x0,dq=double(s.q1)-s.q0;
+      double length=sqrt(dx*dx+dq*dq),lx=dx/length,lq=dq/length;
+      double along=(x-s.x0)*lx+(q-s.q0)*lq,perp=-(x-s.x0)*lq+(q-s.q0)*lx;
+      double pa=-a.x*lq+a.y*lx,pb=-b.x*lq+b.y*lx,pt=-motion.x*lq+motion.y*lx;
+      double aa=a.x*lx+a.y*lq,ab=b.x*lx+b.y*lq,at=motion.x*lx+motion.y*lq;
+      double along_half=.5*(fabs(aa)+fabs(ab)+fabs(at));
+      double radius=fmax(s.r0,s.r1);
+      if(fabs(perp)>radius+.5*(fabs(pa)+fabs(pb)+fabs(pt)) || along+along_half<-radius || along-along_half>length+radius)continue;
+      // Endpoint disks, bends and intersecting branches use sparse local sampling.
+      if(along-along_half<0 || along+along_half>length)return CrackFallback(x,q,a,b,motion);
+      double slope=(double(s.r1)-s.r0)/length,r=s.r0+slope*along;
+      double hit=ssb::BoxHalfPlane(pa-slope*aa,pb-slope*ab,pt-slope*at,perp-r)-
+                 ssb::BoxHalfPlane(pa+slope*aa,pb+slope*ab,pt+slope*at,perp+r);
+      if(hit<=0)continue;
+      if(hit>=1-1e-8)return 1;
+      if(selected>=0)return CrackFallback(x,q,a,b,motion);
+      selected=int(id);fraction=hit;
+    }
+  }
+  return float(fmin(1.,fmax(0.,fraction)));
+}
+__device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,double x,double q,
+                                float3 point,float3 direction,unsigned primitive) {
+  // Return false at real material/geometry boundaries: retain the full-ray path.
+  // Coplanar diagonals and smooth cylindrical facets do not force oversampling.
+  if(params.light_enabled && params.shadows && !params.convex_panel_visibility)return false;
+  float3 world_a=PixelWorldDelta(centre,point,params.tangents[u],primitive,true);
+  float3 world_b=PixelWorldDelta(centre,point,params.tangents[u],primitive,false);
+  double2 a=MetricDelta(world_a,point),b=MetricDelta(world_b,point);
+  if(CriticalMargin(point,primitive)<.0006f)return false;
+  float3 points[3],dirs[3];double xs[3],qs[3];unsigned ids[3];
+  for(unsigned t=0;t<3;++t) {
+    if(t==1){points[t]=point;dirs[t]=direction;xs[t]=x;qs[t]=q;ids[t]=primitive;}
+    else if(!Hit(params.rows[r*params.row_stride+1+t],params.tangents[u],0,&xs[t],&qs[t],&points[t],&dirs[t],&ids[t]))return false;
+    if(params.face_material[ids[t]]!=params.face_material[primitive] || CriticalMargin(points[t],ids[t])<.0006f)return false;
+  }
+  double dq=qs[2]-qs[0];if(dq>params.tex_period*.5)dq-=params.tex_period;if(dq<-params.tex_period*.5)dq+=params.tex_period;
+  double2 motion=make_double2((xs[2]-xs[0])*1.5,dq*1.5);
+  unsigned visibility=~0u;
+  if(params.light_enabled && params.shadows) {
+    visibility=(1u<<params.light_samples)-1;
+    if(params.face_material[primitive] &&
+       !SlotVisibility(params.rows[r*params.row_stride+1],params.rows[r*params.row_stride+3],point,
+                       world_a,world_b,Mul(Sub(points[2],points[0]),1.5f),&visibility))return false;
+  }
+  float coverage=params.face_material[primitive]?0:IntegratedCrack(x,q,a,b,motion);
+  float sum=0;
+  const unsigned n=params.texture_footprint_samples;
+  #pragma unroll
+  for(unsigned t=0;t<3;++t) {
+    const DeviceRow& row=params.rows[r*params.row_stride+1+t];
+    if(n==1) {
+      float4 tex;if(!Surface(xs[t],qs[t],&tex))return false;
+      sum+=Shade(row,points[t],dirs[t],ids[t],xs[t],qs[t],tex,coverage,visibility);
+      continue;
+    }
+    // Box-integrate the texture over the pixel footprint without extra rays:
+    // stratified taps on the local affine (x,q) footprint around this frame's hit.
+    float4 mean=make_float4(0,0,0,0);float shaded=0;
+    for(unsigned sy=0;sy<n;++sy)for(unsigned sx=0;sx<n;++sx) {
+      double fx=(sx+.5)/n-.5,fy=(sy+.5)/n-.5,tx=xs[t]+a.x*fx+b.x*fy,tq=qs[t]+a.y*fx+b.y*fy;
+      float4 tex;if(!Surface(tx,tq,&tex))return false;
+      if(params.texture_prefilter)mean=make_float4(mean.x+tex.x,mean.y+tex.y,mean.z+tex.z,mean.w+tex.w);
+      else shaded+=Shade(row,points[t],dirs[t],ids[t],tx,tq,tex,coverage,visibility);
+    }
+    const float w=1.f/(n*n);
+    sum+=params.texture_prefilter?Shade(row,points[t],dirs[t],ids[t],xs[t],qs[t],make_float4(mean.x*w,mean.y*w,mean.z*w,mean.w*w),coverage,visibility):shaded*w;
+  }
+  float value=sum/3*params.response_gain;
+  params.pixels[size_t(r)*params.width+u]=static_cast<unsigned char>(fminf(255.f,fmaxf(0.f,value*255.f+.5f)));
+  return true;
+}
+__device__ void StageBScan(unsigned u,unsigned r) {
+  const DeviceRow centre=params.rows[r*params.row_stride];
+  double x=0,q=0;float3 point,direction;unsigned primitive=0;
+  bool valid=Hit(centre,params.tangents[u],0,&x,&q,&point,&direction,&primitive);
+  int debug=params.debug_slot[u];
+  if(debug>=0) {
+    double* out=params.debug_hits+(size_t(r)*params.debug_count+debug)*2;
+    out[0]=valid?x:nan("");out[1]=valid?q:nan("");
+  }
+  if(valid && params.integrated_cracks && IntegratedPixel(u,r,centre,x,q,point,direction,primitive))return;
+  unsigned area=params.area_samples;
+  double footprint_margin=.0005+2*params.pixel_step*params.radius;
+  for(unsigned time=0;time<params.time_samples;++time) {
+    auto frame=params.rows[r*params.row_stride+1+time];
+    footprint_margin=fmax(footprint_margin,.0005+2*params.pixel_step*params.radius+
+      fabs(frame.origin_x-centre.origin_x)+params.radius*sqrt(
+      double(frame.optical[0]-centre.optical[0])*(frame.optical[0]-centre.optical[0])+
+      double(frame.optical[1]-centre.optical[1])*(frame.optical[1]-centre.optical[1])+
+      double(frame.optical[2]-centre.optical[2])*(frame.optical[2]-centre.optical[2])));
+  }
+  // Only reduce area sampling on smooth background, away from authored crack
+  // vectors and triangle rims. Time integration remains active for every pixel.
+  if(valid && params.adaptive_area && params.face_material[primitive]==0 && TriangleMargin(point,primitive)>.0005f &&
+     footprint_margin<.002) {
+    float4 tex;unsigned guard=1;
+    if(Surface(x,q,&tex,&guard) && !guard) area=1;
+  }
+  float sum=0;
+  for(unsigned t=0;t<params.time_samples;++t) {
+    DeviceRow row=params.rows[r*params.row_stride+1+t];
+    for(unsigned sy=0;sy<area;++sy) for(unsigned sx=0;sx<area;++sx) {
+      float tangent=params.tangents[u]+((sx+.5f)/area-.5f)*params.pixel_step;
+      float scan=((sy+.5f)/area-.5f)*params.pixel_step;
+      double hx,hq;float3 hp,hd;unsigned tri;float4 tex;
+      bool ok=Hit(row,tangent,scan,&hx,&hq,&hp,&hd,&tri);
+      unsigned reason=ok?0:1;
+      if(ok && !Surface(hx,hq,&tex)) {ok=false;reason=2;}
+      if(!ok) {
+        valid=false;
+        atomicOr(params.invalid_flags+r,reason);
+        atomicMin(params.invalid_column+r,u);
+        continue;
+      }
+      sum+=Shade(row,hp,hd,tri,hx,hq,tex);
+    }
+  }
+  if(!valid) atomicAdd(params.invalid+r,1u);
+  float value=sum/(params.time_samples*area*area)*params.response_gain;
+  params.pixels[size_t(r)*params.width+u]=static_cast<unsigned char>(fminf(255.f,fmaxf(0.f,value*255.f+.5f)));
 }
