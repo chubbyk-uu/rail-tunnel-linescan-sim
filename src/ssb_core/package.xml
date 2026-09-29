@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ssb_core</name>
+  <version>0.1.0</version>
+  <description>Tunnel scan simulation core: encoder timing, OptiX line-scan imaging, session storage.</description>
+  <maintainer email="dk.illidan@gmail.com">jerry</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>yaml-cpp</depend>
+  <depend>nlohmann-json-dev</depend>
+  <depend>libssl-dev</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

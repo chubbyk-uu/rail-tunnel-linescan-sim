@@ -1,0 +1,6 @@
+# Use with: export COLCON_DEFAULTS_FILE=$PWD/colcon_defaults.yaml
+build:
+  symlink-install: true
+  cmake-args: ['-DCMAKE_BUILD_TYPE=RelWithDebInfo']
+test:
+  ctest-args: ['-j8']

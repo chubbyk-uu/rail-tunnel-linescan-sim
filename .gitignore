@@ -2,3 +2,9 @@
 /CN112270672A.pdf
 /CN111185894A.pdf:Zone.Identifier
 /CN112270672A.pdf:Zone.Identifier
+build/
+install/
+log/
+__pycache__/
+.pytest_cache/
+/sessions/

@@ -1,0 +1,252 @@
+"""Stage A acceptance for one session (DESIGN.md §13 stage A, §12.2).
+
+Every check reports pass, fail or unmeasurable; the overall result is pass only when
+all checks pass. Writes evaluation/reports/stage_a.json with stage provenance.
+"""
+import argparse
+import json
+import math
+import sys
+from pathlib import Path
+
+import numpy as np
+
+from . import ref_geometry, ref_timing, unroll
+from .provenance import stage_record
+from .session import Session, read_json, sha256_file
+
+PASS, FAIL, UNMEASURABLE = 'pass', 'fail', 'unmeasurable'
+TIME_TOL = 1e-9  # s, row times (never near zero speed: rows need a period estimate)
+POSITION_TOL = 1e-12  # rad, edge crossings
+
+
+def check(name, state, **detail):
+    return {'name': name, 'state': state, **detail}
+
+
+def verify_hashes(s):
+    bad, n = [], 0
+    for area in ('metadata', 'evaluation'):
+        for key, entry in read_json(s.root / area / 'manifest.json').items():
+            n += 1
+            if sha256_file(s.root / area / entry['file']) != entry['sha256']:
+                bad.append(f'{area}/{entry["file"]}')
+    for block in s.raw_index()['blocks']:
+        n += 1
+        if sha256_file(s.root / 'raw' / block['file']) != block['sha256']:
+            bad.append('raw/' + block['file'])
+    return n, bad
+
+
+def compare_timing(s, cfg, truth, poses):
+    ref = ref_timing.reference(poses, cfg, truth)
+    out = []
+
+    def edges(name, got, want, value, rate):
+        # Crossings are defined in position; near zero speed a 1e-16 rad difference is
+        # microseconds, so agreement is judged by the position at each implementation's time.
+        t, c, d = want
+        if len(got) != len(t) or not len(t):
+            return check(name, FAIL, recorded=len(got), reference=len(t))
+        same = np.array_equal(got['count'], c) and np.array_equal(got['dir'], d)
+        p_got, _ = ref_timing.hermite_value(poses, got['t'], value, rate)
+        p_ref, _ = ref_timing.hermite_value(poses, t, value, rate)
+        dp = float(np.max(np.abs(p_got - p_ref)))
+        dt = float(np.max(np.abs(got['t'] - t)))
+        return check(name, PASS if same and dp <= POSITION_TOL else FAIL, count=len(t),
+                     max_position_difference_rad=dp, threshold_rad=POSITION_TOL, max_time_difference_s=dt,
+                     counts_and_directions_equal=bool(same))
+
+    out.append(edges('scan_edges_match_reference', s.metadata('scan_edges'), ref['scan_edges'], 'theta', 'omega'))
+    out.append(edges('odometer_edges_match_reference', s.metadata('odometer_edges'), ref['odometer_edges'],
+                     'wheel', 'wheel_omega'))
+
+    gates = s.metadata('gate_events')
+    want = ref['gates']
+    same = len(gates) == len(want) and all(
+        g['revolution'] == w[1] and g['kind'] == w[2] and g['dir'] == w[3] and abs(g['t'] - w[0]) <= TIME_TOL
+        for g, w in zip(gates, want))
+    out.append(check('gate_events_match_reference', PASS if same and len(want) else FAIL,
+                     recorded=len(gates), reference=len(want)))
+
+    rows = s.metadata('rows')
+    want = ref['rows']
+    if len(rows) != len(want) or not len(want):
+        out.append(check('rows_match_reference', FAIL, recorded=len(rows), reference=len(want)))
+    else:
+        w = np.array([(r[0], r[1]) for r in want], np.int64)
+        wt = np.array([(r[2], r[3]) for r in want])
+        same = np.array_equal(rows['row'], w[:, 0]) and np.array_equal(rows['segment'], w[:, 1]) \
+            and np.array_equal(rows['sequence'], np.arange(len(rows)))
+        dt = float(max(np.max(np.abs(rows['t_trigger'] - wt[:, 0])), np.max(np.abs(rows['t_center'] - wt[:, 1]))))
+        out.append(check('rows_match_reference', PASS if same and dt <= TIME_TOL else FAIL, rows=len(rows),
+                         max_time_difference_s=dt, indices_equal=bool(same)))
+
+    dropped = s.metadata('dropped_rows')
+    got = {int(d['row']): (int(d['reason']), int(d['gated'])) for d in dropped}
+    same = got == ref['dropped'] and len(got) == len(dropped)
+    reasons = {int(r): int((dropped['reason'] == r).sum()) for r in np.unique(dropped['reason'])}
+    out.append(check('dropped_rows_match_reference', PASS if same else FAIL, recorded=len(dropped),
+                     reference=len(ref['dropped']), by_reason=reasons))
+    return out, rows, dropped
+
+
+def accounting(rows, dropped):
+    """Inside every segment, recorded rows plus gated drops are contiguous and unique."""
+    ids = np.concatenate([rows['row'], dropped['row']])
+    unique = len(np.unique(ids)) == len(ids)
+    monotonic = bool(np.all(np.diff(rows['t_trigger']) > 0) and np.all(np.diff(rows['row']) > 0))
+    gated = set(dropped['row'][dropped['gated'] == 1].tolist())
+    lost = 0
+    for k in np.unique(rows['segment']):
+        r = rows['row'][rows['segment'] == k]
+        have = set(r.tolist())
+        lost += sum(1 for i in range(int(r[0]), int(r[-1]) + 1) if i not in have and i not in gated)
+    gated_drops = int((dropped['gated'] == 1).sum())
+    ok = unique and monotonic and lost == 0 and len(rows) > 0
+    return check('no_duplicate_or_unaccounted_rows', PASS if ok else FAIL, unique=bool(unique),
+                 time_and_index_monotonic=monotonic, unaccounted_rows_in_segments=lost,
+                 gated_drops_reported=gated_drops)
+
+
+def gate_geometry(cfg, truth, rows, row_truth):
+    """Every recorded row's true exposure-centre angle lies in its segment's gate."""
+    start = cfg['gate']['start_rad'] + truth['gate_start_offset_rad'] + 2 * math.pi * rows['segment']
+    end = cfg['gate']['end_rad'] + truth['gate_end_offset_rad'] + 2 * math.pi * rows['segment']
+    th = row_truth['theta']
+    inside = (th >= start - 1e-12) & (th < end + 1e-12)
+    return check('rows_inside_their_gate', PASS if inside.all() and len(th) else FAIL,
+                 rows_outside=int((~inside).sum()))
+
+
+def advance_per_rev(cfg, row_truth):
+    dth = row_truth['theta'][-1] - row_truth['theta'][0]
+    if dth < math.pi:
+        return check('advance_per_revolution', UNMEASURABLE, reason='less than half a revolution recorded')
+    adv = (row_truth['x'][-1] - row_truth['x'][0]) / dth * 2 * math.pi
+    rel = abs(adv / cfg['motion']['advance_per_rev_m'] - 1)
+    return check('advance_per_revolution', PASS if rel <= 1e-6 else FAIL, measured_m=adv,
+                 target_m=cfg['motion']['advance_per_rev_m'], relative_error=rel, threshold=1e-6,
+                 note='true car travel per true scan revolution over the recorded span')
+
+
+def gpu_vs_cpu(s, cfg, truth, row_truth):
+    hits = s.evaluation('debug_hits')
+    columns = read_json(s.root / 'evaluation' / 'manifest.json')['debug_hits'].get('columns', [])
+    if not columns:
+        return [check('gpu_hits_match_cpu', UNMEASURABLE, reason='no debug columns archived')], None
+    origin, optical, line = ref_geometry.head_pose(row_truth['theta'], row_truth['x'], truth)
+    x, q = ref_geometry.wall_hits(origin, optical, line, ref_geometry.pixel_tangents(cfg['camera'], columns), truth)
+    err = np.maximum(np.abs(hits['hits'][..., 0] - x), np.abs(hits['hits'][..., 1] - q))
+    worst = float(np.nanmax(err))
+    finite = bool(np.isfinite(hits['hits']).all())
+    return [check('gpu_hits_match_cpu', PASS if finite and worst < 1e-5 else FAIL, max_error_m=worst,
+                  threshold_m=1e-5, rows=len(hits), columns=len(columns))], (np.asarray(columns), x, q)
+
+
+def pixel_spot_check(s, cfg, truth, row_truth, stride=97):
+    seq = np.arange(0, len(row_truth), stride)
+    origin, optical, line = ref_geometry.head_pose(row_truth['theta'][seq], row_truth['x'][seq], truth)
+    x, q = ref_geometry.wall_hits(origin, optical, line, ref_geometry.pixel_tangents(cfg['camera']), truth)
+    expect = ref_geometry.albedo_code(ref_geometry.wall_albedo(x, q))
+    got = s.raw_rows(row_truth['sequence'][seq])
+    frac = float((got != expect).mean())
+    # Float ray directions on the GPU can move a hit across a 1 mm texture cell edge.
+    return check('pixels_match_cpu_texture', PASS if frac <= 1e-3 else FAIL, rows_checked=len(seq),
+                 differing_fraction=frac, threshold=1e-3)
+
+
+def ideal_unroll(s, cfg, rows, truth_hits):
+    if truth_hits is None:
+        return check('ideal_unroll_matches_truth', UNMEASURABLE, reason='no debug columns archived')
+    columns, xt, qt = truth_hits
+    x, q, theta = unroll.row_coordinates(cfg, rows, s.metadata('scan_edges'), s.metadata('odometer_edges'),
+                                         s.metadata('gate_events'), columns)
+    gx = cfg['camera']['fov_at_nominal_m'] / cfg['camera']['width']
+    R = cfg['calibration']['radius_m']
+    dq = unroll.wrap_angle(q / R - qt / R) * R
+    ex, eq = np.abs(x - xt) / gx, np.abs(dq) / gx
+    worst = float(max(ex.max(), eq.max()))
+    p95 = float(max(np.percentile(ex, 95), np.percentile(eq, 95)))
+    ok = p95 <= 0.01 and worst <= 0.05
+    return check('ideal_unroll_matches_truth', PASS if ok else FAIL, p95_px=p95, max_px=worst,
+                 max_x_px=float(ex.max()), max_q_px=float(eq.max()), thresholds={'p95_px': 0.01, 'max_px': 0.05},
+                 note='implementation check with nominal mount; output pixel = fov/width')
+
+
+def compare_sessions(a, b):
+    diffs, n = [], 0
+    for area in ('raw', 'metadata'):
+        for p in sorted((a / area).iterdir()):
+            n += 1
+            other = b / area / p.name
+            if not other.exists() or sha256_file(p) != sha256_file(other):
+                diffs.append(f'{area}/{p.name}')
+    for p in sorted((a / 'evaluation').glob('*.bin')):
+        n += 1
+        if sha256_file(p) != sha256_file(b / 'evaluation' / p.name):
+            diffs.append('evaluation/' + p.name)
+    return check('reimaging_byte_identical', PASS if not diffs and n else FAIL, files_compared=n,
+                 differing=diffs, other_session=str(b))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('session')
+    ap.add_argument('--compare', help='a re-imaged session that must be byte-identical')
+    args = ap.parse_args(argv)
+    s = Session(args.session)
+    checks = []
+    status = s.summary.get('status')
+    checks.append(check('session_complete', PASS if status == 'complete' else FAIL, status=status))
+    if status != 'complete':
+        return finish(s, checks, args)
+    n, bad = verify_hashes(s)
+    checks.append(check('stored_hashes_verify', PASS if not bad and n else FAIL, files=n, mismatched=bad))
+    prov = read_json(s.root / 'config' / 'provenance.json')
+    backend = read_json(s.root / 'config' / 'backend.json')
+    checks.append(check('backend_self_check', PASS if backend['self_check'].get('passed') else FAIL,
+                        optix_library=backend['describe'].get('optix_library'),
+                        ptx_sha256=backend['describe'].get('ptx_sha256')))
+    checks.append(check('binary_matches_source', PASS if prov.get('binary_matches_source') else FAIL,
+                        build=prov.get('build'), source_at_run=prov.get('source_at_run')))
+
+    cfg, truth = s.config(), s.truth()
+    poses, row_truth = s.evaluation('pose_stream'), s.evaluation('row_truth')
+    timing, rows, dropped = compare_timing(s, cfg, truth, poses)
+    checks += timing
+    checks.append(accounting(rows, dropped))
+    checks.append(gate_geometry(cfg, truth, rows, row_truth))
+    checks.append(advance_per_rev(cfg, row_truth))
+    gpu, truth_hits = gpu_vs_cpu(s, cfg, truth, row_truth)
+    checks += gpu
+    checks.append(pixel_spot_check(s, cfg, truth, row_truth))
+    checks.append(ideal_unroll(s, cfg, rows, truth_hits))
+    if args.compare:
+        checks.append(compare_sessions(s.root, Path(args.compare)))
+    else:
+        checks.append(check('reimaging_byte_identical', UNMEASURABLE, reason='no --compare session given'))
+    return finish(s, checks, args)
+
+
+def finish(s, checks, args):
+    states = [c['state'] for c in checks]
+    overall = FAIL if FAIL in states else (UNMEASURABLE if UNMEASURABLE in states else PASS)
+    report_dir = s.root / 'evaluation' / 'reports'
+    report_dir.mkdir(exist_ok=True)
+    report = report_dir / 'stage_a.json'
+    body = {'schema': 'ssb.stage_a_report.v1', 'overall': overall, 'checks': checks}
+    report.write_text(json.dumps(body, indent=2, default=float) + '\n')
+    inputs = [s.root / 'session.json'] + sorted((s.root / 'metadata').glob('*')) + \
+        sorted((s.root / 'evaluation').glob('*.bin')) + [s.root / 'raw' / 'index.json']
+    record = stage_record('validate_stage_a', inputs, [report], {'compare': args.compare})
+    (report_dir / 'stage_a.provenance.json').write_text(json.dumps(record, indent=2) + '\n')
+    width = max(len(c['name']) for c in checks)
+    for c in checks:
+        print(f"{c['name']:<{width}}  {c['state']}")
+    print(f'overall: {overall}  ({report})')
+    return 0 if overall == PASS else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
