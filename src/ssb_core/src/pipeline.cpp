@@ -53,6 +53,7 @@ struct Pipeline::Impl {
   std::atomic<double> latest_pushed{0};
   bool have_first = false;
   double first_pushed = 0;
+  Clock::time_point first_push_wall;
   std::atomic<double> latest_written_center{0};
   Clock::time_point start_wall, finish_called_wall;
   double pushed_at_finish = 0, written_at_finish = 0;
@@ -128,7 +129,7 @@ void Pipeline::Push(const PoseSample& sample) {
   auto& s = *impl_;
   std::lock_guard<std::mutex> lock(s.mutex);
   if (s.input_finished) throw std::logic_error("pose pushed after Finish");
-  if (!s.have_first) s.have_first = true, s.first_pushed = sample.t;
+  if (!s.have_first) s.have_first = true, s.first_pushed = sample.t, s.first_push_wall = Clock::now();
   s.poses.push_back(sample);
   s.latest_pushed = sample.t;
   s.cv.notify_all();
@@ -338,6 +339,8 @@ nlohmann::json Pipeline::Wait() {
     std::rethrow_exception(s.error);
   }
   const double wall = Seconds(s.start_wall, end);
+  const double imaging_wall = s.have_first ? Seconds(s.first_push_wall, end) : 0;
+  const double producer_wall = s.have_first && s.finish_called ? Seconds(s.first_push_wall, s.finish_called_wall) : 0;
   const int64_t rows = s.raw_index.at("rows").get<int64_t>();
   const double sim_first = s.first_pushed;
   double sim_last = sim_first;
@@ -349,9 +352,11 @@ nlohmann::json Pipeline::Wait() {
       {"render_seconds", s.render_seconds},
       {"render_rows_per_second", s.render_seconds > 0 ? rows / s.render_seconds : 0},
       {"write_seconds", s.write_seconds},
-      // Simulated span fully imaged and on disk per wall second (DESIGN.md §11); at the
-      // end that span is the whole pose stream, rows or not.
-      {"imaging_progress_rtf", wall > 0 ? (s.latest_pushed.load() - sim_first) / wall : 0},
+      // DESIGN.md §11, both measured from the first pose sample (excludes start-up):
+      // dynamics = pose stream span per wall second while it was produced; imaging =
+      // the same span per wall second until the last row was on disk.
+      {"dynamics_rtf", producer_wall > 0 ? (s.pushed_at_finish - sim_first) / producer_wall : 0},
+      {"imaging_progress_rtf", imaging_wall > 0 ? (s.latest_pushed.load() - sim_first) / imaging_wall : 0},
       {"last_row_center", sim_last},
       {"sim_time_pushed_at_finish", s.pushed_at_finish},
       {"sim_time_written_at_finish", s.written_at_finish},
@@ -359,7 +364,7 @@ nlohmann::json Pipeline::Wait() {
       {"write_queue_peak_bytes", s.write_queue_peak},
       {"batches", s.batches},
       {"batch_rows", s.config.batch_rows},
-      {"note", "wall clock starts after the backend self-check"}};
+      {"note", "wall_seconds starts after the backend self-check; the rates start at the first pose sample"}};
   WriteJsonAtomic(s.root / "logs" / "performance.json", {{"summary", performance}, {"progress", s.progress}});
   WriteJsonAtomic(s.root / "metadata" / "manifest.json", s.metadata_tables);
   WriteJsonAtomic(s.root / "evaluation" / "manifest.json", s.evaluation_tables);
