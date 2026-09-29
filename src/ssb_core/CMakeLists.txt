@@ -92,5 +92,5 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_ssb_core)
-ament_export_dependencies(yaml-cpp nlohmann_json OpenSSL)
+ament_export_dependencies(yaml-cpp nlohmann_json OpenSSL CUDAToolkit)
 ament_package()

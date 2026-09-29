@@ -1,0 +1,111 @@
+<?xml version="1.0"?>
+<!-- Stage A: ideal rail car on a prismatic track constraint (DESIGN.md §5 simplification:
+     no wheel-rail contact), velocity-commanded scan axis and odometer wheel. The tunnel
+     wall exists only in the OptiX scene; this world carries dynamics and joint state. -->
+<sdf version="1.9">
+  <world name="stage_a">
+    <physics name="1ms" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <gravity>0 0 -9.81</gravity>
+
+    <light type="directional" name="sun">
+      <pose>0 0 10 0 0 0</pose>
+      <direction>-0.3 0.2 -1</direction>
+    </light>
+
+    <model name="track">
+      <static>true</static>
+      <link name="rails">
+        <visual name="left">
+          <pose>5 0.7175 -0.08 0 0 0</pose>
+          <geometry><box><size>20 0.07 0.16</size></box></geometry>
+        </visual>
+        <visual name="right">
+          <pose>5 -0.7175 -0.08 0 0 0</pose>
+          <geometry><box><size>20 0.07 0.16</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Engineering initial values; total 120 kg (DESIGN.md §3, §5). -->
+    <model name="scan_car">
+      <link name="base">
+        <pose>0 0 0.25 0 0 0</pose>
+        <inertial>
+          <mass>85</mass>
+          <inertia><ixx>4.2</ixx><iyy>8.1</iyy><izz>10.5</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="frame">
+          <geometry><box><size>1.0 1.2 0.25</size></box></geometry>
+        </visual>
+        <visual name="mast">
+          <pose>0 0 0.85 0 0 0</pose>
+          <geometry><box><size>0.12 0.4 1.45</size></box></geometry>
+        </visual>
+      </link>
+      <link name="odometer_wheel">
+        <pose>0.35 0.7175 0.1 0 0 0</pose>
+        <inertial>
+          <mass>5</mass>
+          <inertia><ixx>0.015</ixx><iyy>0.025</iyy><izz>0.015</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="wheel">
+          <pose>0 0 0 1.5708 0 0</pose>
+          <geometry><cylinder><radius>0.1</radius><length>0.05</length></cylinder></geometry>
+        </visual>
+      </link>
+      <link name="head">
+        <pose>0 0 1.97 0 0 0</pose>
+        <inertial>
+          <mass>30</mass>
+          <inertia><ixx>0.5</ixx><iyy>0.4</iyy><izz>0.4</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="housing">
+          <pose>0 0 0 0 1.5708 0</pose>
+          <geometry><cylinder><radius>0.14</radius><length>0.35</length></cylinder></geometry>
+        </visual>
+        <visual name="camera">
+          <pose>0 0 0.17 0 0 0</pose>
+          <geometry><box><size>0.08 0.06 0.06</size></box></geometry>
+        </visual>
+      </link>
+
+      <joint name="carriage" type="prismatic">
+        <parent>world</parent>
+        <child>base</child>
+        <axis>
+          <xyz>1 0 0</xyz>
+          <limit><lower>-1e16</lower><upper>1e16</upper><effort>1e9</effort><velocity>1e9</velocity></limit>
+        </axis>
+      </joint>
+      <joint name="odometer" type="revolute">
+        <parent>base</parent>
+        <child>odometer_wheel</child>
+        <axis>
+          <xyz>0 1 0</xyz>
+          <limit><lower>-1e16</lower><upper>1e16</upper><effort>1e9</effort><velocity>1e9</velocity></limit>
+        </axis>
+      </joint>
+      <!-- Axis -x: positive joint angle turns the optical axis from the top towards +y. -->
+      <joint name="scan" type="revolute">
+        <parent>base</parent>
+        <child>head</child>
+        <axis>
+          <xyz>-1 0 0</xyz>
+          <limit><lower>-1e16</lower><upper>1e16</upper><effort>1e9</effort><velocity>1e9</velocity></limit>
+        </axis>
+      </joint>
+
+      <plugin filename="ssb_gazebo_scan" name="ssb_gazebo::ScanSystem">
+        <carriage_joint>carriage</carriage_joint>
+        <scan_joint>scan</scan_joint>
+        <wheel_joint>odometer</wheel_joint>
+      </plugin>
+    </model>
+  </world>
+</sdf>
