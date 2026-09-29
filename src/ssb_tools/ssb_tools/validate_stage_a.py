@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from . import ref_geometry, ref_timing, unroll
 from .provenance import stage_record
@@ -104,9 +105,39 @@ def accounting(rows, dropped):
         lost += sum(1 for i in range(int(r[0]), int(r[-1]) + 1) if i not in have and i not in gated)
     gated_drops = int((dropped['gated'] == 1).sum())
     ok = unique and monotonic and lost == 0 and len(rows) > 0
-    return check('no_duplicate_or_unaccounted_rows', PASS if ok else FAIL, unique=bool(unique),
+    return check('event_accounting_complete', PASS if ok else FAIL, unique=bool(unique),
                  time_and_index_monotonic=monotonic, unaccounted_rows_in_segments=lost,
-                 gated_drops_reported=gated_drops)
+                 gated_drops_reported=gated_drops,
+                 note='every lattice row inside a gate is recorded or listed as dropped; '
+                      'says nothing about whether drops are acceptable')
+
+
+def valid_region(source_config, poses, rows, row_truth, dropped):
+    """No exposure may be missing where the head is inside acceptance.valid_x_m.
+
+    Dropped rows are located by the true head x at both ends of their time bracket;
+    a drop touching the region counts. Drops outside it are start/stop buffer and are
+    reported, not judged.
+    """
+    region = (source_config.get('acceptance') or {}).get('valid_x_m')
+    if not region:
+        return check('no_missing_rows_in_valid_region', UNMEASURABLE, reason='acceptance.valid_x_m not configured')
+    x0, x1 = region
+    if not len(row_truth) or row_truth['x'].min() > x0 or row_truth['x'].max() < x1:
+        return check('no_missing_rows_in_valid_region', FAIL, reason='recorded rows do not span the valid region',
+                     valid_x_m=region, recorded_x_m=[float(row_truth['x'].min()), float(row_truth['x'].max())]
+                     if len(row_truth) else None)
+    gated = dropped[dropped['gated'] == 1]
+    t_end = poses['t'][-1]
+    lo, _ = ref_timing.hermite_value(poses, np.minimum(gated['t_lo'], t_end), 'x', 'v')
+    hi, _ = ref_timing.hermite_value(poses, np.minimum(gated['t_hi'], t_end), 'x', 'v')
+    inside = (np.maximum(lo, hi) >= x0) & (np.minimum(lo, hi) <= x1)
+    reasons = {int(r): int((gated['reason'][inside] == r).sum()) for r in np.unique(gated['reason'][inside])}
+    buffer = {int(r): int((gated['reason'][~inside] == r).sum()) for r in np.unique(gated['reason'][~inside])}
+    in_region = int(((row_truth['x'] >= x0) & (row_truth['x'] <= x1)).sum())
+    return check('no_missing_rows_in_valid_region', PASS if not inside.any() else FAIL, valid_x_m=region,
+                 rows_in_region=in_region, missing_in_region=int(inside.sum()), missing_by_reason=reasons,
+                 buffer_drops_outside_region=int((~inside).sum()), buffer_drops_by_reason=buffer)
 
 
 def gate_geometry(cfg, truth, rows, row_truth):
@@ -174,6 +205,68 @@ def ideal_unroll(s, cfg, rows, truth_hits):
                  note='implementation check with nominal mount; output pixel = fov/width')
 
 
+def planned_motion(summary):
+    motion = summary.get('motion') or {}
+    done = motion.get('complete')
+    if done is None:
+        return check('planned_motion_complete', UNMEASURABLE, reason='pose source has no planned motion', **motion)
+    return check('planned_motion_complete', PASS if done else FAIL, **motion)
+
+
+def observable_from_source(src):
+    """Fields of config/observable_config.json re-derived from the source YAML."""
+    rad = math.pi / 180
+    cam = src['camera']
+    return {
+        ('camera', 'width'): cam['width'], ('camera', 'pixel_pitch_m'): cam['pixel_pitch_m'],
+        ('camera', 'fov_at_nominal_m'): cam['fov_at_nominal_m'],
+        ('camera', 'nominal_distance_m'): cam['nominal_distance_m'], ('camera', 'exposure_s'): cam['exposure_s'],
+        ('camera', 'trigger_delay_s'): cam['trigger_delay_s'], ('camera', 'max_line_rate_hz'): cam['max_line_rate_hz'],
+        ('rescaler', 'multiply'): src['rescaler']['multiply'], ('rescaler', 'divide'): src['rescaler']['divide'],
+        ('rescaler', 'max_period_s'): src['rescaler']['max_period_s'],
+        ('scan_encoder', 'ppr'): src['scan_encoder']['ppr'],
+        ('scan_encoder', 'edges_per_cycle'): src['scan_encoder']['edges_per_cycle'],
+        ('odometer', 'ppr'): src['odometer']['ppr'], ('odometer', 'edges_per_cycle'): src['odometer']['edges_per_cycle'],
+        ('odometer', 'gear_ratio'): src['odometer']['gear_ratio'],
+        ('gate', 'start_rad'): src['gate']['start_deg'] * rad, ('gate', 'end_rad'): src['gate']['end_deg'] * rad,
+        ('calibration', 'wheel_diameter_m'): src['calibration']['wheel_diameter_m'],
+        ('calibration', 'radius_m'): src['calibration']['radius_m'],
+        ('calibration', 'head_mount_x_m'): src['calibration']['head_mount_x_m'],
+        ('motion', 'line_rate_hz'): src['motion']['line_rate_hz'],
+        ('motion', 'advance_per_rev_m'): src['motion']['advance_per_rev_m'],
+        ('motion', 'start_x_m'): src['motion']['start_x_m'],
+        ('motion', 'sample_period_s'): src['motion']['sample_period_s'],
+    }
+
+
+def provenance_chain(s, cfg, truth, prov, backend):
+    """Each link must hold: config source -> truth and observable config -> run inputs ->
+    backend -> archived pose stream. Table and block hashes are checked separately."""
+    source_path = s.root / 'evaluation' / 'config_source.yaml'
+    source_sha = sha256_file(source_path)
+    src = yaml.safe_load(source_path.read_text())
+    links = {
+        'config_source_equals_truth_record': source_sha == truth.get('config_sha256'),
+        'config_source_equals_run_config': source_sha == prov.get('config_sha256'),
+        'run_config_input_hash_matches': (prov.get('inputs') or {}).get('config', {}).get('sha256') == source_sha,
+        'backend_self_check_passed': bool(backend.get('self_check', {}).get('passed')),
+        'backend_ptx_identified': bool(backend.get('describe', {}).get('ptx_sha256')),
+        'provenance_names_pose_source': prov.get('pose_source') == s.summary.get('pose_source'),
+    }
+    mismatched = []
+    for (area, key), value in observable_from_source(src).items():
+        got = cfg.get(area, {}).get(key)
+        if got is None or not math.isclose(float(got), float(value), rel_tol=1e-12, abs_tol=1e-15):
+            mismatched.append(f'{area}.{key}')
+    links['observable_config_derives_from_source'] = not mismatched
+    pose_input = (prov.get('inputs') or {}).get('pose_stream')
+    if pose_input:
+        archived = read_json(s.root / 'evaluation' / 'manifest.json')['pose_stream']['sha256']
+        links['archived_pose_stream_equals_input'] = pose_input['sha256'] == archived
+    ok = all(links.values())
+    return check('provenance_chain', PASS if ok else FAIL, links=links, observable_mismatches=mismatched)
+
+
 def compare_sessions(a, b):
     diffs, n = [], 0
     for area in ('raw', 'metadata'):
@@ -212,10 +305,14 @@ def main(argv=None):
                         build=prov.get('build'), source_at_run=prov.get('source_at_run')))
 
     cfg, truth = s.config(), s.truth()
+    checks.append(provenance_chain(s, cfg, truth, prov, backend))
+    checks.append(planned_motion(s.summary))
+    source_config = yaml.safe_load((s.root / 'evaluation' / 'config_source.yaml').read_text())
     poses, row_truth = s.evaluation('pose_stream'), s.evaluation('row_truth')
     timing, rows, dropped = compare_timing(s, cfg, truth, poses)
     checks += timing
     checks.append(accounting(rows, dropped))
+    checks.append(valid_region(source_config, poses, rows, row_truth, dropped))
     checks.append(gate_geometry(cfg, truth, rows, row_truth))
     checks.append(advance_per_rev(cfg, row_truth))
     gpu, truth_hits = gpu_vs_cpu(s, cfg, truth, row_truth)
@@ -237,8 +334,18 @@ def finish(s, checks, args):
     report = report_dir / 'stage_a.json'
     body = {'schema': 'ssb.stage_a_report.v1', 'overall': overall, 'checks': checks}
     report.write_text(json.dumps(body, indent=2, default=float) + '\n')
-    inputs = [s.root / 'session.json'] + sorted((s.root / 'metadata').glob('*')) + \
-        sorted((s.root / 'evaluation').glob('*.bin')) + [s.root / 'raw' / 'index.json']
+    # Everything the checks read. Raw blocks are bound through raw/index.json, whose
+    # per-block hashes the stored_hashes_verify check re-computes.
+    def session_files(root):
+        root = Path(root)
+        files = [root / 'session.json', root / 'raw' / 'index.json', root / 'logs' / 'performance.json']
+        files += sorted((root / 'config').glob('*.json'))
+        files += sorted((root / 'metadata').glob('*'))
+        files += [p for p in sorted((root / 'evaluation').glob('*')) if p.is_file()]
+        return [p for p in files if p.exists()]
+    inputs = session_files(s.root)
+    if args.compare:
+        inputs += session_files(args.compare)
     record = stage_record('validate_stage_a', inputs, [report], {'compare': args.compare})
     (report_dir / 'stage_a.provenance.json').write_text(json.dumps(record, indent=2) + '\n')
     width = max(len(c['name']) for c in checks)

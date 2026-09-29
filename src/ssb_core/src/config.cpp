@@ -125,6 +125,7 @@ Config Config::Parse(const std::string& text) {
   const auto render = Require(root, "render", "");
   c.batch_rows = Get<int>(render, "batch_rows", "render.");
   c.debug_column_stride = Get<int>(render, "debug_column_stride", "render.");
+  c.max_queued_batches = Get<int>(render, "max_queued_batches", "render.");
   c.debug_delay_per_batch_s = Get<double>(render, "debug_delay_per_batch_s", "render.");
 
   const auto storage = Require(root, "storage", "");
@@ -166,6 +167,7 @@ void Config::Validate() const {
   Check(batch_rows > 0 && batch_rows <= 16384, "render.batch_rows must be in [1, 16384]");
   Check(debug_column_stride >= 0 && debug_column_stride < width, "invalid debug column stride (0 disables)");
   Check(debug_delay_per_batch_s >= 0, "negative debug delay");
+  Check(max_queued_batches > 0, "render.max_queued_batches must be positive");
   Check(block_rows > 0 && write_queue_bytes >= size_t(width) * block_rows, "write queue smaller than a block");
 }
 
@@ -188,7 +190,8 @@ nlohmann::json Config::ObservableJson() const {
                  {"start_x_m", start_x_m}, {"sample_period_s", sample_period_s}, {"profile", profile}};
   j["calibration"] = {{"wheel_diameter_m", calibration.wheel_diameter_m}, {"radius_m", calibration.radius_m},
                       {"head_mount_x_m", calibration.head_mount_x_m}};
-  j["render"] = {{"batch_rows", batch_rows}, {"debug_column_stride", debug_column_stride}};
+  j["render"] = {{"batch_rows", batch_rows}, {"debug_column_stride", debug_column_stride},
+                 {"max_queued_batches", max_queued_batches}};
   j["storage"] = {{"block_rows", block_rows}};
   j["derived"] = {{"counts_per_rev", CountsPerRev()}, {"rows_per_rev", RowsPerRev()}};
   return j;

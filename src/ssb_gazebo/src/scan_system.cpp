@@ -30,7 +30,8 @@ class ScanSystem final : public gz::sim::System,
     try {
       pipeline_->Finish();
       const auto summary = pipeline_->Wait();
-      std::cout << "[ssb] session complete: " << summary.at("rows") << " rows, "
+      std::cout << "[ssb] session data complete, motion complete: " << summary.at("motion").at("complete") << ", "
+                << summary.at("rows") << " rows, "
                 << summary.at("performance").at("wall_seconds_after_finish") << " s after dynamics ended"
                 << std::endl;
     } catch (const std::exception& e) {
@@ -39,7 +40,19 @@ class ScanSystem final : public gz::sim::System,
   }
 
   void Configure(const gz::sim::Entity& entity, const std::shared_ptr<const sdf::Element>& sdf,
-                 gz::sim::EntityComponentManager& ecm, gz::sim::EventManager&) override {
+                 gz::sim::EntityComponentManager& ecm, gz::sim::EventManager& events) override {
+    // A throw here aborts the server (and on WSL leaves a crash dump); refuse cleanly.
+    try {
+      ConfigureOrThrow(entity, sdf, ecm, events);
+    } catch (const std::exception& e) {
+      std::cerr << "[ssb] refusing to run: " << e.what() << std::endl;
+      std::_Exit(2);
+    }
+  }
+
+ private:
+  void ConfigureOrThrow(const gz::sim::Entity& entity, const std::shared_ptr<const sdf::Element>& sdf,
+                        gz::sim::EntityComponentManager& ecm, gz::sim::EventManager&) {
     auto param = [&](const char* env, const char* element) -> std::string {
       if (const char* v = std::getenv(env)) return v;
       return sdf->HasElement(element) ? sdf->Get<std::string>(element) : "";
@@ -49,6 +62,7 @@ class ScanSystem final : public gz::sim::System,
     if (config_path.empty() || session.empty())
       throw std::runtime_error("ssb ScanSystem needs SSB_CONFIG and SSB_SESSION (or <config>/<session>)");
     config_ = ssb::Config::Load(config_path);
+    step_ = config_.sample_period_s;
 
     gz::sim::Model model(entity);
     auto joint = [&](const char* element) {
@@ -70,15 +84,38 @@ class ScanSystem final : public gz::sim::System,
     wheel_rate_ = commanded_speed / (0.5 * config_.calibration.wheel_diameter_m);  // controller uses T_hat
     car_rate_ = wheel_rate_ * 0.5 * config_.truth.wheel_diameter_m;                 // ideal rolling, T_true
 
-    auto renderer = std::make_unique<ssb::OptixRenderer>(config_, ssb::DefaultPtxPath(),
-                                                         static_cast<size_t>(config_.batch_rows));
-    pipeline_ = std::make_unique<ssb::Pipeline>(config_, std::move(renderer),
-                                                ssb::PipelineOptions{session, {"gz", config_path}, "gazebo"});
-    std::cout << "[ssb] imaging session " << session << std::endl;
+    config_path_ = config_path;
+    session_ = session;
   }
 
+  // One step source: the pose stream is sampled at every physics step, so the actual
+  // step must equal motion.sample_period_s, or the run silently covers the wrong span.
+  // Checked on the first step against info.dt (the world's Physics component does not
+  // exist yet at Configure); the pipeline, and so the session, is only created after.
+  void StartOrExit(const gz::sim::UpdateInfo& info) {
+    try {
+      const double dt = std::chrono::duration<double>(info.dt).count();
+      if (std::abs(dt - step_) > 1e-12)
+        throw std::runtime_error("physics step " + std::to_string(dt) + " s differs from motion.sample_period_s " +
+                                 std::to_string(step_) + " s");
+      auto renderer = std::make_unique<ssb::OptixRenderer>(config_, ssb::DefaultPtxPath(),
+                                                           static_cast<size_t>(config_.batch_rows));
+      ssb::PipelineOptions options{session_, {"gz", config_path_}, "gazebo"};
+      options.inputs["config"] = ssb::FileIdentity(config_path_);
+      if (const char* world = std::getenv("SSB_WORLD")) options.inputs["world"] = ssb::FileIdentity(world);
+      options.planned_end_s = config_.profile.back()[0];
+      pipeline_ = std::make_unique<ssb::Pipeline>(config_, std::move(renderer), options);
+      std::cout << "[ssb] imaging session " << session_ << std::endl;
+    } catch (const std::exception& e) {
+      std::cerr << "[ssb] refusing to run: " << e.what() << std::endl;
+      std::_Exit(2);
+    }
+  }
+
+ public:
   void PreUpdate(const gz::sim::UpdateInfo& info, gz::sim::EntityComponentManager& ecm) override {
     if (info.paused) return;
+    if (!pipeline_) StartOrExit(info);
     // gz-sim advances simTime before running systems, so simTime here is already the
     // end of the step being commanded; DART reaches the commanded velocity at that time.
     const double t = std::chrono::duration<double>(info.simTime).count();
@@ -92,6 +129,15 @@ class ScanSystem final : public gz::sim::System,
   void PostUpdate(const gz::sim::UpdateInfo& info, const gz::sim::EntityComponentManager& ecm) override {
     if (info.paused || finished_) return;
     const double t = std::chrono::duration<double>(info.simTime).count();
+    const double dt = std::chrono::duration<double>(info.dt).count();
+    if (std::abs(dt - step_) > 1e-12) {
+      // Step changed at run time: stop feeding; the session reports the motion as incomplete.
+      std::cerr << "[ssb] physics step changed to " << dt << " s at sim time " << t << "; capture stopped"
+                << std::endl;
+      finished_ = true;
+      pipeline_->Finish();
+      return;
+    }
     const auto x = carriage_.Position(ecm), v = carriage_.Velocity(ecm);
     const auto th = scan_.Position(ecm), w = scan_.Velocity(ecm);
     const auto wp = wheel_.Position(ecm), wv = wheel_.Velocity(ecm);
@@ -107,9 +153,10 @@ class ScanSystem final : public gz::sim::System,
 
  private:
   ssb::Config config_;
+  std::string config_path_, session_;
   std::unique_ptr<ssb::Pipeline> pipeline_;
   gz::sim::Joint carriage_, scan_, wheel_;
-  double scan_rate_ = 0, wheel_rate_ = 0, car_rate_ = 0;
+  double step_ = 0, scan_rate_ = 0, wheel_rate_ = 0, car_rate_ = 0;
   bool finished_ = false;
 };
 

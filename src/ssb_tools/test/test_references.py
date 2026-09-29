@@ -73,3 +73,25 @@ def test_accounting_catches_a_silently_missing_row():
     assert validate_stage_a.accounting(rows, drops)['state'] == 'fail'
     drops = np.array([(12, 1)], [('row', '<i8'), ('gated', '<i4')])
     assert validate_stage_a.accounting(rows, drops)['state'] == 'pass'
+
+
+def test_valid_region_separates_buffer_drops_from_missing_rows():
+    poses = constant_speed(1.0)
+    dt = np.dtype([('row', '<i8'), ('t_lo', '<f8'), ('t_hi', '<f8'), ('reason', '<i4'), ('gated', '<i4')])
+    truth = np.zeros(3, [('x', '<f8')])
+    truth['x'] = [0.0, 0.1, 0.2]
+    cfg = {'acceptance': {'valid_x_m': [0.05, 0.15]}}
+    speed = poses['v'][0]
+    buffer_drop = np.array([(1, 0.01 / speed, 0.01 / speed, 2, 1)], dt)    # x = 0.01, outside
+    inside_drop = np.array([(2, 0.1 / speed, 0.1 / speed, 1, 1)], dt)      # x = 0.10, inside
+    ungated = np.array([(3, 0.1 / speed, 0.1 / speed, 1, 0)], dt)          # not an exposure
+    assert validate_stage_a.valid_region(cfg, poses, None, truth, np.concatenate([buffer_drop, ungated]))['state'] == 'pass'
+    result = validate_stage_a.valid_region(cfg, poses, None, truth, np.concatenate([buffer_drop, inside_drop]))
+    assert result['state'] == 'fail' and result['missing_in_region'] == 1 and result['buffer_drops_outside_region'] == 1
+    assert validate_stage_a.valid_region({}, poses, None, truth, buffer_drop)['state'] == 'unmeasurable'
+
+
+def test_planned_motion_distinguishes_drained_from_finished():
+    assert validate_stage_a.planned_motion({'motion': {'complete': False}})['state'] == 'fail'
+    assert validate_stage_a.planned_motion({'motion': {'complete': True}})['state'] == 'pass'
+    assert validate_stage_a.planned_motion({'motion': {'complete': None}})['state'] == 'unmeasurable'

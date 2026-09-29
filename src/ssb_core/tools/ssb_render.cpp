@@ -75,8 +75,11 @@ int main(int argc, char** argv) {
     const std::vector<ssb::PoseSample> samples =
         poses.empty() ? ssb::KinematicSource(config).Sample() : ReadPoses(poses);
     auto renderer = std::make_unique<ssb::OptixRenderer>(config, ptx, static_cast<size_t>(config.batch_rows));
-    ssb::Pipeline pipeline(config, std::move(renderer),
-                           {session, args, poses.empty() ? "kinematic" : "file:" + poses});
+    ssb::PipelineOptions options{session, args, poses.empty() ? "kinematic" : "file:" + poses};
+    options.inputs["config"] = ssb::FileIdentity(config_path);
+    if (poses.empty()) options.planned_end_s = config.profile.back()[0];
+    else options.inputs["pose_stream"] = ssb::FileIdentity(poses);
+    ssb::Pipeline pipeline(config, std::move(renderer), options);
     const auto start = std::chrono::steady_clock::now();
     for (const auto& s : samples) {
       // --realtime paces the producer like a real-time simulator, to exercise lag.

@@ -117,7 +117,9 @@ TEST(Pipeline, ReimagingIsByteIdenticalAcrossBatchSizeAndLag) {
   const auto first = dir / "first", second = dir / "second";
   nlohmann::json a, b;
   {
-    Pipeline p(c, std::make_unique<OptixRenderer>(c, DefaultPtxPath(), c.batch_rows), {first, {"test"}, "kinematic"});
+    PipelineOptions options{first, {"test"}, "kinematic"};
+    options.planned_end_s = c.profile.back()[0];
+    Pipeline p(c, std::make_unique<OptixRenderer>(c, DefaultPtxPath(), c.batch_rows), options);
     for (const auto& s : KinematicSource(c).Sample()) p.Push(s);
     p.Finish();
     a = p.Wait();
@@ -129,6 +131,7 @@ TEST(Pipeline, ReimagingIsByteIdenticalAcrossBatchSizeAndLag) {
   Config c2 = c;
   c2.batch_rows = 333;
   c2.debug_delay_per_batch_s = 0.002;
+  c2.max_queued_batches = 2;  // slow rendering must hold back timing expansion, not grow a queue
   {
     Pipeline p(c2, std::make_unique<OptixRenderer>(c2, DefaultPtxPath(), c2.batch_rows), {second, {"test"}, "file"});
     for (const auto& s : samples) p.Push(s);
@@ -139,6 +142,9 @@ TEST(Pipeline, ReimagingIsByteIdenticalAcrossBatchSizeAndLag) {
   ASSERT_EQ(b.at("status"), "complete");
   EXPECT_GT(a.at("rows").get<int64_t>(), 10000);
   EXPECT_EQ(a.at("rows"), b.at("rows"));
+  EXPECT_EQ(a.at("motion").at("complete"), true);
+  EXPECT_TRUE(b.at("motion").at("complete").is_null());  // archived stream: no plan to judge
+  EXPECT_EQ(b.at("performance").at("render_queue_peak_batches"), 2);
   size_t compared = 0;
   for (const auto& sub : {"raw", "metadata", "evaluation"}) {
     for (const auto& e : std::filesystem::directory_iterator(first / sub)) {
@@ -149,5 +155,26 @@ TEST(Pipeline, ReimagingIsByteIdenticalAcrossBatchSizeAndLag) {
     }
   }
   EXPECT_GE(compared, 12u);
+  std::filesystem::remove_all(dir);
+}
+
+TEST(Pipeline, TruncatedStreamIsDrainedButReportsMotionIncomplete) {
+  Config c = BaseConfig();
+  c.profile = {{0, 0}, {0.6, 1}, {1.6, 1}};
+  const auto dir = std::filesystem::temp_directory_path() / ("ssb_trunc_" + std::to_string(getpid()));
+  std::filesystem::remove_all(dir);
+  PipelineOptions options{dir, {"test"}, "kinematic"};
+  options.planned_end_s = c.profile.back()[0];
+  nlohmann::json summary;
+  {
+    Pipeline p(c, std::make_unique<OptixRenderer>(c, DefaultPtxPath(), c.batch_rows), options);
+    for (const auto& s : KinematicSource(c).Sample())
+      if (s.t <= 0.8) p.Push(s);
+    p.Finish();
+    summary = p.Wait();
+  }
+  EXPECT_EQ(summary.at("status"), "complete");
+  EXPECT_EQ(summary.at("motion").at("complete"), false);
+  EXPECT_DOUBLE_EQ(summary.at("motion").at("last_sample_s").get<double>(), 0.8);
   std::filesystem::remove_all(dir);
 }

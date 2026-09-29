@@ -1,6 +1,7 @@
 #include "ssb_core/pipeline.hpp"
 
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -43,6 +44,7 @@ struct Pipeline::Impl {
   std::deque<PoseSample> poses;
   bool input_finished = false;
   std::deque<std::vector<RowJob>> render_queue;
+  size_t render_queue_peak = 0;
   bool timing_done = false;
   std::deque<RenderedBatch> write_queue;
   size_t write_queue_bytes = 0, write_queue_peak = 0;
@@ -97,7 +99,11 @@ Pipeline::Pipeline(const Config& config, std::unique_ptr<RowRenderer> renderer, 
   WriteJsonAtomic(s.root / "config" / "observable_config.json", config.ObservableJson());
   WriteJsonAtomic(s.root / "evaluation" / "truth.json", config.TruthJson());
   WriteTextAtomic(s.root / "evaluation" / "config_source.yaml", config.source_text);
-  WriteJsonAtomic(s.root / "config" / "provenance.json", ProvenanceJson(options.argv));
+  nlohmann::json provenance = ProvenanceJson(options.argv);
+  provenance["pose_source"] = options.pose_source;
+  provenance["inputs"] = options.inputs;
+  provenance["config_sha256"] = config.source_sha256;
+  WriteJsonAtomic(s.root / "config" / "provenance.json", provenance);
   // Refuse to record anything unless the loaded backend demonstrably works (§12.1).
   try {
     nlohmann::json backend = {{"describe", s.renderer->Describe()}, {"self_check", s.renderer->SelfCheck()}};
@@ -123,6 +129,10 @@ Pipeline::~Pipeline() {
     } catch (...) {
     }
   }
+}
+
+nlohmann::json FileIdentity(const std::filesystem::path& path) {
+  return {{"path", std::filesystem::absolute(path).string()}, {"sha256", Sha256File(path)}};
 }
 
 void Pipeline::Push(const PoseSample& sample) {
@@ -175,8 +185,13 @@ void Pipeline::Impl::TimingLoop() {
         truth_records.push_back({job.record.sequence, job.record.t_center, p.theta, p.omega, p.x, p.v});
         batch.push_back(job);
         if (batch.size() == static_cast<size_t>(config.batch_rows)) {
-          std::lock_guard<std::mutex> lock(mutex);
+          std::unique_lock<std::mutex> lock(mutex);
+          cv.wait(lock, [&] {
+            return failed || render_queue.size() < static_cast<size_t>(config.max_queued_batches);
+          });
+          if (failed) return;
           render_queue.push_back(std::move(batch));
+          render_queue_peak = std::max(render_queue_peak, render_queue.size());
           batch.clear();
           cv.notify_all();
         }
@@ -241,6 +256,7 @@ void Pipeline::Impl::RenderLoop() {
         if (render_queue.empty()) break;  // timing done and drained
         jobs = std::move(render_queue.front());
         render_queue.pop_front();
+        cv.notify_all();
       }
       RenderedBatch b;
       b.first_sequence = jobs.front().record.sequence;
@@ -362,6 +378,8 @@ nlohmann::json Pipeline::Wait() {
       {"sim_time_written_at_finish", s.written_at_finish},
       {"wall_seconds_after_finish", s.finish_called ? Seconds(s.finish_called_wall, end) : 0},
       {"write_queue_peak_bytes", s.write_queue_peak},
+      {"render_queue_peak_batches", s.render_queue_peak},
+      {"render_queue_limit_batches", s.config.max_queued_batches},
       {"batches", s.batches},
       {"batch_rows", s.config.batch_rows},
       {"note", "wall_seconds starts after the backend self-check; the rates start at the first pose sample"}};
@@ -369,8 +387,22 @@ nlohmann::json Pipeline::Wait() {
   WriteJsonAtomic(s.root / "metadata" / "manifest.json", s.metadata_tables);
   WriteJsonAtomic(s.root / "evaluation" / "manifest.json", s.evaluation_tables);
   WriteJsonAtomic(s.root / "raw" / "index.json", s.raw_index);
+  // "complete" means every sample that arrived is imaged and on disk; whether the
+  // planned motion was actually run is reported separately.
+  const double planned = s.options.planned_end_s;
+  const double tolerance = 0.5 * s.config.sample_period_s;
+  nlohmann::json motion = {{"first_sample_s", s.have_first ? nlohmann::json(sim_first) : nlohmann::json()},
+                           {"last_sample_s", s.latest_pushed.load()}};
+  if (std::isfinite(planned)) {
+    motion["planned_end_s"] = planned;
+    motion["complete"] = s.latest_pushed.load() >= planned - tolerance;
+  } else {
+    motion["planned_end_s"] = nullptr;
+    motion["complete"] = nullptr;
+  }
   const nlohmann::json summary = {{"schema", "ssb.session.v1"},
                                   {"status", "complete"},
+                                  {"motion", motion},
                                   {"pose_source", s.options.pose_source},
                                   {"rows", rows},
                                   {"timing", s.timing_stats},

@@ -40,7 +40,7 @@ motion:
   advance_per_rev_m: 0.6
   start_theta_deg: 180.0  # start in the unscanned bottom arc
   start_x_m: 0.0
-  sample_period_s: 0.001
+  sample_period_s: 0.001       # also the Gazebo physics step; the plugin refuses a mismatch
   # Speed-factor knots [time_s, factor]; quintic smootherstep between knots.
   profile:
     - [0.0, 0.0]
@@ -74,7 +74,13 @@ calibration:
 render:
   batch_rows: 1024
   debug_column_stride: 256      # truth hit coordinates for every Nth column plus the last
+  max_queued_batches: 8         # row-job batches waiting for rendering; timing waits beyond this
   debug_delay_per_batch_s: 0.0  # test hook: artificial imaging lag
+
+# Evaluation only. Head x range whose exposures must all exist; the start and stop
+# ramps outside it are buffers where dropped rows are counted and reported.
+acceptance:
+  valid_x_m: [0.25, 1.9]
 
 storage:
   block_rows: 4096

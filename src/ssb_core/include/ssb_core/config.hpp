@@ -42,7 +42,7 @@ struct Config {
     double wheel_diameter_m = 0, radius_m = 0, head_mount_x_m = 0;
   } calibration;
 
-  int batch_rows = 0, debug_column_stride = 0;
+  int batch_rows = 0, debug_column_stride = 0, max_queued_batches = 0;
   double debug_delay_per_batch_s = 0;
   int block_rows = 0;
   size_t write_queue_bytes = 0;
