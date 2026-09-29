@@ -12,6 +12,7 @@
 
 #include "ssb_core/camera_model.hpp"
 #include "ssb_core/session.hpp"
+#include "ssb_core/sha256.hpp"
 #include "ssb_core/timing.hpp"
 
 namespace ssb {
@@ -400,8 +401,16 @@ nlohmann::json Pipeline::Wait() {
     motion["planned_end_s"] = nullptr;
     motion["complete"] = nullptr;
   }
+  // Content identity of the descriptive files at completion; tables and blocks carry
+  // their own hashes in the manifests listed here.
+  nlohmann::json files;
+  for (const char* name : {"config/observable_config.json", "config/provenance.json", "config/backend.json",
+                           "evaluation/truth.json", "evaluation/config_source.yaml", "evaluation/manifest.json",
+                           "metadata/manifest.json", "raw/index.json"})
+    files[name] = Sha256File(s.root / name);
   const nlohmann::json summary = {{"schema", "ssb.session.v1"},
                                   {"status", "complete"},
+                                  {"files", files},
                                   {"motion", motion},
                                   {"pose_source", s.options.pose_source},
                                   {"rows", rows},

@@ -95,3 +95,33 @@ def test_planned_motion_distinguishes_drained_from_finished():
     assert validate_stage_a.planned_motion({'motion': {'complete': False}})['state'] == 'fail'
     assert validate_stage_a.planned_motion({'motion': {'complete': True}})['state'] == 'pass'
     assert validate_stage_a.planned_motion({'motion': {'complete': None}})['state'] == 'unmeasurable'
+
+
+def test_valid_region_needs_a_real_interval_with_exposures():
+    poses = constant_speed(1.0)
+    dt = np.dtype([('row', '<i8'), ('t_lo', '<f8'), ('t_hi', '<f8'), ('reason', '<i4'), ('gated', '<i4')])
+    none = np.zeros(0, dt)
+    truth = np.zeros(2, [('x', '<f8')])
+    truth['x'] = [0.0, 0.3]  # spans the band but no row lies inside it
+    band = {'acceptance': {'valid_x_m': [0.1, 0.2]}}
+    assert validate_stage_a.valid_region(band, poses, None, truth, none)['state'] == 'unmeasurable'
+    for bad in ([0.2, 0.1], [0.1, float('nan')], [0.1], 'x'):
+        result = validate_stage_a.valid_region({'acceptance': {'valid_x_m': bad}}, poses, None, truth, none)
+        assert result['state'] == 'fail', bad
+
+
+def test_truth_record_must_derive_from_the_config_source():
+    src = {'tunnel': {'radius_m': 2.77, 'axis_z_m': 1.97}, 'motion': {'start_theta_deg': 180.0},
+           'truth': {'wheel_diameter_m': 0.2, 'scan_encoder_zero_deg': 0.0, 'gate_start_offset_deg': 0.0,
+                     'gate_end_offset_deg': 0.0, 'head_mount_x_m': 0.0,
+                     'mount': {k: 0.0 for k in ('e_m', 'tangential_m', 'dy_m', 'dz_m', 'tilt_y_rad',
+                                                'tilt_z_rad', 'twist_rad')}}}
+    truth = {'tunnel': {'radius_m': 2.77, 'axis_z_m': 1.97}, 'start_theta_rad': math.pi, 'wheel_diameter_m': 0.2,
+             'scan_encoder_zero_rad': 0.0, 'gate_start_offset_rad': 0.0, 'gate_end_offset_rad': 0.0,
+             'head_mount_x_m': 0.0, 'mount': dict(src['truth']['mount']), 'config_sha256': 'abc'}
+    expected = validate_stage_a.truth_from_source(src, 'abc')
+    assert validate_stage_a.field_mismatches(truth, expected) == []
+    truth['wheel_diameter_m'] = 0.3
+    assert validate_stage_a.field_mismatches(truth, expected) == ['wheel_diameter_m']
+    del truth['mount']['e_m']
+    assert 'mount.e_m' in validate_stage_a.field_mismatches(truth, expected)

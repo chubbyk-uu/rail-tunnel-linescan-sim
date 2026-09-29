@@ -122,7 +122,13 @@ def valid_region(source_config, poses, rows, row_truth, dropped):
     region = (source_config.get('acceptance') or {}).get('valid_x_m')
     if not region:
         return check('no_missing_rows_in_valid_region', UNMEASURABLE, reason='acceptance.valid_x_m not configured')
-    x0, x1 = region
+    try:
+        x0, x1 = (float(v) for v in region)
+    except (TypeError, ValueError):
+        return check('no_missing_rows_in_valid_region', FAIL, reason='valid_x_m must be two numbers', valid_x_m=region)
+    if not (math.isfinite(x0) and math.isfinite(x1) and x0 < x1):
+        return check('no_missing_rows_in_valid_region', FAIL, reason='valid_x_m must be finite and increasing',
+                     valid_x_m=region)
     if not len(row_truth) or row_truth['x'].min() > x0 or row_truth['x'].max() < x1:
         return check('no_missing_rows_in_valid_region', FAIL, reason='recorded rows do not span the valid region',
                      valid_x_m=region, recorded_x_m=[float(row_truth['x'].min()), float(row_truth['x'].max())]
@@ -135,6 +141,11 @@ def valid_region(source_config, poses, rows, row_truth, dropped):
     reasons = {int(r): int((gated['reason'][inside] == r).sum()) for r in np.unique(gated['reason'][inside])}
     buffer = {int(r): int((gated['reason'][~inside] == r).sum()) for r in np.unique(gated['reason'][~inside])}
     in_region = int(((row_truth['x'] >= x0) & (row_truth['x'] <= x1)).sum())
+    if in_region == 0 and not inside.any():
+        # Nothing was exposed there (e.g. a band inside one bottom-arc advance): no
+        # missing rows, but also no evidence; never a pass.
+        return check('no_missing_rows_in_valid_region', UNMEASURABLE, reason='no exposures inside the valid region',
+                     valid_x_m=region, rows_in_region=0)
     return check('no_missing_rows_in_valid_region', PASS if not inside.any() else FAIL, valid_x_m=region,
                  rows_in_region=in_region, missing_in_region=int(inside.sum()), missing_by_reason=reasons,
                  buffer_drops_outside_region=int((~inside).sum()), buffer_drops_by_reason=buffer)
@@ -236,7 +247,40 @@ def observable_from_source(src):
         ('motion', 'advance_per_rev_m'): src['motion']['advance_per_rev_m'],
         ('motion', 'start_x_m'): src['motion']['start_x_m'],
         ('motion', 'sample_period_s'): src['motion']['sample_period_s'],
+        ('tunnel', 'x_min_m'): src['tunnel']['x_min_m'], ('tunnel', 'x_max_m'): src['tunnel']['x_max_m'],
     }
+
+
+def truth_from_source(src, source_sha):
+    """evaluation/truth.json as the render stage must have written it from the source YAML."""
+    rad = math.pi / 180
+    t, m = src['truth'], src['truth']['mount']
+    return {
+        ('tunnel', 'radius_m'): src['tunnel']['radius_m'], ('tunnel', 'axis_z_m'): src['tunnel']['axis_z_m'],
+        ('start_theta_rad',): src['motion']['start_theta_deg'] * rad,
+        ('wheel_diameter_m',): t['wheel_diameter_m'],
+        ('scan_encoder_zero_rad',): t['scan_encoder_zero_deg'] * rad,
+        ('gate_start_offset_rad',): t['gate_start_offset_deg'] * rad,
+        ('gate_end_offset_rad',): t['gate_end_offset_deg'] * rad,
+        ('head_mount_x_m',): t['head_mount_x_m'],
+        **{('mount', k): m[k] for k in ('e_m', 'tangential_m', 'dy_m', 'dz_m', 'tilt_y_rad', 'tilt_z_rad', 'twist_rad')},
+        ('config_sha256',): source_sha,
+    }
+
+
+def field_mismatches(record, expected):
+    bad = []
+    for path, want in expected.items():
+        got = record
+        for key in path:
+            got = got.get(key) if isinstance(got, dict) else None
+        if isinstance(want, str):
+            ok = got == want
+        else:
+            ok = got is not None and math.isclose(float(got), float(want), rel_tol=1e-12, abs_tol=1e-15)
+        if not ok:
+            bad.append('.'.join(path))
+    return bad
 
 
 def provenance_chain(s, cfg, truth, prov, backend):
@@ -259,12 +303,20 @@ def provenance_chain(s, cfg, truth, prov, backend):
         if got is None or not math.isclose(float(got), float(value), rel_tol=1e-12, abs_tol=1e-15):
             mismatched.append(f'{area}.{key}')
     links['observable_config_derives_from_source'] = not mismatched
+    truth_mismatched = field_mismatches(truth, truth_from_source(src, source_sha))
+    links['truth_derives_from_source'] = not truth_mismatched
+    # Content identity recorded when the session completed (session.json "files").
+    recorded = s.summary.get('files') or {}
+    changed = [name for name, digest in recorded.items() if sha256_file(s.root / name) != digest]
+    links['completion_file_hashes_recorded'] = bool(recorded)
+    links['completion_file_hashes_match'] = bool(recorded) and not changed
     pose_input = (prov.get('inputs') or {}).get('pose_stream')
     if pose_input:
         archived = read_json(s.root / 'evaluation' / 'manifest.json')['pose_stream']['sha256']
         links['archived_pose_stream_equals_input'] = pose_input['sha256'] == archived
     ok = all(links.values())
-    return check('provenance_chain', PASS if ok else FAIL, links=links, observable_mismatches=mismatched)
+    return check('provenance_chain', PASS if ok else FAIL, links=links, observable_mismatches=mismatched,
+                 truth_mismatches=truth_mismatched, files_changed_since_completion=changed)
 
 
 def compare_sessions(a, b):
