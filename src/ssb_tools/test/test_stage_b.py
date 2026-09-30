@@ -281,6 +281,10 @@ def test_optics_config_persists_accepted_texture_footprint_sampling(tmp_path):
     written=json.loads((tmp_path/'out/scene.json').read_text())
     assert scene['sampling']['texture_footprint_samples']==2 and written['sampling']['texture_footprint_samples']==2
     assert written['sampling']['texture_prefilter'] is False
+    assert 'interior_ratio' in written['crack_optics']                     # no depths: flat opening
+    (tmp_path/'defects.json').write_text('{"files": {"depths.bin": {}}}')
+    cavity=optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out3',integrated=True)
+    assert cavity['crack_optics']['model']=='cavity_v1'
     with pytest.raises(ValueError,match='sample limits'):
         optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out2',texture_footprint_samples=9)
 
@@ -367,3 +371,22 @@ def test_crack_refinement_keeps_topology_and_width_range(inputs):
     line=np.polyfit(stair[:,0],stair[:,1],1);dev=q2[:,1]-np.polyval(line,q2[:,0])
     src=np.abs(stair[:,1]-np.polyval(line,stair[:,0])).max()   # the staircase's own quantisation
     assert np.abs(dev).max()<src+.0015 and np.hypot(*np.diff(q2,axis=0).T).sum()<1.15*np.hypot(*(stair[-1]-stair[0]))
+
+
+def test_crack_depth_profile_and_index_alignment(inputs):
+    from ssb_tools.stage_b_defects import depth_profile, build_grid, DEPTH
+    config,spec=inputs;dep=spec['cracks']['depth']
+    s=np.linspace(0,1.,2001);r=np.full(len(s),.0002);r[-20:]=np.linspace(.0002,0,20)   # free tip at the end
+    d=depth_profile(s,r,np.random.default_rng(1),dep)
+    aspect=d[:-20]/(2*r[:-20])
+    assert abs(np.log(np.median(aspect))-np.log(dep['aspect_median']))<.3
+    assert (aspect<1.5*dep['plug_aspect']).any()                      # shallow (debris) stretches exist
+    la=np.log(aspect)                                                 # correlated over >= 5 mm: 0.5 mm
+    assert np.median(np.abs(np.diff(la)))<.3*la.std()                 # steps are small against the spread
+    assert d[-1]==0 and d.max()<=dep['max_depth_m']                   # tip closes; depth bounded
+    path=np.column_stack([1+.1*s,.5+0*s])
+    item=dict(paths_xq_m=[path.tolist()],vertex_radius_m=[r.tolist()],vertex_depth_m=[d.tolist()])
+    seg,off,idx,grid,dd=build_grid([item],[0,2,0,1],.01,with_depths=True)
+    assert dd.dtype==DEPTH and len(dd)==len(seg)
+    np.testing.assert_allclose(dd['d0'][1:],dd['d1'][:-1],atol=1e-9)  # continuous, same order as segments
+    np.testing.assert_allclose(dd['d0'][0],d[0],rtol=1e-6)

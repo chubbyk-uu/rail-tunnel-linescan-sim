@@ -39,6 +39,7 @@ struct LaunchParams {
   const ssb::CrackSegment* cracks;
   const unsigned* crack_offsets;
   const unsigned* crack_indices;
+  const float* crack_depths;     // cavity model: [d0, d1] effective visible depth per segment, or null
   double crack_x0, crack_q0, crack_cell;
   unsigned crack_nx, crack_nq;
   unsigned light_enabled, shadows;

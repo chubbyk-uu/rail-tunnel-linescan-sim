@@ -11,6 +11,8 @@ from .stage_b_cracks import calibrate_long, sample_widths
 from .stage_b_scene import digest, load_spec, peak_rss_bytes
 
 SEGMENT=np.dtype([('x0','<f4'),('q0','<f4'),('x1','<f4'),('q1','<f4'),('r0','<f4'),('r1','<f4')])
+# Optional parallel array (depths.bin): effective visible depth at both segment ends, metres.
+DEPTH=np.dtype([('d0','<f4'),('d1','<f4')])
 
 
 def exact_composition(count,weights,rng):
@@ -106,15 +108,18 @@ def assemble(config,spec,long_catalog,short_catalog,count=60):
     return result
 
 
-def build_grid(instances,bounds,cell_m=.01,max_index_bytes=32<<20):
+def build_grid(instances,bounds,cell_m=.01,max_index_bytes=32<<20,with_depths=False):
+    """Segments, cell offsets, indices and grid metadata; with_depths also returns the per-segment
+    depths (DEPTH) interpolated like the radii, from each instance's vertex_depth_m."""
     x0,x1,q0,q1=bounds
     if not 0<cell_m<=.2 or x1<=x0 or q1<=q0: raise ValueError('invalid crack grid')
     nx,nq=math.ceil((x1-x0)/cell_m),math.ceil((q1-q0)/cell_m)
     if (nx*nq+1)*4>max_index_bytes: raise ValueError('crack index exceeds budget')
-    grid={};segments=[]
+    grid={};segments=[];depths=[]
     for item in instances:
-        for path,radii in zip(item['paths_xq_m'],item['vertex_radius_m']):
-            for a,b,r0,r1 in zip(path[:-1],path[1:],radii[:-1],radii[1:]):
+        vertex_depths=item['vertex_depth_m'] if with_depths else [[0.]*len(p) for p in item['paths_xq_m']]
+        for path,radii,dd in zip(item['paths_xq_m'],item['vertex_radius_m'],vertex_depths):
+            for a,b,r0,r1,d0,d1 in zip(path[:-1],path[1:],radii[:-1],radii[1:],dd[:-1],dd[1:]):
                 if np.linalg.norm(np.asarray(b)-a)<1e-9: continue
                 # Subdivide long source edges to bound grid fanout; preserve straight source edges.
                 pieces=max(1,math.ceil(np.linalg.norm(np.asarray(b)-a)/cell_m))
@@ -122,7 +127,7 @@ def build_grid(instances,bounds,cell_m=.01,max_index_bytes=32<<20):
                     t0,t1=j/pieces,(j+1)/pieces
                     u=(1-t0)*np.asarray(a)+t0*np.asarray(b);v=(1-t1)*np.asarray(a)+t1*np.asarray(b)
                     ra,rb=(1-t0)*r0+t0*r1,(1-t1)*r0+t1*r1
-                    index=len(segments);segments.append((*u,*v,ra,rb))
+                    index=len(segments);segments.append((*u,*v,ra,rb));depths.append(((1-t0)*d0+t0*d1,(1-t1)*d0+t1*d1))
                     # Conservative float-coordinate error guard at up to 150 m.
                     margin=max(ra,rb)+2e-5
                     lo=np.maximum(0,np.floor((np.minimum(u,v)-margin-[x0,q0])/cell_m).astype(int))
@@ -133,11 +138,19 @@ def build_grid(instances,bounds,cell_m=.01,max_index_bytes=32<<20):
     for i in range(nx*nq):
         indices.extend(grid.get(i,[]));offsets[i+1]=len(indices)
     packed=np.array(segments,dtype=SEGMENT);indices=np.array(indices,dtype='<u4')
-    if packed.nbytes+offsets.nbytes+indices.nbytes>max_index_bytes: raise ValueError('crack index exceeds budget')
-    return packed,offsets,indices,dict(origin_xq_m=[x0,q0],cell_m=cell_m,cells_xq=[nx,nq],
-                                     segments=len(packed),index_entries=len(indices),
-                                     bytes=packed.nbytes+offsets.nbytes+indices.nbytes,
-                                     max_cell_segments=max((len(v) for v in grid.values()),default=0))
+    extra=np.array(depths,dtype=DEPTH) if with_depths else None
+    total=packed.nbytes+offsets.nbytes+indices.nbytes+(extra.nbytes if with_depths else 0)
+    if total>max_index_bytes: raise ValueError('crack index exceeds budget')
+    meta=dict(origin_xq_m=[x0,q0],cell_m=cell_m,cells_xq=[nx,nq],segments=len(packed),index_entries=len(indices),
+              bytes=total,max_cell_segments=max((len(v) for v in grid.values()),default=0))
+    return (packed,offsets,indices,meta,extra) if with_depths else (packed,offsets,indices,meta)
+
+
+def write_index(output,packed,offsets,indices,depths=None):
+    """Write the crack index payloads; returns the defects.json 'files' entry."""
+    data=[('segments.bin',packed),('offsets.bin',offsets),('indices.bin',indices)]+([('depths.bin',depths)] if depths is not None else [])
+    for name,array in data: array.tofile(output/name)
+    return {name:dict(file=name,sha256=digest(output/name)) for name,_ in data}
 
 
 def prepare(config_path,spec_path,long_path,short_path,output,count=60):
@@ -222,6 +235,7 @@ def refine(source, output, spec_path):
     items=[]
     for index,item in enumerate(old['instances']):
         rng=np.random.default_rng(np.random.SeedSequence([spec['seed'],41,index]))
+        item={k:v for k,v in item.items() if k!='vertex_depth_m'}   # depths follow the old vertices
         degree={}
         for p in item['paths_xq_m']:
             for v in (p[0],p[-1]):key=tuple(np.round(v,9));degree[key]=degree.get(key,0)+1
@@ -237,10 +251,49 @@ def refine(source, output, spec_path):
                           longitudinal_span_m=float(np.ptp(main[:,0])),refined=True))
     packed,offsets,indices,grid=build_grid(items,bounds)
     output.mkdir(parents=True)
-    for name,data in (('segments.bin',packed),('offsets.bin',offsets),('indices.bin',indices)): data.tofile(output/name)
-    result=dict(old,instances=items,grid=grid,files={name:dict(file=name,sha256=digest(output/name)) for name in ('segments.bin','offsets.bin','indices.bin')},
+    result=dict(old,instances=items,grid=grid,files=write_index(output,packed,offsets,indices),
                 refined_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),spec_sha256=digest(spec_path),parameters=cracks['refine']),
                 assumption=old['assumption']+' Refined: source staircase below smooth_m replaced by synthetic self-affine wiggle; widths vary along the crack (synthetic).',
+                preparation_peak_rss_bytes=peak_rss_bytes())
+    (output/'defects.json').write_text(json.dumps(result)+'\n')
+    print(json.dumps(dict(grid=grid)))
+    return result
+
+
+def depth_profile(s,radius,rng,depth):
+    """Effective visible depth along one path (synthetic appearance parameter, not a measured or
+    total crack depth): D = aspect(s) x local width, aspect log-normal along the crack with the
+    given wavelength band, plus short shallow stretches (debris/dust plugs)."""
+    lo,hi=depth['wavelengths_m']
+    z=self_affine(rng,s,lo,hi,1.,hi,0.);z=z/max(float(z.std()),1e-12) if len(s)>2 else np.zeros_like(s)
+    log_aspect=math.log(depth['aspect_median'])+depth['aspect_log_sigma']*z
+    L=float(s[-1])
+    for _ in range(rng.poisson(depth['plug_rate_per_m']*L)):
+        c=rng.uniform(0,L);half=.5*rng.uniform(*depth['plug_length_m'])
+        w=.5*(1+np.cos(np.pi*np.clip(np.abs(s-c)/half,0,1)))           # smooth bump, 1 at the centre
+        log_aspect=(1-w)*log_aspect+w*math.log(depth['plug_aspect'])
+    return np.minimum(np.exp(log_aspect)*2*np.asarray(radius),depth['max_depth_m'])
+
+
+def add_depth(source,output,spec_path):
+    """New defect version: same instances, plus per-vertex effective visible depth (depths.bin)."""
+    source=Path(source).resolve();output=Path(output).resolve()
+    if output.exists(): raise ValueError('defect output already exists')
+    old=json.loads((source/'defects.json').read_text());spec=load_spec(spec_path);depth=spec['cracks']['depth']
+    config=yaml.safe_load(Path(old['inputs']['config']['file']).read_text());rr=config['tunnel']['radius_m']
+    bounds=[config['tunnel']['x_min_m'],config['tunnel']['x_max_m'],-math.pi*rr,math.pi*rr]
+    items=[]
+    for index,item in enumerate(old['instances']):
+        rng=np.random.default_rng(np.random.SeedSequence([spec['seed'],43,index]));vertex_depth=[]
+        for p,r in zip(item['paths_xq_m'],item['vertex_radius_m']):
+            p=np.asarray(p);s=np.r_[0,np.cumsum(np.linalg.norm(np.diff(p,axis=0),axis=1))]
+            vertex_depth.append(depth_profile(s,r,rng,depth).tolist())
+        items.append(dict(item,vertex_depth_m=vertex_depth))
+    packed,offsets,indices,grid,depths=build_grid(items,bounds,old['grid']['cell_m'],with_depths=True)
+    output.mkdir(parents=True)
+    result=dict(old,instances=items,grid=grid,files=write_index(output,packed,offsets,indices,depths),
+                depth_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),spec_sha256=digest(spec_path),parameters=depth),
+                optical_model='Cavity reflectance of a V-profiled slot from the width and a synthetic effective visible depth (vertex_depth_m); not a measured or total depth, no geometric relief.',
                 preparation_peak_rss_bytes=peak_rss_bytes())
     (output/'defects.json').write_text(json.dumps(result)+'\n')
     print(json.dumps(dict(grid=grid)))
@@ -256,10 +309,10 @@ def regrid(source,output,cell_m):
     bounds=[config['tunnel']['x_min_m'],config['tunnel']['x_max_m'],-math.pi*r,math.pi*r]
     g=old['grid']
     if abs(g['origin_xq_m'][0]-bounds[0])>1e-12 or abs(g['origin_xq_m'][1]-bounds[2])>1e-12: raise ValueError('grid bounds changed')
-    packed,offsets,indices,grid=build_grid(old['instances'],bounds,cell_m)
+    with_depths='vertex_depth_m' in old['instances'][0]
+    packed,offsets,indices,grid,*depths=build_grid(old['instances'],bounds,cell_m,with_depths=with_depths)
     output.mkdir(parents=True)
-    for name,data in (('segments.bin',packed),('offsets.bin',offsets),('indices.bin',indices)): data.tofile(output/name)
-    result=dict(old,grid=grid,files={name:dict(file=name,sha256=digest(output/name)) for name in ('segments.bin','offsets.bin','indices.bin')},
+    result=dict(old,grid=grid,files=write_index(output,packed,offsets,indices,*depths),
                 regridded_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),cell_m=g['cell_m']),
                 preparation_peak_rss_bytes=peak_rss_bytes())
     (output/'defects.json').write_text(json.dumps(result,indent=2)+'\n')
@@ -271,11 +324,13 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--regrid',type=Path,help='existing defect layout: rebuild only its crack index')
     p.add_argument('--refine',type=Path,help='existing defect layout: refine paths/widths (needs --spec)')
+    p.add_argument('--depth',type=Path,help='existing defect layout: add effective visible depth (needs --spec)')
     p.add_argument('--cell-m',type=float,default=.01)
     for arg in ('config','spec','long-catalog','short-catalog'): p.add_argument('--'+arg,type=Path)
     p.add_argument('--output',required=True,type=Path);p.add_argument('--count',type=int,default=60)
     a=p.parse_args()
     if a.refine: refine(a.refine,a.output,a.spec)
+    elif a.depth: add_depth(a.depth,a.output,a.spec)
     elif a.regrid: regrid(a.regrid,a.output,a.cell_m)
     else: prepare(a.config,a.spec,a.long_catalog,a.short_catalog,a.output,a.count)
 

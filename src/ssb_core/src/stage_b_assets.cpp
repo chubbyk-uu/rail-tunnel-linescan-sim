@@ -77,7 +77,8 @@ StageBAssets::StageBAssets(const Config& c) {
     // Generator coprime with N maximising the minimum toroidal point distance (first on ties).
     double best=-1;
     for(unsigned g=1;g<std::max(2u,area_samples);++g) {
-      if(std::gcd(g,area_samples)!=1)continue;double d=1e9;
+      if(std::gcd(g,area_samples)!=1)continue;
+      double d=1e9;
       for(unsigned k=1;k<area_samples;++k){unsigned y=k*g%area_samples;
         d=std::min(d,std::hypot(double(std::min(k,area_samples-k)),double(std::min(y,area_samples-y))));}
       if(d>best){best=d;area_rooks=g;}
@@ -124,9 +125,11 @@ StageBAssets::StageBAssets(const Config& c) {
   const bool has_filler_faces=std::find(face_material.begin(),face_material.end(),2u)!=face_material.end();
   Need(std::all_of(face_material.begin(),face_material.end(),[](unsigned m){return m<=3;}),"unknown optical material");
   if(scene.contains("crack_optics")) {
-    auto k=scene.at("crack_optics");crack_interior=k.at("interior_ratio");crack_interior_variation=k.at("interior_variation");
+    auto k=scene.at("crack_optics");const auto model=k.value("model",std::string("flat_v1"));
+    Need(model=="flat_v1"||model=="cavity_v1","crack optics model");crack_cavity=model=="cavity_v1";
     crack_edge_band=k.at("edge_band_m");crack_edge_darkening=k.at("edge_darkening");
-    Need(crack_interior>=0&&crack_interior<1&&crack_interior_variation>=0&&crack_interior_variation<=1&&
+    if(!crack_cavity){crack_interior=k.at("interior_ratio");crack_interior_variation=k.at("interior_variation");}
+    Need((crack_cavity||(crack_interior>=0&&crack_interior<1&&crack_interior_variation>=0&&crack_interior_variation<=1))&&
          crack_edge_band>=0&&crack_edge_band<.002&&crack_edge_darkening>=0&&crack_edge_darkening<1,"crack optics parameters");
   }
   if(scene.contains("joint_concrete")) {
@@ -187,6 +190,11 @@ StageBAssets::StageBAssets(const Config& c) {
   for(auto index:indices) Need(index<segments.size(),"invalid crack segment index");
   for(auto s:segments) Need(std::isfinite(s.x0)&&std::isfinite(s.q0)&&std::isfinite(s.x1)&&std::isfinite(s.q1)&&
                             std::isfinite(s.r0)&&std::isfinite(s.r1)&&s.r0>=0&&s.r1>=0&&s.r0<=.0003001&&s.r1<=.0003001,"invalid crack segment");
+  if(crack_cavity) {
+    Need(defects.at("files").contains("depths.bin"),"cavity crack optics require per-segment depths");
+    crack_depths=file("depths.bin",segment_count*2*sizeof(float),float{});
+    for(float d:crack_depths) Need(std::isfinite(d)&&d>=0&&d<=.05,"invalid crack depth");
+  }
 }
 std::vector<SurfaceTexel> StageBAssets::ReadTile(unsigned index) const {
   if(index>=nx*nq)throw std::runtime_error("Stage B: tile index out of range");

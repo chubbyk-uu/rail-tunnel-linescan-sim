@@ -85,6 +85,18 @@ cracks:
     wiggle: {min_wavelength_m: 0.0005, max_wavelength_m: 0.02, amplitude_m: 0.0005, reference_wavelength_m: 0.01, hurst: 0.75}
     junction_taper_m: 0.01          # wiggle fades to zero at shared (branch) endpoints
     width_log_sigma: [0.18, 0.08]   # slow (5-20 mm) and fine (1-2 mm) width variation
+  # Effective visible depth for the crack cavity appearance (stage_b_defects --depth; synthetic,
+  # not a measured/total depth): D = aspect x local width, aspect log-normal along the crack;
+  # short shallow stretches stand for debris/dust. Interior reflectance of a slot with opening
+  # fraction w/(w+2D): median aspect 0.9 gives ~0.45 of the wall albedo at the crack centre.
+  depth:
+    aspect_median: 0.9
+    aspect_log_sigma: 0.5
+    wavelengths_m: [0.005, 0.04]
+    plug_rate_per_m: 6
+    plug_length_m: [0.003, 0.015]
+    plug_aspect: 0.15
+    max_depth_m: 0.01
 resources:
   # Hard limits for preparation stages which implement the relevant allocation.
   asset_working_set_bytes: 536870912

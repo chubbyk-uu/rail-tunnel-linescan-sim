@@ -114,24 +114,36 @@ __device__ bool Surface(double x,double q,float4* result,unsigned* guard=nullptr
 }
 // Edge band half width beside a crack of local radius r: fades out as the crack tapers.
 __device__ float EdgeBand(float r) {return params.crack_edge_band*fminf(1.f,r/1e-4f);}
-// Point classification: 2 inside the crack opening, 1 in its edge band, 0 outside.
-__device__ int CrackPoint(double x,double q) {
+// Cavity model (crack_depths set): the opening is a V-shaped slot, approximated by three nested
+// bands at 1, 2/3 and 1/3 of the local half width, each carrying a third of the interior
+// darkening; the interior reflectance follows from the local depth/width ratio (see Shade).
+__device__ float SegmentDepth(unsigned index,float t) {
+  return params.crack_depths[2*index]+(params.crack_depths[2*index+1]-params.crack_depths[2*index])*t;
+}
+// Point sample: (weighted opening coverage 0..1, edge band 0/1, depth/width ratio or -1).
+__device__ float3 CrackPoint(double x,double q) {
   q=WrapQ(q);
   int ix=int(floor((x-params.crack_x0)/params.crack_cell)),iq=int(floor((q-params.crack_q0)/params.crack_cell));
-  if(ix<0||iq<0||ix>=int(params.crack_nx)||iq>=int(params.crack_nq)) return 0;
-  int best=0;
+  if(ix<0||iq<0||ix>=int(params.crack_nx)||iq>=int(params.crack_nq)) return make_float3(0.f,0.f,-1.f);
+  float core=0,edge=0,aspect=-1;
   for(int jq=max(0,iq-1);jq<=min(int(params.crack_nq)-1,iq+1);++jq)for(int jx=max(0,ix-1);jx<=min(int(params.crack_nx)-1,ix+1);++jx) {
     unsigned cell=jq*params.crack_nx+jx;
     for(unsigned k=params.crack_offsets[cell];k<params.crack_offsets[cell+1];++k) {
-      auto s=params.cracks[params.crack_indices[k]];
+      const unsigned index=params.crack_indices[k];auto s=params.cracks[index];
       float dx=s.x1-s.x0,dq=s.q1-s.q0,px=float(x-s.x0),pq=float(q-s.q0);
       float t=fminf(1.f,fmaxf(0.f,(px*dx+pq*dq)/(dx*dx+dq*dq)));
       float radius=s.r0+(s.r1-s.r0)*t,d2=(px-t*dx)*(px-t*dx)+(pq-t*dq)*(pq-t*dq);
-      if(d2<=radius*radius) return 2;
-      float e=radius+EdgeBand(radius);if(d2<=e*e) best=1;
+      if(d2<=radius*radius) {
+        float c=1.f;
+        if(params.crack_depths) {
+          const float r2=radius*radius;c=(1.f+(d2<=r2*(4.f/9.f))+(d2<=r2*(1.f/9.f)))/3.f;
+          if(c>core)aspect=SegmentDepth(index,t)/fmaxf(2.f*radius,1e-6f);
+        }
+        core=fmaxf(core,c);
+      } else {float e=radius+EdgeBand(radius);if(d2<=e*e) edge=1.f;}
     }
   }
-  return best;
+  return make_float3(core,core>0?0.f:edge,aspect);
 }
 __device__ float TriangleMargin(float3 point,unsigned primitive) {
   uint3 tri=params.triangles[primitive];float3 a=params.vertices[tri.x],b=params.vertices[tri.y],c=params.vertices[tri.z];
@@ -201,7 +213,7 @@ __device__ float Filler(double x,double q) {return params.filler_mean*Detail(x,q
 __device__ float GrooveConcrete(double x,double q) {
   return params.groove_albedo*(1.f+params.groove_detail_contrast*(Detail(x+.371,q+.529)-1.f));
 }
-__device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned primitive,double x,double q,float4 tex,float2 crack=make_float2(-1.f,0.f),unsigned visibility=~0u) {
+__device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned primitive,double x,double q,float4 tex,float3 crack=make_float3(-1.f,0.f,-1.f),unsigned visibility=~0u) {
   uint3 tri=params.triangles[primitive];
   float3 normal=Unit(Cross(Sub(params.vertices[tri.y],params.vertices[tri.x]),Sub(params.vertices[tri.z],params.vertices[tri.x])));
   if(Dot(normal,view)>0) normal=Mul(normal,-1.f); // double-sided optical lining, inward visible normal
@@ -213,10 +225,15 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
   if(!joint) {
     // Crack opening: dark but not black (interior ratio of the wall albedo with debris-like
     // variation); edge band slightly darker. Coverage from the footprint integral, or a point test.
-    float core=crack.x,edge=crack.y;
-    if(core<0) {int c=CrackPoint(x,q);core=c==2;edge=c==1;}
+    if(crack.x<0) crack=CrackPoint(x,q);
+    const float core=crack.x,edge=crack.y;
     if(core>0||edge>0) {
-      float interior=params.crack_interior<0 ? .035f :   // legacy scenes: flat dark opening
+      float interior;
+      if(crack.z>=0) {
+        // Lambertian slot of width w and effective visible depth D (walls/floor of the wall's
+        // albedo rho): opening fraction f=w/(w+2D); reflectance rho*f/(1-rho*(1-f)).
+        const float f=1.f/(1.f+2.f*crack.z);interior=tex.x*f/(1.f-tex.x*(1.f-f));
+      } else interior=params.crack_interior<0 ? .035f :   // legacy scenes: flat dark opening
         params.crack_interior*tex.x*(1.f+params.crack_interior_variation*(Detail(x*1.7+.131,q*1.7+.293)-1.f));
       albedo=tex.x*(1.f-params.crack_edge_darkening*edge)-core*(tex.x-interior);
     }
@@ -306,8 +323,9 @@ __device__ bool SlotVisibility(const DeviceRow& first,const DeviceRow& last,floa
 // band (exact box/linear-motion integral of its two half-planes, tapered radius) over the part
 // of the footprint within its extent; the union is approximated by the maximum. Consecutive
 // segments of one polyline need no special case, so bends do not fall back to sampling.
-// Returns (opening coverage, edge-band coverage).
-__device__ float2 IntegratedCrack(double x,double q,double2 a,double2 b,double2 motion) {
+// Returns (opening coverage, edge-band coverage, depth/width ratio of the dominant segment or -1);
+// with the cavity model the opening coverage is the V-profile weighted one.
+__device__ float3 IntegratedCrack(double x,double q,double2 a,double2 b,double2 motion) {
   q=WrapQ(q);
   const float band=params.crack_edge_band;
   double hx=.5*(fabs(a.x)+fabs(b.x)+fabs(motion.x))+band;
@@ -316,12 +334,12 @@ __device__ float2 IntegratedCrack(double x,double q,double2 a,double2 b,double2 
   int hi_x=min(int(params.crack_nx)-1,int(floor((x+hx-params.crack_x0)/params.crack_cell)));
   int lo_q=max(0,int(floor((q-hq-params.crack_q0)/params.crack_cell)));
   int hi_q=min(int(params.crack_nq)-1,int(floor((q+hq-params.crack_q0)/params.crack_cell)));
-  float core=0,outer=0;
+  float core=0,full=0,outer=0,aspect=-1,dominant=0;
   const float ax=a.x,ay=a.y,bx=b.x,by=b.y,mx=motion.x,my=motion.y;
   for(int iq=lo_q;iq<=hi_q;++iq)for(int ix=lo_x;ix<=hi_x;++ix) {
     unsigned cell=iq*params.crack_nx+ix;
     for(unsigned k=params.crack_offsets[cell];k<params.crack_offsets[cell+1];++k) {
-      auto s=params.cracks[params.crack_indices[k]];
+      const unsigned index=params.crack_indices[k];auto s=params.cracks[index];
       float dx=s.x1-s.x0,dq=s.q1-s.q0,length=sqrtf(dx*dx+dq*dq);if(length<=0)continue;
       float lx=dx/length,lq=dq/length,px=float(x-s.x0),pq=float(q-s.q0);
       float along=px*lx+pq*lq,perp=-px*lq+pq*lx;
@@ -331,15 +349,24 @@ __device__ float2 IntegratedCrack(double x,double q,double2 a,double2 b,double2 
       float rmax=fmaxf(s.r0,s.r1);
       if(fabsf(perp)>rmax+EdgeBand(rmax)+perp_half || along+along_half<0 || along-along_half>length)continue;
       float slope=(s.r1-s.r0)/length,r=s.r0+slope*fminf(length,fmaxf(0.f,along));
-      float c=ssb::BoxHalfPlaneT<float>(pa-slope*aa,pb-slope*ab,pt-slope*at,perp-r)-
-              ssb::BoxHalfPlaneT<float>(pa+slope*aa,pb+slope*ab,pt+slope*at,perp+r);
+      // Band of half width lambda*r(along): tapered edges at +/-lambda*r.
+      auto band=[&](float lambda) {
+        const float sl=lambda*slope,rr=lambda*r;
+        return ssb::BoxHalfPlaneT<float>(pa-sl*aa,pb-sl*ab,pt-sl*at,perp-rr)-
+               ssb::BoxHalfPlaneT<float>(pa+sl*aa,pb+sl*ab,pt+sl*at,perp+rr);
+      };
+      float c=band(1.f),weighted=c;
+      if(params.crack_depths) {
+        weighted=(c+band(2.f/3.f)+band(1.f/3.f))/3.f;
+        if(c>dominant){dominant=c;aspect=SegmentDepth(index,fminf(1.f,fmaxf(0.f,along/length)))/fmaxf(2.f*r,1e-6f);}
+      }
       float e=r+EdgeBand(r);
       float o=ssb::BoxHalfPlaneT<float>(pa,pb,pt,perp-e)-ssb::BoxHalfPlaneT<float>(pa,pb,pt,perp+e);
-      core=fmaxf(core,c);outer=fmaxf(outer,o);
+      full=fmaxf(full,c);core=fmaxf(core,weighted);outer=fmaxf(outer,o);
     }
   }
-  core=fminf(1.f,fmaxf(0.f,core));
-  return make_float2(core,fmaxf(0.f,fminf(1.f,outer)-core));
+  core=fminf(1.f,fmaxf(0.f,core));full=fminf(1.f,fmaxf(0.f,full));
+  return make_float3(core,fmaxf(0.f,fminf(1.f,outer)-full),aspect);
 }
 __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,double x,double q,
                                 float3 point,float3 direction,unsigned primitive) {
@@ -365,7 +392,7 @@ __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,do
        !SlotVisibility(params.rows[r*params.row_stride+1],params.rows[r*params.row_stride+3],point,
                        world_a,world_b,Mul(Sub(points[2],points[0]),1.5f),&visibility))return false;
   }
-  float2 coverage=params.face_material[primitive]?make_float2(0.f,0.f):IntegratedCrack(x,q,a,b,motion);
+  float3 coverage=params.face_material[primitive]?make_float3(0.f,0.f,-1.f):IntegratedCrack(x,q,a,b,motion);
   float sum=0;
   const unsigned n=params.texture_footprint_samples;
   #pragma unroll

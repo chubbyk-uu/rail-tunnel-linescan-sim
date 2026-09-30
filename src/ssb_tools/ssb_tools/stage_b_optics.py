@@ -7,6 +7,16 @@ import yaml
 from .stage_b_scene import digest,load_spec
 
 
+def crack_optics(defects):
+    """Crack appearance. With per-vertex effective depths (stage_b_defects --depth): V-profiled
+    slot cavity reflectance. Otherwise the flat B2 opening: interior reflectance as a fraction of
+    the wall albedo with debris-like variation. Both keep a slightly darker edge band (worn/dirty
+    lips). Appearance assumptions, not measurements."""
+    if 'depths.bin' in json.loads(Path(defects).read_text()).get('files',{}):
+        return dict(model='cavity_v1',edge_band_m=.00025,edge_darkening=.15)
+    return dict(interior_ratio=.2,interior_variation=.35,edge_band_m=.00025,edge_darkening=.15)
+
+
 def prepare(config_path,geometry,surface,defects,output,area_samples=16,time_samples=3,spec_path=None,adaptive=False,integrated=False,
             texture_footprint_samples=2,texture_prefilter=False,filler=None,area_pattern='rooks'):
     output=Path(output).resolve()
@@ -24,10 +34,7 @@ def prepare(config_path,geometry,surface,defects,output,area_samples=16,time_sam
                # Groove walls/floor (material 1): dusty, shadowed concrete; detail from the filler
                # map at an offset so it is not continuous with the lining texture (assumption).
                joint_concrete=dict(albedo=.12,detail_contrast=.3),
-               # Crack opening: interior reflectance as a fraction of the wall albedo (narrow, deep
-               # gap under near-coaxial light), debris-like variation, slightly darker edge band
-               # (worn/dirty lips). Appearance assumptions, not measurements.
-               crack_optics=dict(interior_ratio=.2,interior_variation=.35,edge_band_m=.00025,edge_darkening=.15),
+               crack_optics=crack_optics(defects),
                # Full-ray pixels (critical geometry): 'grid' traces area_samples^2 rays per exposure
                # sample; 'rooks' traces area_samples (N-rooks lattice, offset per exposure sample).
                sampling=dict(area_axis_samples=area_samples,area_pattern=area_pattern,time_samples=time_samples,
