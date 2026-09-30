@@ -379,7 +379,7 @@ def test_crack_depth_profile_and_index_alignment(inputs):
     s=np.linspace(0,1.,2001);r=np.full(len(s),.0002);r[-20:]=np.linspace(.0002,0,20)   # free tip at the end
     d=depth_profile(s,r,np.random.default_rng(1),dep)
     aspect=d[:-20]/(2*r[:-20])
-    assert abs(np.log(np.median(aspect))-np.log(dep['aspect_median']))<.3
+    assert abs(np.log(np.median(aspect))-np.log(dep['aspect_median']*dep.get('scale',1)))<.3
     assert (aspect<1.5*dep['plug_aspect']).any()                      # shallow (debris) stretches exist
     la=np.log(aspect)                                                 # correlated over >= 5 mm: 0.5 mm
     assert np.median(np.abs(np.diff(la)))<.3*la.std()                 # steps are small against the spread
@@ -390,3 +390,67 @@ def test_crack_depth_profile_and_index_alignment(inputs):
     assert dd.dtype==DEPTH and len(dd)==len(seg)
     np.testing.assert_allclose(dd['d0'][1:],dd['d1'][:-1],atol=1e-9)  # continuous, same order as segments
     np.testing.assert_allclose(dd['d0'][0],d[0],rtol=1e-6)
+
+
+def test_refinement_bounds_variable_body_width_separately_from_tips(inputs):
+    from ssb_tools.stage_b_defects import refine_path
+    spec=inputs[1];s=np.linspace(0,.5,401);tip=np.minimum(1,np.minimum(s/.005,(s[-1]-s)/.005))
+    path=np.column_stack([s,.0005*np.sin(s*40)])
+    radius=(.00011+.000045*(1+np.sin(s*70)))*tip
+    q,r=refine_path(path,radius,(False,False),np.random.default_rng(5),spec,spec['cracks'])
+    body=(s[0]+.02<np.linspace(0,s[-1],len(r)))&(np.linspace(0,s[-1],len(r))<s[-1]-.02)
+    assert r[body].min()>=.0001-1e-12 and r[body].max()<=.0003+1e-12
+    assert r[0]==r[-1]==0
+
+
+def test_refined_main_route_uses_rendered_edges_and_original_directions():
+    from ssb_tools.stage_b_defects import refined_main_path
+    original=[np.array([[0,0],[1,0]]),np.array([[2,0],[1,0]]),np.array([[1,0],[1,1]])]
+    refined=[np.array([[0,0],[.5,.01],[1,0]]),np.array([[2,0],[1.5,-.02],[1,0]]),original[2]]
+    spine=np.array([[0,0],[1,0],[2,0]])
+    actual=refined_main_path(original,refined,spine)
+    np.testing.assert_array_equal(actual,np.concatenate([refined[0],refined[1][::-1][1:]]))
+    with pytest.raises(ValueError,match='main route'):
+        refined_main_path(original,refined,[[0,0],[1,0],[3,0]])
+
+
+def test_short_refined_graph_edges_keep_both_junctions(inputs):
+    from ssb_tools.stage_b_defects import refine_path
+    spec=inputs[1]
+    path=np.array([[0,0],[.002,.001],[.004,.003],[.006,.004]])
+    q,r=refine_path(path,np.full(len(path),.0002),(True,True),np.random.default_rng(17),spec,spec['cracks'])
+    np.testing.assert_array_equal(q[0],path[0]);np.testing.assert_array_equal(q[-1],path[-1])
+    assert np.linalg.norm(np.diff(q,axis=0),axis=1).max()<.001
+
+
+def test_defect_derivatives_use_snapshot_and_reject_changed_inputs(tmp_path,inputs):
+    from ssb_tools.stage_b_defects import snapshot_input, build_grid, regrid, refine, add_depth
+    from ssb_tools.stage_b_scene import digest
+    config=copy.deepcopy(inputs[0]);config['tunnel'].update(radius_m=.1,x_min_m=0.,x_max_m=1.)
+    original=tmp_path/'config.yaml';original.write_text(yaml.safe_dump(config))
+    source=tmp_path/'source';source.mkdir();entry=snapshot_input(source,original,'config.yaml')
+    instance=dict(paths_xq_m=[[[.2,0],[.3,0]]],vertex_radius_m=[[.0002,.0002]])
+    _,_,_,grid=build_grid([instance],[0,1,-math.pi*.1,math.pi*.1])
+    layout=dict(inputs=dict(config=entry),instances=[instance],grid=grid)
+    (source/'defects.json').write_text(json.dumps(layout))
+    config['tunnel']['x_max_m']=2;original.write_text(yaml.safe_dump(config))
+    result=regrid(source,tmp_path/'regrid',.02)
+    assert result['grid']['bounds_xq_m']==[0,1,-math.pi*.1,math.pi*.1]
+    assert result['inputs']['config']['sha256']==digest(entry['file'])
+    # Mutation of the archived bytes must fail in every derivative, before any output.
+    Path(entry['file']).write_bytes(original.read_bytes())
+    spec=ROOT/'src/ssb_tools/config/stage_b_scene.yaml'
+    for operation,args in ((regrid,(.02,)),(refine,(spec,)),(add_depth,(spec,))):
+        with pytest.raises(ValueError,match='config hash mismatch'):
+            operation(source,tmp_path/('rejected_'+operation.__name__),*args)
+    # Even re-hashing a changed config cannot silently change the recorded domain.
+    layout['inputs']['config']['sha256']=digest(entry['file']);(source/'defects.json').write_text(json.dumps(layout))
+    with pytest.raises(ValueError,match='grid bounds changed'): regrid(source,tmp_path/'changed_domain',.01)
+
+
+def test_shallower_depth_preserves_profile_exactly(inputs):
+    from ssb_tools.stage_b_defects import depth_profile
+    dep=copy.deepcopy(inputs[1]['cracks']['depth']);s=np.linspace(0,1,2001);r=np.full(len(s),.0002)
+    dep['scale']=1;old=depth_profile(s,r,np.random.default_rng(37),dep)
+    dep['scale']=.8;new=depth_profile(s,r,np.random.default_rng(37),dep)
+    np.testing.assert_allclose(new,old*.8,rtol=1e-14,atol=0)

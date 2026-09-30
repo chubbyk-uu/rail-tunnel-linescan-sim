@@ -23,6 +23,8 @@ struct StageBAssets {
   // Full-ray area pattern: 0 = area_samples x area_samples grid per exposure sample; otherwise
   // the rank-1 lattice generator of an area_samples-point N-rooks pattern (see scan.cu).
   unsigned area_rooks=0;
+  // Complex crack pixels (integrated_cracks): N-rooks rays per exposure sample and its generator.
+  unsigned crack_area_samples=32, crack_area_rooks=7;
   bool integrated_cracks=false;
   // Background texture taps per axis over the pixel footprint (integrated path only).
   unsigned texture_footprint_samples=1;

@@ -64,6 +64,13 @@ def optical_assets(session):
     for entry in archive['defects']['files'].values():
         if sha256_file(defect_path.parent/entry['file'])!=entry['sha256']: errors.append(entry['file'])
         files+=1
+    snapshots=[e for e in archive['defects'].get('inputs',{}).values() if e.get('source_file')]
+    for stage in ('refined_from','depth_from'):
+        entry=archive['defects'].get(stage,{}).get('spec')
+        if entry and entry.get('source_file'): snapshots.append(entry)
+    for entry in snapshots:
+        if sha256_file(defect_path.parent/entry['file'])!=entry['sha256']:errors.append(entry['file'])
+        files+=1
     return check('optical_asset_identity',PASS if not errors else FAIL,files=files,errors=errors),scene,scene_path
 
 

@@ -37,7 +37,10 @@ def prepare(config_path,geometry,surface,defects,output,area_samples=16,time_sam
                crack_optics=crack_optics(defects),
                # Full-ray pixels (critical geometry): 'grid' traces area_samples^2 rays per exposure
                # sample; 'rooks' traces area_samples (N-rooks lattice, offset per exposure sample).
+               # Crack pixels needing a true union (branches, crossings, bends, free ends): 32 N-rooks
+               # rays per exposure sample (RMSE 0.84 DN vs 128; 64 cost +3 s per 3 m for 0.54 DN).
                sampling=dict(area_axis_samples=area_samples,area_pattern=area_pattern,time_samples=time_samples,
+                             crack_area_samples=32,
                              adaptive_area=adaptive,integrated_cracks=integrated,
                              # Accepted B1 setting: 2x2 texture taps over the pixel footprint on the
                              # integrated background path (centre-point sampling showed beat stripes).

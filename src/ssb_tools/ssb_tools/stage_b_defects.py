@@ -141,7 +141,7 @@ def build_grid(instances,bounds,cell_m=.01,max_index_bytes=32<<20,with_depths=Fa
     extra=np.array(depths,dtype=DEPTH) if with_depths else None
     total=packed.nbytes+offsets.nbytes+indices.nbytes+(extra.nbytes if with_depths else 0)
     if total>max_index_bytes: raise ValueError('crack index exceeds budget')
-    meta=dict(origin_xq_m=[x0,q0],cell_m=cell_m,cells_xq=[nx,nq],segments=len(packed),index_entries=len(indices),
+    meta=dict(origin_xq_m=[x0,q0],bounds_xq_m=list(bounds),cell_m=cell_m,cells_xq=[nx,nq],segments=len(packed),index_entries=len(indices),
               bytes=total,max_cell_segments=max((len(v) for v in grid.values()),default=0))
     return (packed,offsets,indices,meta,extra) if with_depths else (packed,offsets,indices,meta)
 
@@ -151,6 +151,26 @@ def write_index(output,packed,offsets,indices,depths=None):
     data=[('segments.bin',packed),('offsets.bin',offsets),('indices.bin',indices)]+([('depths.bin',depths)] if depths is not None else [])
     for name,array in data: array.tofile(output/name)
     return {name:dict(file=name,sha256=digest(output/name)) for name,_ in data}
+
+
+def snapshot_input(output, path, name):
+    """Archive the exact input bytes; derivatives never depend on a mutable source path."""
+    path=Path(path).resolve();target=output/'inputs'/name
+    target.parent.mkdir(exist_ok=True);target.write_bytes(path.read_bytes())
+    return dict(file=str(target),sha256=digest(target),source_file=str(path))
+
+
+def source_bounds(source, old):
+    entry=old['inputs']['config'];path=Path(entry['file'])
+    if not path.is_absolute(): path=source/path
+    if digest(path)!=entry['sha256']: raise ValueError('source config hash mismatch; restore its recorded version or regenerate the base layout')
+    config=yaml.safe_load(path.read_text());t=config['tunnel'];r=t['radius_m']
+    bounds=[t['x_min_m'],t['x_max_m'],-math.pi*r,math.pi*r];g=old['grid']
+    if not np.allclose(g['origin_xq_m'],[bounds[0],bounds[2]],rtol=0,atol=1e-12): raise ValueError('grid bounds changed')
+    if g.get('bounds_xq_m') is not None and not np.allclose(g['bounds_xq_m'],bounds,rtol=0,atol=1e-12): raise ValueError('grid bounds changed')
+    cells=[math.ceil((bounds[1]-bounds[0])/g['cell_m']),math.ceil((bounds[3]-bounds[2])/g['cell_m'])]
+    if cells!=g['cells_xq']: raise ValueError('grid bounds changed')
+    return bounds
 
 
 def prepare(config_path,spec_path,long_path,short_path,output,count=60):
@@ -171,7 +191,8 @@ def prepare(config_path,spec_path,long_path,short_path,output,count=60):
                 branching_instances=sum(i['has_minor_branches'] for i in items),
                 excluded_source_motifs=valid_motifs(short)[1],
                 files={name:dict(file=name,sha256=digest(output/name)) for name in ('segments.bin','offsets.bin','indices.bin')},
-                inputs={name:dict(file=str(Path(path).resolve()),sha256=digest(path)) for name,path in
+                inputs={name:(snapshot_input(output,path,name+'.yaml') if name in ('config','spec') else
+                              dict(file=str(Path(path).resolve()),sha256=digest(path))) for name,path in
                         dict(config=config_path,spec=spec_path,long_catalog=long_path,short_catalog=short_path).items()},
                 assumption='60 instances/20 m, long 1.2-5 m + mandatory 10 m, short .08-.6 m; density/lengths are adjustable development choices.',
                 optical_model='Albedo coverage of tapered metric vectors; crack depth/relief is not yet calibrated.',
@@ -202,8 +223,13 @@ def refine_path(path, radius, shared, rng, spec, cracks):
     smooth = gaussian_filter1d(pts, f['smooth_m']/ds, axis=0, mode='nearest')
     # Endpoints stay exactly where the source (and any connected path) has them.
     fade = lambda d: np.clip(d/(3*f['smooth_m']),0,1)**2
-    for end, w in ((0, 1-fade(s)), (-1, 1-fade(L-s))):
-        smooth += w[:,None]*(pts[end]-smooth[end])
+    # On short graph edges the endpoint influence regions overlap. Cross-fade
+    # both corrections simultaneously, so neither displaces the other junction.
+    start_delta,end_delta=pts[0]-smooth[0],pts[-1]-smooth[-1]
+    norm=max(float(fade(L)),1e-12)
+    start_weight=(1-fade(s))*fade(L-s)/norm
+    end_weight=(1-fade(L-s))*fade(s)/norm
+    smooth += start_weight[:,None]*start_delta+end_weight[:,None]*end_delta
     tangent = np.gradient(smooth, axis=0); tangent /= np.maximum(np.linalg.norm(tangent,axis=1,keepdims=True),1e-12)
     normal = np.column_stack([-tangent[:,1], tangent[:,0]])
     w = f['wiggle']
@@ -221,8 +247,34 @@ def refine_path(path, radius, shared, rng, spec, cracks):
     lo, hi = cracks['width_min_mm']*.0005, cracks['width_max_mm']*.0005
     # Body radius varies within the width range; the source tip taper (0 at free tips) scales it.
     peak = max(float(base.max()), 1e-12)
-    r = np.clip(peak*body, lo, hi)*(base/peak)
+    tip = np.ones(n)
+    tip_length=cracks.get('tip_taper_m',.005)
+    if not shared[0] and radius[0]<=1e-12: tip=np.minimum(tip,np.clip(s/tip_length,0,1))
+    if not shared[1] and radius[-1]<=1e-12: tip=np.minimum(tip,np.clip((L-s)/tip_length,0,1))
+    baseline=np.divide(base,tip,out=np.full(n,peak),where=tip>1e-12)
+    r = np.clip(baseline*body, lo, hi)*tip
+    refined[0],refined[-1]=path[0],path[-1]
     return refined, r
+
+
+def refined_main_path(original, refined, spine):
+    """Follow the original main route through the refined edges, with no new random path."""
+    spine=np.asarray(spine);cursor=0;pieces=[];used=set()
+    while cursor<len(spine)-1:
+        for index,path in enumerate(original):
+            if index in used: continue
+            path=np.asarray(path);n=len(path)
+            if cursor+n>len(spine): continue
+            for reverse in (False,True):
+                candidate=path[::-1] if reverse else path
+                if np.allclose(candidate,spine[cursor:cursor+n],rtol=0,atol=1e-10):
+                    piece=np.asarray(refined[index]);pieces.append(piece[::-1] if reverse else piece)
+                    used.add(index);cursor+=n-1;break
+            else: continue
+            break
+        else: raise ValueError('main route does not follow source crack paths')
+    if not pieces: raise ValueError('empty main route')
+    return np.concatenate([pieces[0]]+[p[1:] for p in pieces[1:]])
 
 
 def refine(source, output, spec_path):
@@ -230,8 +282,7 @@ def refine(source, output, spec_path):
     source=Path(source).resolve();output=Path(output).resolve()
     if output.exists(): raise ValueError('defect output already exists')
     old=json.loads((source/'defects.json').read_text());spec=load_spec(spec_path);cracks=spec['cracks']
-    config=yaml.safe_load(Path(old['inputs']['config']['file']).read_text());rr=config['tunnel']['radius_m']
-    bounds=[config['tunnel']['x_min_m'],config['tunnel']['x_max_m'],-math.pi*rr,math.pi*rr]
+    bounds=source_bounds(source,old)
     items=[]
     for index,item in enumerate(old['instances']):
         rng=np.random.default_rng(np.random.SeedSequence([spec['seed'],41,index]))
@@ -243,16 +294,15 @@ def refine(source, output, spec_path):
         for p,r in zip(item['paths_xq_m'],item['vertex_radius_m']):
             shared=(degree[tuple(np.round(p[0],9))]>1,degree[tuple(np.round(p[-1],9))]>1)
             q,w=refine_path(p,r,shared,rng,spec,cracks);paths.append(q.tolist());radii.append(w.tolist())
-        spine=np.asarray(item['main_path_xq_m'])
-        same=[k for k,p in enumerate(item['paths_xq_m']) if len(p)==len(spine) and np.allclose(p,spine)]
-        main=np.asarray(paths[same[0]]) if same else refine_path(spine,np.full(len(spine),1e-4),(False,False),rng,spec,cracks)[0]
+        main=refined_main_path(item['paths_xq_m'],paths,item['main_path_xq_m'])
         items.append(dict(item,paths_xq_m=paths,vertex_radius_m=radii,main_path_xq_m=main.tolist(),
                           main_length_m=float(np.linalg.norm(np.diff(main,axis=0),axis=1).sum()),
                           longitudinal_span_m=float(np.ptp(main[:,0])),refined=True))
     packed,offsets,indices,grid=build_grid(items,bounds)
     output.mkdir(parents=True)
     result=dict(old,instances=items,grid=grid,files=write_index(output,packed,offsets,indices),
-                refined_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),spec_sha256=digest(spec_path),parameters=cracks['refine']),
+                refined_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),spec_sha256=digest(spec_path),
+                                  spec=snapshot_input(output,spec_path,'refine_spec.yaml'),parameters=cracks['refine']),
                 assumption=old['assumption']+' Refined: source staircase below smooth_m replaced by synthetic self-affine wiggle; widths vary along the crack (synthetic).',
                 preparation_peak_rss_bytes=peak_rss_bytes())
     (output/'defects.json').write_text(json.dumps(result)+'\n')
@@ -272,7 +322,9 @@ def depth_profile(s,radius,rng,depth):
         c=rng.uniform(0,L);half=.5*rng.uniform(*depth['plug_length_m'])
         w=.5*(1+np.cos(np.pi*np.clip(np.abs(s-c)/half,0,1)))           # smooth bump, 1 at the centre
         log_aspect=(1-w)*log_aspect+w*math.log(depth['plug_aspect'])
-    return np.minimum(np.exp(log_aspect)*2*np.asarray(radius),depth['max_depth_m'])
+    scale=depth.get('scale',1.)
+    if not math.isfinite(scale) or not 0<scale<=1: raise ValueError('invalid depth scale')
+    return np.minimum(np.exp(log_aspect)*2*np.asarray(radius),depth['max_depth_m'])*scale
 
 
 def add_depth(source,output,spec_path):
@@ -280,8 +332,7 @@ def add_depth(source,output,spec_path):
     source=Path(source).resolve();output=Path(output).resolve()
     if output.exists(): raise ValueError('defect output already exists')
     old=json.loads((source/'defects.json').read_text());spec=load_spec(spec_path);depth=spec['cracks']['depth']
-    config=yaml.safe_load(Path(old['inputs']['config']['file']).read_text());rr=config['tunnel']['radius_m']
-    bounds=[config['tunnel']['x_min_m'],config['tunnel']['x_max_m'],-math.pi*rr,math.pi*rr]
+    bounds=source_bounds(source,old)
     items=[]
     for index,item in enumerate(old['instances']):
         rng=np.random.default_rng(np.random.SeedSequence([spec['seed'],43,index]));vertex_depth=[]
@@ -292,7 +343,8 @@ def add_depth(source,output,spec_path):
     packed,offsets,indices,grid,depths=build_grid(items,bounds,old['grid']['cell_m'],with_depths=True)
     output.mkdir(parents=True)
     result=dict(old,instances=items,grid=grid,files=write_index(output,packed,offsets,indices,depths),
-                depth_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),spec_sha256=digest(spec_path),parameters=depth),
+                depth_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),spec_sha256=digest(spec_path),
+                                spec=snapshot_input(output,spec_path,'depth_spec.yaml'),parameters=depth),
                 optical_model='Cavity reflectance of a flat-bottomed slot from the width and a synthetic effective visible depth (vertex_depth_m); not a measured or total depth, no geometric relief.',
                 preparation_peak_rss_bytes=peak_rss_bytes())
     (output/'defects.json').write_text(json.dumps(result)+'\n')
@@ -305,10 +357,8 @@ def regrid(source,output,cell_m):
     source=Path(source).resolve();output=Path(output).resolve()
     if output.exists(): raise ValueError('defect output already exists')
     old=json.loads((source/'defects.json').read_text())
-    config=yaml.safe_load(Path(old['inputs']['config']['file']).read_text());r=config['tunnel']['radius_m']
-    bounds=[config['tunnel']['x_min_m'],config['tunnel']['x_max_m'],-math.pi*r,math.pi*r]
+    bounds=source_bounds(source,old)
     g=old['grid']
-    if abs(g['origin_xq_m'][0]-bounds[0])>1e-12 or abs(g['origin_xq_m'][1]-bounds[2])>1e-12: raise ValueError('grid bounds changed')
     with_depths='vertex_depth_m' in old['instances'][0]
     packed,offsets,indices,grid,*depths=build_grid(old['instances'],bounds,cell_m,with_depths=with_depths)
     output.mkdir(parents=True)

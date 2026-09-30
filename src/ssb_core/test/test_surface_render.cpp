@@ -243,6 +243,88 @@ TEST(CrackIntegral, HalfPlaneVolumeMatchesIndependentPolygonClipping) {
   EXPECT_DOUBLE_EQ(BoxHalfPlane(0,0,0,1),0);
 }
 
+TEST(CrackIntegral, FloatRemainsStableForDegenerateMetricFootprints) {
+  // Regressions from near-axis cracks at 0.2 m/s, 20 rpm and 8 us, plus a
+  // more extreme aspect ratio. Test the production float branch explicitly.
+  for(auto v:{std::array<float,4>{-0.00020807109831366688f,-3.932882464141585e-9f,-1.6008713146220543e-6f,-8.711213013157248e-7f},
+              std::array<float,4>{9.86956e-9f,.000208f,2.18269e-9f,4.27061e-5f}})
+    EXPECT_NEAR(BoxHalfPlaneT<float>(v[0],v[1],v[2],v[3]),BoxHalfPlane(v[0],v[1],v[2],v[3]),2e-6);
+  std::mt19937 rng(29);std::uniform_real_distribution<double> unit(0,1);
+  for(unsigned i=0;i<20000;++i) {
+    float a=.000208,b=a*std::pow(10.,-6*unit(rng)),c=a*std::pow(10.,-6*unit(rng));
+    float bias=(unit(rng)-.5)*(a+b+c);
+    EXPECT_NEAR(BoxHalfPlaneT<float>(a,b,c,bias),BoxHalfPlane(a,b,c,bias),2e-6);
+  }
+}
+
+TEST_F(SurfaceFixture, DefectSnapshotsAndExactDomainAreVerifiedBeforeRendering) {
+  std::ofstream(root/"capture_snapshot.yaml")<<c.source_text;
+  nlohmann::json defects;std::ifstream(root/"defects.json")>>defects;
+  auto entry=Entry("capture_snapshot.yaml");entry["source_file"]="mutable/original.yaml";
+  defects["inputs"]["config"]=entry;
+  defects["grid"]["bounds_xq_m"]={c.tunnel_x_min_m,c.tunnel_x_max_m,-pi*c.tunnel_radius_m,pi*c.tunnel_radius_m};
+  Json("defects.json",defects);scene["defects"]=Entry("defects.json");SaveScene();
+  EXPECT_NO_THROW(StageBAssets valid(c));
+  std::ofstream(root/"capture_snapshot.yaml",std::ios::app)<<"# changed\n";
+  EXPECT_THROW(StageBAssets invalid(c),std::runtime_error);
+  std::ofstream(root/"capture_snapshot.yaml")<<c.source_text;
+  defects["grid"]["bounds_xq_m"][1]=c.tunnel_x_max_m+1;
+  Json("defects.json",defects);scene["defects"]=Entry("defects.json");SaveScene();
+  EXPECT_THROW(StageBAssets invalid(c),std::runtime_error);
+}
+
+TEST_F(SurfaceFixture, ComplexCrackUnionsAndFiniteCapsMatchReference) {
+  // Crop the sensor, keeping the physical pixel pitch/FOV per pixel unchanged.
+  c.fov_at_nominal_m*=64./c.width;c.width=64;c.debug_column_stride=8;
+  const float pitch=c.fov_at_nominal_m/c.width,x=8+pitch*.5;
+  auto install=[&](const std::vector<CrackSegment>& segments) {
+    Binary("segments.bin",segments);
+    nlohmann::json defects;std::ifstream(root/"defects.json")>>defects;
+    unsigned cells=46*35;std::vector<unsigned> offsets(cells+1),indices;
+    for(unsigned i=0;i<cells;++i){offsets[i]=indices.size();for(unsigned k=0;k<segments.size();++k)indices.push_back(k);}
+    offsets.back()=indices.size();Binary("offsets.bin",offsets);Binary("indices.bin",indices);
+    defects["grid"]["segments"]=segments.size();defects["grid"]["index_entries"]=indices.size();
+    for(const char* name:{"segments.bin","offsets.bin","indices.bin"})defects["files"][name]=Entry(name);
+    Json("defects.json",defects);scene["defects"]=Entry("defects.json");
+  };
+  const float r=.0001f;
+  std::vector<std::vector<CrackSegment>> cases{
+    {{x+r,.49f,x+r,.51f,r,r},{x-.01f,.5f+r,x+.01f,.5f+r,r,r}},
+    {{x+.00008f,.5f,x+.00058f,.5f,r,r}},
+    {{x-.002f,.5f,x,.5f,r,r},{x,.5f,x+.0015f,.5015f,r,r}},
+    {{x-.0005f,.5f,x+.0005f,.5f,r,0}}
+  };
+  for(size_t example=0;example<cases.size();++example) {
+    install(cases[example]);
+    for(double omega:{0.,c.NominalOmega()}) {
+      std::vector<RowJob> jobs(33);
+      for(size_t i=0;i<jobs.size();++i){jobs[i].pose.x=8;jobs[i].pose.theta=(.5+(double(i)-16)*.000025)/2.75;
+        jobs[i].pose.omega=omega;jobs[i].pose.v=omega? .2:0;}
+      scene["sampling"]={{"area_axis_samples",16},{"area_pattern","rooks"},{"time_samples",3},{"integrated_cracks",true}};SaveScene();
+      OptixRenderer actual(c,DefaultPtxPath(),33);std::vector<uint8_t> a,b;std::vector<double> hits;actual.Render(jobs,a,hits);
+      EXPECT_EQ(actual.Describe().at("complex_crack_area_samples"),32);
+      scene["sampling"]={{"area_axis_samples",16},{"area_pattern","grid"},{"time_samples",16},{"integrated_cracks",false}};SaveScene();
+      // A static 16x16 reference quantises axis-aligned boundaries too coarsely.
+      // Four phases per axis turn it into an independent 64x64x16 reference.
+      std::vector<RowJob> reference_jobs;
+      for(unsigned sy=0;sy<4;++sy)for(unsigned sx=0;sx<4;++sx)for(auto job:jobs) {
+        job.pose.x+=(double(sx)-1.5)*pitch/64;
+        job.pose.theta+=(double(sy)-1.5)*pitch/(64*2.75);
+        reference_jobs.push_back(job);
+      }
+      OptixRenderer reference(c,DefaultPtxPath(),reference_jobs.size());reference.Render(reference_jobs,b,hits);
+      double error=0,worst=0;
+      for(size_t i=0;i<a.size();++i){double mean=0;for(unsigned phase=0;phase<16;++phase)mean+=b[phase*a.size()+i]/16.;
+        double d=a[i]-mean;error+=d*d;worst=std::max(worst,std::abs(d));}
+      EXPECT_LE(worst,5)<<"case="<<example<<", omega="<<omega;
+      EXPECT_LT(std::sqrt(error/a.size()),1.2)<<"case="<<example<<", omega="<<omega;
+      // 75% union (~39) rather than max(50%,50%) (~69); +-4 covers 32-ray lattice quantisation.
+      if(omega==0 && example==0)EXPECT_NEAR(a[16*64+32],39,4);
+      if(omega==0 && example==1)EXPECT_NEAR(a[16*64+32],72,3); // finite round cap, not an infinite band.
+    }
+  }
+}
+
 TEST_F(SurfaceFixture, EvictionAndBatchSplittingPreserveEveryByte) {
   OptixRenderer renderer(c,DefaultPtxPath(),300);
   std::vector<RowJob> jobs(300);

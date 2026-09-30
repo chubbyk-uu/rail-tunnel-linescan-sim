@@ -90,6 +90,7 @@ cracks:
   # short shallow stretches stand for debris/dust. Interior reflectance of a slot with opening
   # fraction w/(w+2D): median aspect 0.9 gives ~0.45 of the wall albedo at the crack centre.
   depth:
+    scale: 0.8                    # 20% shallower effective depth; preserves along-path variation
     aspect_median: 0.9
     aspect_log_sigma: 0.5
     wavelengths_m: [0.005, 0.04]

@@ -37,6 +37,12 @@ StageBAssets::StageBAssets(const Config& c) {
   };
   surface_path=verified(scene.at("surface"));surface=ReadJson(surface_path);surface_hash=Sha256File(surface_path);
   defect_path=verified(scene.at("defects"));defects=ReadJson(defect_path);defect_hash=Sha256File(defect_path);
+  auto verify_snapshot=[&](const nlohmann::json& entry) {
+    if(entry.contains("source_file")) Need(Sha256File(Resolve(defect_path.parent_path(),entry.at("file")))==entry.at("sha256"),"defect input snapshot identity mismatch");
+  };
+  if(defects.contains("inputs"))for(const auto& entry:defects.at("inputs"))verify_snapshot(entry);
+  for(const char* stage:{"refined_from","depth_from"})
+    if(defects.contains(stage)&&defects.at(stage).contains("spec"))verify_snapshot(defects.at(stage).at("spec"));
   const bool runtime_recipe=surface.at("schema")=="ssb.surface_runtime.v1";
   Need((runtime_recipe || surface.at("schema")=="ssb.surface_tiles.v1") && defects.at("schema")=="ssb.defect_layout.v1","asset schema");
   Need(surface.at("texel_format")=="mono16_rough8_reserved8_nx16_nq16_le","surface texel format");
@@ -73,18 +79,23 @@ StageBAssets::StageBAssets(const Config& c) {
   adaptive_area=sampling.value("adaptive_area",false);
   const auto pattern=sampling.value("area_pattern",std::string("grid"));
   Need(pattern=="grid"||pattern=="rooks","area pattern");
-  if(pattern=="rooks") {
-    // Generator coprime with N maximising the minimum toroidal point distance (first on ties).
-    double best=-1;
-    for(unsigned g=1;g<std::max(2u,area_samples);++g) {
-      if(std::gcd(g,area_samples)!=1)continue;
+  // Rank-1 lattice generator coprime with N maximising the minimum toroidal point distance.
+  auto rooks=[](unsigned n) {
+    unsigned generator=1;double best=-1;
+    for(unsigned g=1;g<std::max(2u,n);++g) {
+      if(std::gcd(g,n)!=1)continue;
       double d=1e9;
-      for(unsigned k=1;k<area_samples;++k){unsigned y=k*g%area_samples;
-        d=std::min(d,std::hypot(double(std::min(k,area_samples-k)),double(std::min(y,area_samples-y))));}
-      if(d>best){best=d;area_rooks=g;}
+      for(unsigned k=1;k<n;++k){unsigned y=k*g%n;d=std::min(d,std::hypot(double(std::min(k,n-k)),double(std::min(y,n-y))));}
+      if(d>best){best=d;generator=g;}
     }
-  }
+    return generator;
+  };
+  if(pattern=="rooks")area_rooks=rooks(area_samples);
   integrated_cracks=sampling.value("integrated_cracks",false);
+  // Crack pixels needing a true union (branches, crossings, bends, free ends): N-rooks rays per
+  // exposure sample. 32 matches the accepted joint-edge accuracy (vs a 128-ray reference).
+  crack_area_samples=sampling.value("crack_area_samples",32u);
+  Need(crack_area_samples>=4&&crack_area_samples<=128,"crack area samples");crack_area_rooks=rooks(crack_area_samples);
   texture_footprint_samples=sampling.value("texture_footprint_samples",1u);
   texture_prefilter=sampling.value("texture_prefilter",false);
   Need(texture_footprint_samples>=1&&texture_footprint_samples<=8,"texture footprint samples");
@@ -177,9 +188,15 @@ StageBAssets::StageBAssets(const Config& c) {
      surface.value("adaptive_crack_guard_m",0.)<.002 || surface.value("adaptive_defects_sha256",std::string())!=defect_hash))
     adaptive_area=false;  // No acceleration mask: retain full area sampling.
   auto grid=defects.at("grid");crack_x0=grid.at("origin_xq_m")[0];crack_q0=grid.at("origin_xq_m")[1];
+  if(grid.contains("bounds_xq_m")) {
+    const double expected[4]={c.tunnel_x_min_m,c.tunnel_x_max_m,-pi*c.tunnel_radius_m,pi*c.tunnel_radius_m};
+    Need(grid.at("bounds_xq_m").size()==4,"invalid crack domain");
+    for(unsigned i=0;i<4;++i)Need(std::abs(grid.at("bounds_xq_m")[i].get<double>()-expected[i])<1e-9,"crack/config domain mismatch");
+  }
   crack_cell=grid.at("cell_m");crack_nx=grid.at("cells_xq")[0];crack_nq=grid.at("cells_xq")[1];
   const size_t segment_count=grid.at("segments"),index_count=grid.at("index_entries");
-  Need(crack_cell>0&&crack_nx>0&&crack_nq>0&&segment_count*sizeof(CrackSegment)+(size_t(crack_nx)*crack_nq+1)*4+index_count*4<=(32u<<20),"crack grid budget");
+  const size_t depth_bytes=crack_cavity?segment_count*2*sizeof(float):0;
+  Need(crack_cell>0&&crack_nx>0&&crack_nq>0&&segment_count*sizeof(CrackSegment)+(size_t(crack_nx)*crack_nq+1)*4+index_count*4+depth_bytes<=(32u<<20),"crack grid budget");
   auto file=[&](const char* name,size_t bytes,auto tag) {
     const auto entry=defects.at("files").at(name);using T=decltype(tag);
     return ReadBinary<T>(Resolve(defect_path.parent_path(),entry.at("file")),bytes,entry.at("sha256"));

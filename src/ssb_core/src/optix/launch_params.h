@@ -43,7 +43,7 @@ struct LaunchParams {
   double crack_x0, crack_q0, crack_cell;
   unsigned crack_nx, crack_nq;
   unsigned light_enabled, shadows;
-  unsigned convex_panel_visibility, adaptive_area, area_rooks;
+  unsigned convex_panel_visibility, adaptive_area, area_rooks, crack_area_samples, crack_area_rooks;
   unsigned integrated_cracks;
   unsigned texture_footprint_samples, texture_prefilter;
   const unsigned short* filler;  // material 2 albedo detail (code/scale), tiled by (x, q)

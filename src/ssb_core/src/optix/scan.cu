@@ -318,9 +318,9 @@ __device__ bool SlotVisibility(const DeviceRow& first,const DeviceRow& last,floa
   *visibility=mask;return true;
 }
 // Crack coverage over the pixel's space/time footprint. Every nearby segment is treated as a
-// band (exact box/linear-motion integral of its two half-planes, tapered radius) over the part
-// of the footprint within its extent; the union is approximated by the maximum. Consecutive
-// segments of one polyline need no special case, so bends do not fall back to sampling.
+// band (exact box/linear-motion integral of its two half-planes, tapered radius).
+// This shortcut is valid only for ONE segment containing the entire along-footprint.
+// Multiple segments, bends and finite end caps use the point-union full-ray path.
 // Returns (opening coverage, edge-band coverage, depth/width ratio of the dominant segment or -1).
 __device__ float3 IntegratedCrack(double x,double q,double2 a,double2 b,double2 motion) {
   q=WrapQ(q);
@@ -332,6 +332,7 @@ __device__ float3 IntegratedCrack(double x,double q,double2 a,double2 b,double2 
   int lo_q=max(0,int(floor((q-hq-params.crack_q0)/params.crack_cell)));
   int hi_q=min(int(params.crack_nq)-1,int(floor((q+hq-params.crack_q0)/params.crack_cell)));
   float core=0,outer=0,aspect=-1;
+  unsigned candidate=~0u;
   const float ax=a.x,ay=a.y,bx=b.x,by=b.y,mx=motion.x,my=motion.y;
   for(int iq=lo_q;iq<=hi_q;++iq)for(int ix=lo_x;ix<=hi_x;++ix) {
     unsigned cell=iq*params.crack_nx+ix;
@@ -344,22 +345,26 @@ __device__ float3 IntegratedCrack(double x,double q,double2 a,double2 b,double2 
       float aa=ax*lx+ay*lq,ab=bx*lx+by*lq,at=mx*lx+my*lq;
       float along_half=.5f*(fabsf(aa)+fabsf(ab)+fabsf(at)),perp_half=.5f*(fabsf(pa)+fabsf(pb)+fabsf(pt));
       float rmax=fmaxf(s.r0,s.r1);
-      if(fabsf(perp)>rmax+EdgeBand(rmax)+perp_half || along+along_half<0 || along-along_half>length)continue;
+      float reach=rmax+EdgeBand(rmax);
+      if(fabsf(perp)>reach+perp_half || along+along_half< -reach || along-along_half>length+reach)continue;
+      if(candidate==index)continue;  // Same segment can be indexed in multiple cells.
+      if(candidate!=~0u || along-along_half<0 || along+along_half>length)return make_float3(-1.f,0.f,-1.f);
+      candidate=index;
       float slope=(s.r1-s.r0)/length,r=s.r0+slope*fminf(length,fmaxf(0.f,along));
       float c=ssb::BoxHalfPlaneT<float>(pa-slope*aa,pb-slope*ab,pt-slope*at,perp-r)-
               ssb::BoxHalfPlaneT<float>(pa+slope*aa,pb+slope*ab,pt+slope*at,perp+r);
       float e=r+EdgeBand(r);
       float o=ssb::BoxHalfPlaneT<float>(pa,pb,pt,perp-e)-ssb::BoxHalfPlaneT<float>(pa,pb,pt,perp+e);
-      // Ratio of the segment covering most of the footprint including its lip band.
+      // Depth/width ratio of the single valid band, including its lip band.
       if(params.crack_depths&&o>outer)aspect=SegmentDepth(index,fminf(1.f,fmaxf(0.f,along/length)))/fmaxf(2.f*r,1e-6f);
-      core=fmaxf(core,c);outer=fmaxf(outer,o);
+      core=c;outer=o;
     }
   }
   core=fminf(1.f,fmaxf(0.f,core));
   return make_float3(core,fmaxf(0.f,fminf(1.f,outer)-core),aspect);
 }
 __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,double x,double q,
-                                float3 point,float3 direction,unsigned primitive) {
+                                float3 point,float3 direction,unsigned primitive,bool* complex_crack) {
   // Return false at real material/geometry boundaries: retain the full-ray path.
   // Coplanar diagonals and smooth cylindrical facets do not force oversampling.
   if(params.light_enabled && params.shadows && !params.convex_panel_visibility)return false;
@@ -383,6 +388,7 @@ __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,do
                        world_a,world_b,Mul(Sub(points[2],points[0]),1.5f),&visibility))return false;
   }
   float3 coverage=params.face_material[primitive]?make_float3(0.f,0.f,-1.f):IntegratedCrack(x,q,a,b,motion);
+  if(coverage.x<0) {*complex_crack=true;return false;}
   float sum=0;
   const unsigned n=params.texture_footprint_samples;
   #pragma unroll
@@ -418,8 +424,11 @@ __device__ void StageBScan(unsigned u,unsigned r) {
     double* out=params.debug_hits+(size_t(r)*params.debug_count+debug)*2;
     out[0]=valid?x:nan("");out[1]=valid?q:nan("");
   }
-  if(valid && params.integrated_cracks && IntegratedPixel(u,r,centre,x,q,point,direction,primitive))return;
-  unsigned area=params.area_samples;
+  bool complex_crack=false;
+  if(valid && params.integrated_cracks && IntegratedPixel(u,r,centre,x,q,point,direction,primitive,&complex_crack))return;
+  // Resolve true unions and finite caps only where necessary: crack_area_samples N-rooks
+  // samples at each exposure pose (32 x 3 = 96 rays by default); background cost unchanged.
+  unsigned area=complex_crack?params.crack_area_samples:params.area_samples;
   double footprint_margin=.0005+2*params.pixel_step*params.radius;
   for(unsigned time=0;time<params.time_samples;++time) {
     auto frame=params.rows[r*params.row_stride+1+time];
@@ -431,7 +440,7 @@ __device__ void StageBScan(unsigned u,unsigned r) {
   }
   // Only reduce area sampling on smooth background, away from authored crack
   // vectors and triangle rims. Time integration remains active for every pixel.
-  if(valid && params.adaptive_area && params.face_material[primitive]==0 && TriangleMargin(point,primitive)>.0005f &&
+  if(valid && !complex_crack && params.adaptive_area && params.face_material[primitive]==0 && TriangleMargin(point,primitive)>.0005f &&
      footprint_margin<.002) {
     float4 tex;unsigned guard=1;
     if(Surface(x,q,&tex,&guard) && !guard) area=1;
@@ -441,7 +450,7 @@ __device__ void StageBScan(unsigned u,unsigned r) {
   // a rank-1 lattice (one per row and column of the area x area grid); exposure samples are
   // offset by 1/(time_samples*area) on both axes, so their union resolves an edge aligned with
   // either pixel axis into time_samples*area coverage levels instead of area.
-  const unsigned rooks=params.area_rooks,count=rooks&&area>1?area:area*area;
+  const unsigned rooks=complex_crack?params.crack_area_rooks:params.area_rooks,count=rooks&&area>1?area:area*area;
   for(unsigned t=0;t<params.time_samples;++t) {
     DeviceRow row=params.rows[r*params.row_stride+1+t];
     for(unsigned k=0;k<count;++k) {
