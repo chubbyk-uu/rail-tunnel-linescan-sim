@@ -18,6 +18,9 @@ def prepare(world,config,spec,output,mode):
     if len(rgb)!=3 or not all(math.isfinite(v) and 0<=v<=1 for v in rgb):
         raise ValueError('GUI ambient must be three values in [0,1]')
     output.mkdir(parents=True)
+    (output/'inputs').mkdir()
+    (output/'inputs/config.yaml').write_bytes(config.read_bytes())
+    (output/'inputs/spec.yaml').write_bytes(spec.read_bytes())
     if mode=='lighting':
         w.find('scene/ambient').text=' '.join(map(str,[*rgb,1]))
     elif mode=='robot':
@@ -27,7 +30,8 @@ def prepare(world,config,spec,output,mode):
     else: raise ValueError('unknown GUI update mode')
     ET.indent(tree);tree.write(output/'world.sdf',encoding='unicode',xml_declaration=True)
     report=dict(mode=mode,source_world=dict(file=str(world),sha256=digest(world)),
-        config=dict(file=str(config),sha256=digest(config)),spec=dict(file=str(spec),sha256=digest(spec)),
+        config=dict(file='inputs/config.yaml',source_file=str(config),sha256=digest(config)),
+        spec=dict(file='inputs/spec.yaml',source_file=str(spec),sha256=digest(spec)),
         world_sha256=digest(output/'world.sdf'),ambient_rgb=rgb,
         limitations='GUI world only; optical configuration unchanged; ideal carriage constraint retained.')
     (output/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')

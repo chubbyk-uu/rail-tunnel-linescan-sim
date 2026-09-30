@@ -4,7 +4,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 session=$(realpath -m "${1:-$repo/sessions/gui_$(date +%Y%m%d_%H%M%S)}")
 config=$(realpath "${2:-$repo/local_data/stage_b/optics_b3_quality64/capture.yaml}")
-world=$(realpath "${3:-$repo/local_data/stage_b/gui_c034_light_v2/world.sdf}")
+world=$(realpath "${3:-$repo/local_data/stage_b/gui_c034_rail_v2/world.sdf}")
 [[ ! -e "$session" ]] || { echo "Session already exists: $session" >&2; exit 2; }
 mesa_wrapper=${SSB_MESA_WRAPPER:-$repo/../4WIDS_agv/tools/with_mesa_runtime.py}
 [[ -f "$mesa_wrapper" ]] || { echo "Private Mesa launcher missing: $mesa_wrapper" >&2; exit 2; }

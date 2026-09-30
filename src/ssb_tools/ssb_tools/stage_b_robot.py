@@ -68,6 +68,11 @@ def make_robot(out,config,spec):
     robot=spec['robot'];zc=config['tunnel']['axis_z_m']
     half=robot['wheelbase_m']/2;diameter=robot['wheel_diameter_m']
     rail_y=(spec['track']['gauge_m']+spec['track']['head_width_m'])/2
+    guide_radius=robot.get('guide_bearing_radius_m',.025)
+    guide_width=robot.get('guide_bearing_width_m',.024)
+    guide_z=-.019  # centre of the existing 38 mm rail head
+    if not (.01<=guide_radius<=.04 and .01<=guide_width<=.035):
+        raise ValueError('guide bearing must fit the rail-head side')
     cradle=robot['head_cradle_length_m'];floor_depth=robot['head_floor_depth_m'];floor_z=zc-floor_depth
     lamp_x=robot['lamp_offset_axial_m'];sink=robot['lamp_heatsink_width_m']
     if robot['lamp_offset_tangential_m'] or robot['lamp_offset_radial_m']:
@@ -121,10 +126,20 @@ def make_robot(out,config,spec):
         base_box(side+'_drive_inset',0,y+sign*.041,.157,f'{2*half-.12} .006 .10',WHITE)
         for x in (-half,half):
             base_box(f'{side}_frame_socket_{x}',x,sign*(rail_y-.13),.245,'.10 .09 .095',METAL)
-            # Guide roller touches the inside rail head at y=gauge/2, without contacts.
-            gy=sign*(spec['track']['gauge_m']/2-.025)
-            base_cylinder(f'{side}_guide_{x}',x,gy,-.02,.025,.035,DARK)
-            base_tube(f'{side}_guide_pin_{x}',(x,gy,-.002),(x,gy,.075),.009,METAL)
+            # Patent [0038], bearings 351/352: vertical axes at the inner rail head.
+            # Nominal tangent contact in the ideal guide; visual only, not contact dynamics.
+            gy=sign*(spec['track']['gauge_m']/2-guide_radius)
+            tag=f'{side}_guide_{x}'
+            base_cylinder(tag,x,gy,guide_z,guide_radius,guide_width,METAL)
+            # Dark shields inset within the outer race, central sleeve and mounting spindle.
+            for face in (-1,1):
+                z=guide_z+face*(guide_width/2+.0005)
+                base_cylinder(tag+f'_seal_{face}',x,gy,z,guide_radius*.78,.001,DARK)
+                base_cylinder(tag+f'_inner_race_{face}',x,gy,z+face*.0006,.010,.0012,METAL)
+            base_cylinder(tag+'_spindle',x,gy,.020,.006,.12,METAL)
+            base_cylinder(tag+'_retainer',x,gy,guide_z-guide_width/2-.003,.010,.003,METAL)
+            base_box(tag+'_mount',x,gy,.054,'.052 .048 .024',WHITE)
+            base_cylinder(tag+'_top_nut',x,gy,.070,.010,.008,METAL)
         for i,x in enumerate((-.13,.13)):
             base_tube(f'{side}_handle_leg_{i}',(x,y,.263),(x,y,.335),.012,DARK)
         base_tube(side+'_lifting_handle',(-.13,y,.335),(.13,y,.335),.012,DARK)
@@ -194,7 +209,8 @@ def make_robot(out,config,spec):
         wheel=sub(car,'link',name=name);sub(wheel,'pose',pose(x,y,diameter/2))
         inertial(wheel,5,(.013,.025,.013))
         cylinder(wheel,'tread',pose(roll=math.pi/2),diameter/2,.060,DARK)
-        cylinder(wheel,'inner_flange',pose(y=-sign*.043,roll=math.pi/2),diameter/2+.009,.010,METAL)
+        # No unsupported rail flange: a flush side ring remains inside the tread radius.
+        cylinder(wheel,'inner_side_ring',pose(y=-sign*.029,roll=math.pi/2),diameter/2-.005,.002,METAL)
         cylinder(wheel,'hub',pose(y=sign*.032,roll=math.pi/2),diameter*.36,.010,WHITE)
         cylinder(wheel,'hub_cap',pose(y=sign*.041,roll=math.pi/2),diameter*.14,.012,ORANGE)
         for j in range(6):

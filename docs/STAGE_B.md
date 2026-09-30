@@ -114,7 +114,7 @@ ros2 run ssb_tools validate_stage_b_smoke sessions/b_capture --compare sessions/
 
 `stage_b.yaml` 自身仅是几何/时序基线；必须使用 `stage_b_optics` 输出的配置启用纹理光学后端。Gazebo 预览直接读取哈希校验后的实际烘焙底色，以约 2 mm/像素为每个管片生成独立贴图，采用完整 OBJ 法线；旧版缺少法线会导致 Ogre2 材质构建失败。已停用 20 mm quilting 引导图作为 GUI 底色。GUI 贴图 RGBA8+mip 保守估计约 499 MiB，预算 768 MiB，准备实测峰值约 211 MiB。GUI 预览不用于线阵成像，矢量裂缝目前仍只在 OptiX 采集层呈现。
 
-本机现行入口是 `tools/run_gz_gui.sh`，默认加载 `gui_c034_light_v2/world.sdf` 与 `optics_b3_quality64/capture.yaml`：使用优化后的 B2 几何，车体从 x=3 m 起步，3 m 短程采集，光学层为 Concrete034、修正后的裂缝和 0.8 有效深度。初始暂停，点击 Play 开始采集；结束后后台完成落盘和摘要。GUI墙面已更新为Concrete034配方预览；预览为1–2 mm纹素，采集仍为0.1 mm生成网格，两者用途不同。相邻 4WIDS_agv 的私有 Mesa 启动器可由 `SSB_MESA_WRAPPER` 指定。其他输出通过 `tools/run_gz_gui.sh SESSION CONFIG WORLD` 指定，旧 `geometry_light_v1`/`optical_light_v1` 仅作历史对照。
+本机现行入口是 `tools/run_gz_gui.sh`，默认加载 `gui_c034_rail_v2/world.sdf` 与 `optics_b3_quality64/capture.yaml`：使用优化后的 B2 几何，车体从 x=3 m 起步，3 m 短程采集，光学层为 Concrete034、修正后的裂缝和 0.8 有效深度。初始暂停，点击 Play 开始采集；结束后后台完成落盘和摘要。GUI墙面已更新为Concrete034配方预览；预览为1–2 mm纹素，采集仍为0.1 mm生成网格，两者用途不同。相邻 4WIDS_agv 的私有 Mesa 启动器可由 `SSB_MESA_WRAPPER` 指定。其他输出通过 `tools/run_gz_gui.sh SESSION CONFIG WORLD` 指定，旧 `geometry_light_v1`/`optical_light_v1` 仅作历史对照。
 
 `ssb_probe` 用于指定姿态的光学检查和吞吐测量，不代表编码器采集验收。`stage_b_tag_cracks` 可在背景烘焙后加入保守保护标记，再以 `stage_b_optics --adaptive` 显式开启自适应加速；当前解析覆盖档不需要这一步。
 
@@ -252,3 +252,35 @@ GUI不再提交这个空网格（消除Ogre加载错误）；光学资产不改�
 不新增固定灯、不改变扫描投影和OptiX采集光度。默认观察位置移到车旁，便于看清整体。
 `stage_b_gui_world --mode lighting` 生成 `gui_c034_light_v2/world.sdf`，旧世界不覆盖。
 结构对照确认世界仅环境RGB变化，光学配置未变；同视角截图用于亮度核查。
+
+## 后续第4项：专利轮轨导向外观
+
+依据CN111185894A说明书[0038]及图4、图5：四个行走轮承载于轨顶，四个竖轴导向轴承
+分别位于两根钢轨内侧。轴承半径暂取25 mm、轴向宽24 mm，中心在轨顶下19 mm，
+外圈与轨头内侧名义相切；补充金属外圈、密封盖、内圈、安装轴和安装块。
+尺寸为外观工程估计，不当作专利实测值。移除此前无充分依据且与轮胎分离的加大内轮缘，
+改为不超出踏面半径的侧环。当前没有轨头下方的防抬升抱轨机构。
+
+仍为6个刚体、120 kg、2个底盘碰撞体，四个车轮独立旋转关节及世界直线导向不变。
+导向轴承是外观，不参与碰撞、承载、侧滑或脱轨计算。53项Python测试通过，
+新增检查覆盖四个轴承的侧向相切和高度范围、四轮落在轨顶、质量与约束保持；
+Gz轨头近景核查无材质/网格加载错误。
+
+最终默认世界为 `gui_c034_rail_v2/world.sdf`，光学配置为 `optics_b3_quality64/capture.yaml`。
+世界派生命令依次为：
+
+```bash
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_gui_world \
+  --world local_data/stage_b/gui_c034_v1/world.sdf \
+  --config local_data/stage_b/optics_b3_quality64/capture.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --output local_data/stage_b/gui_c034_light_v2 --mode lighting
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_gui_world \
+  --world local_data/stage_b/gui_c034_light_v2/world.sdf \
+  --config local_data/stage_b/optics_b3_quality64/capture.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --output local_data/stage_b/gui_c034_rail_v2 --mode robot
+```
+
+产物已存在时须换新目录；不覆盖已有运行资产。以上是第1–4项实现和局部检查，
+不代表完整20米采集、裂缝测量精度或拼接全图已经验收。

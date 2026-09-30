@@ -38,6 +38,8 @@ robot:
   total_mass_kg: 120.0
   wheelbase_m: 0.7
   wheel_diameter_m: 0.2
+  guide_bearing_radius_m: 0.025 # estimated; vertical spindle, tangent to inner rail head
+  guide_bearing_width_m: 0.024 # estimated axial width, contained within 38 mm head
   head_cradle_length_m: 0.56 # updated machine photos; unmeasured envelope estimate
   head_floor_depth_m: 0.215 # floor centre below shaft; lowered by 10 mm
   post_top_spacing_m: 0.62   # nearly vertical, outside the U cradle
@@ -105,7 +107,7 @@ resources:
   # Precision takes priority; independent bounded GPU and CPU texture caches.
   gpu_texture_budget_bytes: 2147483648
   cpu_texture_cache_bytes: 1073741824
-  gpu_preview_texture_budget_bytes: 805306368 # separate GUI RGBA8 + mip allowance
+  gpu_preview_texture_budget_bytes: 1342177280 # separate GUI RGBA8 + mip allowance; current estimate 746 MiB
   max_mesh_triangles: 800000      # rounded, wiggled joint lips
   max_scene_vertices: 1600000
   overview_max_side: 2048

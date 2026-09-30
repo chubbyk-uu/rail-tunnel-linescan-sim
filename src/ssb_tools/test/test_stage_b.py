@@ -456,3 +456,35 @@ def test_shallower_depth_preserves_profile_exactly(inputs):
     dep['scale']=1;old=depth_profile(s,r,np.random.default_rng(37),dep)
     dep['scale']=.8;new=depth_profile(s,r,np.random.default_rng(37),dep)
     np.testing.assert_allclose(new,old*.8,rtol=1e-14,atol=0)
+
+
+def test_patent_guides_touch_inner_rail_and_wheels_rest_on_top(tmp_path,inputs):
+    from ssb_tools.stage_b_robot import make_robot
+    config,spec=inputs
+    car=make_robot(tmp_path,config,spec)
+    base=car.find("link[@name='base']")
+    base_z=float(base.findtext('pose').split()[2])
+    half=spec['robot']['wheelbase_m']/2
+    for side,sign in [('left',1),('right',-1)]:
+        for x in (-half,half):
+            visual=base.find(f"visual[@name='{side}_guide_{x}']")
+            pose=list(map(float,visual.findtext('pose').split()))
+            radius=float(visual.findtext('geometry/cylinder/radius'))
+            width=float(visual.findtext('geometry/cylinder/length'))
+            assert sign*pose[1]+radius==pytest.approx(spec['track']['gauge_m']/2)
+            assert -.038 < pose[2]+base_z-width/2 < pose[2]+base_z+width/2 < 0
+            assert pose[3:]==[0,0,0] # vertical bearing spindle, rolling along rail side
+    wheels=[l for l in car.findall('link') if l.find("visual[@name='tread']") is not None]
+    assert len(wheels)==4
+    for wheel in wheels:
+        position=list(map(float,wheel.findtext('pose').split()))
+        tread=wheel.find("visual[@name='tread']")
+        radius=float(tread.findtext('geometry/cylinder/radius'))
+        assert position[2]-radius==pytest.approx(0)
+        assert abs(position[1])==pytest.approx((spec['track']['gauge_m']+spec['track']['head_width_m'])/2)
+        assert wheel.find("visual[@name='inner_flange']") is None
+        assert not wheel.findall('collision')
+    carriage=car.find("joint[@name='carriage']")
+    assert carriage.get('type')=='prismatic' and carriage.findtext('axis/xyz')=='1 0 0'
+    assert len(car.findall('.//collision'))==2
+    assert sum(float(v.text) for v in car.findall('link/inertial/mass'))==120
