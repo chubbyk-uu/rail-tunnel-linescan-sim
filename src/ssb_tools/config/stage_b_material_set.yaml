@@ -4,7 +4,10 @@ schema: ssb.material_set.v1
 seed: 20260930
 brightness: 0.8
 # Generated grid: align to a source's native pitch (exact texel copies), or give pitch_m.
-grid: {align_to: concrete034}
+# Production: 0.1 mm with 2x2 texture footprint integration in the camera (B4, GUI RTF 0.683).
+# align_to concrete034 (0.067 mm) is closer to the ray-area reference (RMSE 2.1 vs 2.9 DN)
+# but doubles tile generation; estimated full-chain RTF ~0.5, below the 0.6 target.
+grid: {pitch_m: 0.0001}
 layout:
   guide_texel_m: 0.01      # seam guide; feather ~6.5 mm
   patch_m: 0.3             # Concrete034 is only 0.55 m tall
