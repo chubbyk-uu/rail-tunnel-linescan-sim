@@ -287,7 +287,7 @@ def prepare_set(set_path, sources_root, config_path, spec_path, output, working_
         (output/'FAILED').write_text(str(e)+'\n');raise
 
 
-def prepare_filler(downloads, output, mean_albedo=.17, flatten_m=.01, contrast=.35):
+def prepare_filler(downloads, output, mean_albedo=.15, flatten_m=.01, contrast=.35):
     """Joint filler (grey mortar) albedo map: fine detail of a real sandy plaster, tone above
     flatten_m removed (moss, shading), mean normalised; tiled by wall (x, q) at render time."""
     downloads=Path(downloads).resolve();output=Path(output).resolve();source=json.loads(downloads.read_text())
@@ -382,7 +382,7 @@ def main():
     for k in ['downloads','config','spec','output']:a.add_argument('--'+k,required=True)
     a.add_argument('--brightness',type=float,default=.8)
     fl=sub.add_parser('prepare-filler');fl.add_argument('--downloads',required=True);fl.add_argument('--output',required=True)
-    fl.add_argument('--mean-albedo',type=float,default=.17);fl.add_argument('--contrast',type=float,default=.35)
+    fl.add_argument("--mean-albedo",type=float,default=.15);fl.add_argument('--contrast',type=float,default=.35)
     m=sub.add_parser('prepare-set')
     for k in ['set','sources','config','spec','output']:m.add_argument('--'+k,required=True)
     args=p.parse_args();kw=vars(args);command=kw.pop('command')
