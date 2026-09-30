@@ -427,7 +427,7 @@ __device__ void StageBScan(unsigned u,unsigned r) {
   bool complex_crack=false;
   if(valid && params.integrated_cracks && IntegratedPixel(u,r,centre,x,q,point,direction,primitive,&complex_crack))return;
   // Resolve true unions and finite caps only where necessary: crack_area_samples N-rooks
-  // samples at each exposure pose (32 x 3 = 96 rays by default); background cost unchanged.
+  // samples at each exposure pose (64 x 3 = 192 rays in the quality tier); background cost unchanged.
   unsigned area=complex_crack?params.crack_area_samples:params.area_samples;
   double footprint_margin=.0005+2*params.pixel_step*params.radius;
   for(unsigned time=0;time<params.time_samples;++time) {

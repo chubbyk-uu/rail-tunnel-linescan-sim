@@ -281,10 +281,12 @@ def test_optics_config_persists_accepted_texture_footprint_sampling(tmp_path):
     written=json.loads((tmp_path/'out/scene.json').read_text())
     assert scene['sampling']['texture_footprint_samples']==2 and written['sampling']['texture_footprint_samples']==2
     assert written['sampling']['texture_prefilter'] is False
+    assert written['sampling']['crack_area_samples']==64
     assert 'interior_ratio' in written['crack_optics']                     # no depths: flat opening
     (tmp_path/'defects.json').write_text('{"files": {"depths.bin": {}}}')
-    cavity=optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out3',integrated=True)
+    cavity=optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out3',integrated=True,crack_area_samples=32)
     assert cavity['crack_optics']['model']=='cavity_v2'
+    assert cavity['sampling']['crack_area_samples']==32
     with pytest.raises(ValueError,match='sample limits'):
         optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out2',texture_footprint_samples=9)
 

@@ -18,13 +18,14 @@ def crack_optics(defects):
 
 
 def prepare(config_path,geometry,surface,defects,output,area_samples=16,time_samples=3,spec_path=None,adaptive=False,integrated=False,
-            texture_footprint_samples=2,texture_prefilter=False,filler=None,area_pattern='rooks'):
+            texture_footprint_samples=2,texture_prefilter=False,filler=None,area_pattern='rooks',crack_area_samples=64):
     output=Path(output).resolve()
     if output.exists(): raise ValueError('optical configuration output already exists')
     geometry,surface,defects=(Path(p).resolve() for p in (geometry,surface,defects))
     if any((p/'FAILED').exists() for p in (geometry,surface.parent,defects.parent)):
         raise ValueError('refuse failed preparation output')
     if not 1<=area_samples<=16 or not 1<=time_samples<=16 or not 1<=texture_footprint_samples<=8: raise ValueError('sample limits')
+    if crack_area_samples not in (32,64): raise ValueError('crack samples must be 32 or 64')
     if area_pattern not in ('grid','rooks'): raise ValueError('area pattern')
     if integrated and time_samples!=3: raise ValueError('integrated cracks require three exposure frames')
     def entry(path,**extra): return dict(file=str(path),sha256=digest(path),**extra)
@@ -37,10 +38,9 @@ def prepare(config_path,geometry,surface,defects,output,area_samples=16,time_sam
                crack_optics=crack_optics(defects),
                # Full-ray pixels (critical geometry): 'grid' traces area_samples^2 rays per exposure
                # sample; 'rooks' traces area_samples (N-rooks lattice, offset per exposure sample).
-               # Crack pixels needing a true union (branches, crossings, bends, free ends): 32 N-rooks
-               # rays per exposure sample (RMSE 0.84 DN vs 128; 64 cost +3 s per 3 m for 0.54 DN).
+               # Explicit quality tier: 64 for accuracy, 32 for performance.
                sampling=dict(area_axis_samples=area_samples,area_pattern=area_pattern,time_samples=time_samples,
-                             crack_area_samples=32,
+                             crack_area_samples=crack_area_samples,
                              adaptive_area=adaptive,integrated_cracks=integrated,
                              # Accepted B1 setting: 2x2 texture taps over the pixel footprint on the
                              # integrated background path (centre-point sampling showed beat stripes).
@@ -76,6 +76,7 @@ def main():
     for arg in ('config','geometry','surface','defects','output'): p.add_argument('--'+arg,required=True,type=Path)
     p.add_argument('--area-samples',type=int,default=16);p.add_argument('--time-samples',type=int,default=3)
     p.add_argument('--spec',type=Path)
+    p.add_argument('--crack-area-samples',type=int,choices=(32,64),default=64,help='complex crack rays per exposure pose: 64 quality / 32 performance')
     p.add_argument('--adaptive',action='store_true',help='enable guarded background area reduction; verify convergence before use')
     p.add_argument('--integrated',action='store_true',help='integrate metric crack coverage analytically; keep full ray sampling at critical geometry')
     p.add_argument('--texture-footprint-samples',type=int,default=2,help='texture taps per axis over the pixel footprint (integrated path); 2 is the accepted B1 setting')
@@ -83,7 +84,7 @@ def main():
     p.add_argument('--area-pattern',choices=('grid','rooks'),default='rooks',help="full-ray pattern: rooks (N per exposure sample; default, N=16) or grid (N x N per exposure sample, the pre-2026-09-30 setting with N=8)")
     p.add_argument('--filler',type=Path,help='joint filler texture (stage_b_runtime_surface prepare-filler filler.json)')
     a=p.parse_args();prepare(a.config,a.geometry,a.surface,a.defects,a.output,a.area_samples,a.time_samples,a.spec,a.adaptive,a.integrated,
-                             a.texture_footprint_samples,a.texture_prefilter,a.filler,a.area_pattern)
+                             a.texture_footprint_samples,a.texture_prefilter,a.filler,a.area_pattern,a.crack_area_samples)
 
 
 if __name__=='__main__': main()

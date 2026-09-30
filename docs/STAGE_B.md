@@ -219,3 +219,11 @@ python3 -m ssb_tools.stage_b_defects --depth NEW_REFINED \
 
 需先 `source install/setup.bash` 或设置 `PYTHONPATH=src/ssb_tools`。GUI 默认采集已使用新版光学场景和 3 m 短程世界，高清 GUI 背景/缺陷预览仍待 B3；完整 20 m 采集及拼接优化仍待后续阶段。
 - 未做的项：曝光端点改用平面外推（省约 0.65 s）、同一时刻的 4 个纹理取样合并光源计算（省约 0.4 s）。收益有限，暂不实施。
+
+## 后续第1项：采样档位兼容性
+
+旧光学场景缺少 `sampling.crack_area_samples` 时保留64条/时刻；生成工具增加
+`--crack-area-samples {32,64}`，默认64高精度档，32为性能档。两档均保留点级并集。
+默认GUI配置改为 `optics_b3_quality64/capture.yaml`，它仅将v12的采样数显式改为64，
+其他光学资产、深度和照明不变。旧资产不覆盖。49项Python测试、3组C++/GPU测试通过；
+并集参考测试分别覆盖显式32和缺省64。历史32档性能记录仍是当时实测，不代表当前默认档。

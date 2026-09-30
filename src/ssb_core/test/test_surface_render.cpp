@@ -301,8 +301,9 @@ TEST_F(SurfaceFixture, ComplexCrackUnionsAndFiniteCapsMatchReference) {
       for(size_t i=0;i<jobs.size();++i){jobs[i].pose.x=8;jobs[i].pose.theta=(.5+(double(i)-16)*.000025)/2.75;
         jobs[i].pose.omega=omega;jobs[i].pose.v=omega? .2:0;}
       scene["sampling"]={{"area_axis_samples",16},{"area_pattern","rooks"},{"time_samples",3},{"integrated_cracks",true}};SaveScene();
+      if(omega==0) {scene["sampling"]["crack_area_samples"]=32;SaveScene();}
       OptixRenderer actual(c,DefaultPtxPath(),33);std::vector<uint8_t> a,b;std::vector<double> hits;actual.Render(jobs,a,hits);
-      EXPECT_EQ(actual.Describe().at("complex_crack_area_samples"),32);
+      EXPECT_EQ(actual.Describe().at("complex_crack_area_samples"),omega==0?32:64);
       scene["sampling"]={{"area_axis_samples",16},{"area_pattern","grid"},{"time_samples",16},{"integrated_cracks",false}};SaveScene();
       // A static 16x16 reference quantises axis-aligned boundaries too coarsely.
       // Four phases per axis turn it into an independent 64x64x16 reference.

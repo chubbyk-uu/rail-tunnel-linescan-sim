@@ -93,8 +93,8 @@ StageBAssets::StageBAssets(const Config& c) {
   if(pattern=="rooks")area_rooks=rooks(area_samples);
   integrated_cracks=sampling.value("integrated_cracks",false);
   // Crack pixels needing a true union (branches, crossings, bends, free ends): N-rooks rays per
-  // exposure sample. 32 matches the accepted joint-edge accuracy (vs a 128-ray reference).
-  crack_area_samples=sampling.value("crack_area_samples",32u);
+  // exposure sample. Missing fields preserve the legacy 64-ray configuration.
+  crack_area_samples=sampling.value("crack_area_samples",64u);
   Need(crack_area_samples>=4&&crack_area_samples<=128,"crack area samples");crack_area_rooks=rooks(crack_area_samples);
   texture_footprint_samples=sampling.value("texture_footprint_samples",1u);
   texture_prefilter=sampling.value("texture_prefilter",false);
