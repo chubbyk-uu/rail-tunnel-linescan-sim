@@ -285,8 +285,17 @@ def test_optics_config_persists_accepted_texture_footprint_sampling(tmp_path):
         optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out2',texture_footprint_samples=9)
 
 
+def test_production_joints_are_all_filled(tmp_path,inputs):
+    config,spec = inputs
+    config['tunnel'].update(x_min_m=0,x_max_m=3.6)
+    geometry = make_meshes(tmp_path,config,spec)
+    assert geometry['joint_state_counts']=={'filled':len(geometry['joints']),'unfilled':0,'damaged':0}
+
+
 def test_joint_profile_states_and_filler_geometry(tmp_path,inputs):
     config,spec = inputs
+    # Exercise the retained unfilled/damaged code paths with the former development ratios.
+    spec['panels']['joint_states']={'filled':.8,'unfilled':.15,'damaged':.05}
     config['tunnel'].update(x_min_m=-1.5,x_max_m=21.5)
     geometry = make_meshes(tmp_path,config,spec)
     p=spec['panels'];r=config['tunnel']['radius_m'];zc=config['tunnel']['axis_z_m']
@@ -300,12 +309,15 @@ def test_joint_profile_states_and_filler_geometry(tmp_path,inputs):
     def radii(name):
         v=np.array([[float(x) for x in l.split()[1:]] for l in (tmp_path/name).read_text().splitlines() if l.startswith('v ')])
         return v,np.hypot(v[:,1],v[:,2]-zc)
-    v,rad=radii('panels.obj')   # lining at r, chamfer bottoms at r+c
-    assert np.all(np.isclose(rad,r,atol=1e-9)|np.isclose(rad,r+c,atol=1e-9)) and np.isclose(rad,r+c,atol=1e-9).any()
+    v,rad=radii('panels.obj')   # lining at r, rounded lips down to the wall top at r+c+t
+    tan=p['joint_edge_radius_m']*math.tan(math.pi/8)
+    # Crossing patches may slope from a lip down to the filler level (at most c + max recess).
+    assert rad.min()>=r-1e-9 and rad.max()<=r+c+max(tan,p['joint_filler_recess_m'][1])+1e-9 and (rad>r+c).any()
     _,rad=radii('gap.obj');assert np.allclose(rad,r+D+p['joint_gap_depth_m'],atol=1e-9)
     v,rad=radii('filler.obj')
-    deepest=c+max(p['joint_filler_recess_m'][1],p['joint_damage']['loss_depth_m'][1])
-    assert rad.min()>=r+c-1e-9 and rad.max()<=r+deepest+1e-9
+    deepest=c+max(p['joint_filler_recess_m'][1],p['joint_damage']['loss_depth_m'][1])+1e-9
+    # Crossing patches: filler cells at the lip boundary may rise onto the inner fillet.
+    assert rad.min()>=r+c-5e-4 and rad.max()<=r+deepest+1e-9
     # Unfilled sections carry no filler: no filler vertex at a ring joint section marked unfilled.
     for j in joints:
         if j['kind']!='ring' or j['state']!='unfilled':continue
@@ -314,3 +326,20 @@ def test_joint_profile_states_and_filler_geometry(tmp_path,inputs):
         assert not inside.any()
     damaged=[j for j in joints if j['state']=='damaged']
     assert all(j['losses_m'] and all(l[2]>j['filler_recess_m'] for l in j['losses_m']) for j in damaged)
+
+
+def test_lip_profile_is_tangent_and_meets_filler_on_the_fillet():
+    from ssb_tools.stage_b_scene import lip_profile,lip_half_width
+    g,c,rho=.005,.003,.001
+    pts,t=lip_profile(g,c,rho,8)
+    s=np.array([q[0] for q in pts]);d=np.array([q[1] for q in pts])
+    assert np.isclose(s[0],g+c+t) and np.isclose(d[0],0)          # starts on the lining surface
+    assert np.isclose(s[-1],g) and np.isclose(d[-1],c+t)         # ends on the groove wall
+    # First facet nearly horizontal (tangent to the surface), last nearly vertical (tangent to wall),
+    # and the facets around the arc junction follow the 45 deg chamfer.
+    seg=np.diff(np.column_stack([s,d]),axis=0);ang=np.degrees(np.arctan2(seg[:,1],-seg[:,0]))
+    assert ang[0]<45/8+1e-6 and ang[-1]>90-45/8-1e-6 and np.isclose(ang[8],45,atol=1e-6)
+    assert np.all(np.diff(ang)>=-1e-9)                             # convex lip: monotonic turning
+    for depth in np.linspace(c,c+t,7):                             # filler edge lies on the inner fillet
+        x=lip_half_width(g,c,rho,depth)
+        assert np.isclose(np.hypot(x-(g+rho),depth-(c+t)),rho,atol=1e-12) or np.isclose(x,g)

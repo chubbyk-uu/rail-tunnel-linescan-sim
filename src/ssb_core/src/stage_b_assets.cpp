@@ -103,7 +103,7 @@ StageBAssets::StageBAssets(const Config& c) {
         Need(a>0&&b>0&&d>0&&std::max({a,b,d})<=vertices.size()-base,"invalid OBJ indices");
         triangles.push_back({base+a-1,base+b-1,base+d-1});face_material.push_back(material);
       }
-      Need(vertices.size()<=1200000&&triangles.size()<=600000,"optical geometry exceeds budget");
+      Need(vertices.size()<=1600000&&triangles.size()<=800000,"optical geometry exceeds budget");
     }
   }
   Need(!triangles.empty() && max_radius<c.tunnel_radius_m+.1,"empty/invalid optical geometry");

@@ -12,12 +12,20 @@ panels:
   joint_chamfer_m: 0.003
   joint_groove_half_width_m: 0.005
   joint_depth_m: 0.035            # surface to groove floor
+  # Rounded chamfer edges (user request 2026-10-01): 1 mm fillets, and a slight smooth wiggle
+  # of the chamfer's inner edge along the joint (assumptions).
+  joint_edge_radius_m: 0.001
+  joint_edge_fillet_steps: 2
+  joint_edge_wiggle: {rms_m: 0.00015, wavelengths_m: [0.06, 0.11, 0.23]}
+  joint_along_step_m: 0.04        # longitudinal-joint subdivision along x (wiggle sampling)
   joint_contact_gap_m: 0.002      # segment contact gap in the groove floor (assumption)
   joint_gap_depth_m: 0.02         # visible gap depth before the dark gasket/void (assumption)
   joint_filler_recess_m: [0.0, 0.002]
   # Per joint section (ring joints split at the segment boundaries of the ring after them,
-  # longitudinal joints per ring): user-confirmed ratios, grey mortar filler.
-  joint_states: {filled: 0.80, unfilled: 0.15, damaged: 0.05}
+  # longitudinal joints per ring). User decision 2026-10-01: all joints filled with grey mortar.
+  # Unfilled/damaged sections looked abrupt (state switches at section boundaries, damage only
+  # a sunken filler band); the code paths remain for a future, reference-based damage model.
+  joint_states: {filled: 1.0, unfilled: 0.0, damaged: 0.0}
   joint_damage: {loss_fraction: [0.3, 0.7], stretch_m: [0.05, 0.30], loss_depth_m: [0.005, 0.020]}
 track:
   gauge_m: 1.435
@@ -77,6 +85,6 @@ resources:
   gpu_texture_budget_bytes: 2147483648
   cpu_texture_cache_bytes: 1073741824
   gpu_preview_texture_budget_bytes: 805306368 # separate GUI RGBA8 + mip allowance
-  max_mesh_triangles: 600000      # chamfered, stateful joints (~2.5x the bare-slot mesh)
-  max_scene_vertices: 1200000
+  max_mesh_triangles: 800000      # rounded, wiggled joint lips
+  max_scene_vertices: 1600000
   overview_max_side: 2048

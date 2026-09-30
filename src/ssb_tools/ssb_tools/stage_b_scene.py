@@ -47,6 +47,11 @@ def load_spec(path):
     recess = p['joint_filler_recess_m']; damage = p['joint_damage']; states = p['joint_states']
     if not 0 <= recess[0] <= recess[1] or p['joint_chamfer_m']+recess[1]+damage['loss_depth_m'][1] >= p['joint_depth_m']:
         raise ValueError('joint filler/damage depths must stay above the groove floor')
+    rho = p['joint_edge_radius_m']
+    if not 0 < rho or 2*rho*math.tan(math.pi/8) >= p['joint_chamfer_m']*math.sqrt(2) or p['joint_edge_fillet_steps'] < 1:
+        raise ValueError('edge fillets must fit on the chamfer')
+    if p['joint_edge_wiggle']['rms_m']*3 >= p['joint_chamfer_m']/2 or p['joint_along_step_m'] <= 0:
+        raise ValueError('edge wiggle too large for the chamfer')
     if p['joint_contact_gap_m'] >= 2*p['joint_groove_half_width_m'] or p['joint_depth_m']+p['joint_gap_depth_m'] >= .09:
         raise ValueError('contact gap must fit the groove floor and the lining stay within 0.1 m')
     if set(states) != {'filled','unfilled','damaged'} or abs(sum(states.values())-1) > 1e-9 or min(states.values()) < 0:
@@ -129,9 +134,7 @@ class Mesh:
             self.out.write('v %.9f %.9f %.9f\n' % tuple(point))
         # Ogre2 needs explicit normals to construct a textured HLMS material.
         # OptiX still derives face normals from these same triangle positions.
-        u = [points[1][i]-points[0][i] for i in range(3)]
-        v = [points[2][i]-points[0][i] for i in range(3)]
-        normal = (u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0])
+        normal = newell(points)   # robust when one quad edge has zero length (triangle)
         length = math.sqrt(sum(n*n for n in normal))
         if length == 0:
             raise ValueError('degenerate mesh quad')
@@ -146,12 +149,17 @@ class Mesh:
             for p,a in zip(points,angles):
                 self.out.write('vt %.9f %.9f\n' % ((p[0]-lo)/(hi-lo),(a-a0)/(b0-a0)))
         # Winding chosen by the caller; explicit inward winding on cylindrical faces.
+        # A quad with one zero-length edge is written as its single non-degenerate triangle.
         index=lambda i:f'{i}/{i}/{i}' if self.uv_domain else f'{i}//{i}'
-        self.out.write(f'f {index(first)} {index(first+1)} {index(first+2)}\nf {index(first)} {index(first+2)} {index(first+3)}\n')
+        same=lambda a,b:all(abs(points[a][k]-points[b][k])<1e-12 for k in range(3))
+        corners=[k for k in range(4) if not same(k,(k+1)%4)]
+        faces=[(0,1,2),(0,2,3)] if len(corners)==4 else [tuple(corners)] if len(corners)==3 else []
+        for f in faces:
+            self.out.write('f '+' '.join(index(first+k) for k in f)+'\n')
         self.vertices += 4
-        self.faces += 2
+        self.faces += len(faces)
         self.counters['vertices'] += 4
-        self.counters['triangles'] += 2
+        self.counters['triangles'] += len(faces)
 
     def close(self):
         self.out.close()
@@ -172,10 +180,17 @@ def cylinder_strip(mesh, x0, x1, a, b, radius, zc, step):
                    point(x1,v,radius,zc), point(x1,u,radius,zc)])
 
 
+def newell(points):
+    """Polygon normal (area-weighted) from all vertices."""
+    n=[0.,0.,0.]
+    for a,b in zip(points,points[1:]+points[:1]):
+        n[0]+=(a[1]-b[1])*(a[2]+b[2]);n[1]+=(a[2]-b[2])*(a[0]+b[0]);n[2]+=(a[0]-b[0])*(a[1]+b[1])
+    return tuple(n)
+
+
 def oriented(mesh, points, toward):
     """Add a quad whose normal faces the reference point (inward/into the groove)."""
-    u=[points[1][i]-points[0][i] for i in range(3)];v=[points[2][i]-points[0][i] for i in range(3)]
-    n=(u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+    n=newell(points)
     centre=[sum(pt[i] for pt in points)/4 for i in range(3)]
     mesh.quad(points if sum(n[i]*(toward[i]-centre[i]) for i in range(3)) >= 0 else points[::-1])
 
@@ -207,110 +222,288 @@ def filler_levels(section, length):
     return cuts
 
 
-def make_meshes(out, config, spec):
-    """Lining panels plus chamfered caulking grooves with filled/unfilled/damaged filler.
+def lip_profile(g, c, rho, steps):
+    """Half cross-section of a joint lip, outer -> inner, as (s, depth, follows_inner_edge).
 
-    Cross-section across a joint (depth measured outward from the lining radius r):
-    panel -> 45 deg chamfer (c) -> groove walls at half width g down to the floor (D);
-    filler top at depth c + recess (or deeper along damaged stretches). Ring joints run
-    around the circumference, split at the next ring's segment boundaries; longitudinal
-    joints run between ring joints and end in walls at the ring-joint chamfer edge.
+    s: lateral distance from the joint centre line; depth: outward from the lining radius.
+    Surface -> fillet (radius rho) -> 45 deg chamfer -> fillet -> groove wall top at (g, c+t),
+    t = rho*tan(22.5 deg). The inner-edge points move with the along-joint wiggle.
+    """
+    h, t = g+c, rho*math.tan(math.pi/8)
+    points = []
+    for k in range(steps+1):   # outer fillet, centre (h+t, rho), -90 -> -135 deg
+        phi = math.radians(-90-45*k/steps)
+        points.append((h+t+rho*math.cos(phi), rho+rho*math.sin(phi), False))
+    for k in range(steps+1):   # inner fillet, centre (g+rho, c+t), -135 -> -180 deg
+        phi = math.radians(-135-45*k/steps)
+        points.append((g+rho+rho*math.cos(phi), c+t+rho*math.sin(phi), True))
+    return points, t
+
+
+def lip_half_width(g, c, rho, depth):
+    """Lateral position of the inner fillet/wall at a given depth (where the filler meets it)."""
+    t = rho*math.tan(math.pi/8)
+    if depth >= c+t: return g
+    return g+rho-math.sqrt(max(0., rho*rho-(depth-c-t)**2))
+
+
+def wiggle(rng, spec):
+    """Smooth along-joint edge offset (m) as a function of arc length: a few sinusoids."""
+    w = spec['joint_edge_wiggle']; k = len(w['wavelengths_m']); a = w['rms_m']*math.sqrt(2/k)
+    phases = rng.uniform(0, 2*math.pi, k)
+    return lambda s: sum(a*math.sin(2*math.pi*s/lam+ph) for lam,ph in zip(w['wavelengths_m'],phases))
+
+
+def make_meshes(out, config, spec):
+    """Lining panels plus rounded, chamfered caulking grooves with mortar filler.
+
+    Cross-section across a joint (depth outward from the lining radius r): panel -> fillet ->
+    45 deg chamfer -> fillet -> groove wall at half width g; filler top at depth c + recess.
+    The chamfer's inner edge wiggles slightly along the joint. Ring joints run around the
+    circumference, split into sections at the next ring's segment boundaries; longitudinal
+    joints run between ring joints and end in walls at the ring-joint lip. Filled sections
+    omit the hidden groove floor; unfilled/damaged sections (kept for future use) include
+    floor, contact gap and gasket.
     """
     p = spec['panels']
-    t = config['tunnel']
-    r, zc, lo, hi = (t[k] for k in ('radius_m', 'axis_z_m', 'x_min_m', 'x_max_m'))
+    t_ = config['tunnel']
+    r, zc, lo, hi = (t_[k] for k in ('radius_m', 'axis_z_m', 'x_min_m', 'x_max_m'))
     step = math.radians(p['angular_step_deg'])
     c, g, D = p['joint_chamfer_m'], p['joint_groove_half_width_m'], p['joint_depth_m']
     w, G = p['joint_contact_gap_m']/2, p['joint_gap_depth_m']
-    h = g+c
-    # Slot floors and edge walls use different angular partitions. Extend walls
-    # slightly behind the floor to seal facet gaps without altering the visible rim.
+    rho, fsteps = p['joint_edge_radius_m'], p['joint_edge_fillet_steps']
+    profile, t = lip_profile(g, c, rho, fsteps)
+    h = g+c; outer = h+t          # panel boundary distance from the joint centre line
     seal = 2*(r+D+G)*(1-math.cos(step/2))+1e-5
     edge_radius = r+D+G+seal
-    if 2*h/r >= math.radians(min(p['angles_deg'])):
+    if 2*outer/r >= math.radians(min(p['angles_deg'])):
         raise ValueError('joint wider than a panel')
     rng = np.random.default_rng(spec['seed']+7)
     counters = dict(vertices=0, triangles=0)
-    # panels.obj (material 0) also carries the chamfers: they are the segment's own concrete,
-    # continuous in texture, normal map and cracks. joints.obj: groove walls/floor (1);
+    # panels.obj (material 0) also carries the rounded lips/chamfers: they are the segment's own
+    # concrete, continuous in texture, normal map and cracks. joints.obj: groove walls/floor (1);
     # filler.obj: mortar (2); gap.obj: dark gasket/void behind the contact gap (3).
     top, groove, fill, gap = (Mesh(out/name, counters, spec['resources'],(lo,hi,zc))
                               for name in ('panels.obj','joints.obj','filler.obj','gap.obj'))
-    axis = lambda x: (x, 0., zc)
     panels, joints = [], []
+    INF = float('inf')
 
-    def ring_joint(X, a0, ring):
-        edges = [a0]
+    def lip_points(n):
+        """Lip polyline (s, depth) for an inner-edge offset n."""
+        return [(q+(n if inner else 0.), d) for q,d,inner in profile]
+
+    def lip_depth(points, u):
+        """Depth of the lip surface at lateral distance u (INF inside the groove)."""
+        if u >= points[0][0]: return 0.
+        if u <= points[-1][0]: return INF
+        for (s0,d0),(s1,d1) in zip(points[:-1],points[1:]):
+            if s1 <= u <= s0: return d0+(d1-d0)*(s0-u)/(s0-s1) if s0 > s1 else d1
+        return INF
+
+    def cross_section(section, depth_top, n_left, n_right):
+        """Per side: lip points plus the wall down to where it is hidden, and filler half widths."""
+        filled = section['state'] == 'filled'
+        sides = {}
+        for side, n in ((-1,n_left),(1,n_right)):
+            pts = lip_points(n)
+            bottom = (c+max(t,depth_top)+1e-3) if filled else D+seal
+            pts.append((g+n, bottom))
+            sides[side] = pts
+        widths = {side:lip_half_width(g,c,rho,c+depth_top)+n for side,n in ((-1,n_left),(1,n_right))}
+        return sides, widths
+
+    def sweep(mesh, curve_a, curve_b, to_world, toward):
+        for (sa,da),(sb,db),(sc,dc),(sd,dd) in zip(curve_a[:-1],curve_a[1:],curve_b[1:],curve_b[:-1]):
+            oriented(mesh,[to_world(*q) for q in ((sa,da,0),(sb,db,0),(sc,dc,1),(sd,dd,1))],toward)
+
+    # Phase 1: joint records (states, recess, edge wiggles) so crossings know both joints.
+    width = p['ring_width_m']
+    rings = {}
+    for ring in range(math.floor(lo/width), math.ceil(hi/width)):
+        left, right = ring*width, (ring+1)*width
+        x0 = left+outer if lo < left else lo
+        x1 = right-outer if right < hi else hi
+        if x1 <= x0: continue
+        a = math.radians(-p['angles_deg'][0]/2 + (ring % 2)*p['alternating_stagger_deg'])
+        edges = [a]
         for span in p['angles_deg']: edges.append(edges[-1]+math.radians(span))
-        for index,(u,v) in enumerate(zip(edges[:-1],edges[1:])):
-            count = max(1, math.ceil((v-u)/step))
-            section = dict(kind='ring', ring=ring, index=index, x_m=X, angle_rad=[u,v], **joint_sections(rng,p,(v-u)*r))
-            joints.append(section)
-            levels = filler_levels(section,(v-u)*r)
-            for i in range(count):
-                s0, s1 = u+(v-u)*i/count, u+(v-u)*(i+1)/count
-                for side in (-1,1):
-                    oriented(top,[point(X+side*h,s0,r,zc),point(X+side*h,s1,r,zc),point(X+side*g,s1,r+c,zc),point(X+side*g,s0,r+c,zc)],axis(X))
-                    oriented(groove,[point(X+side*g,s0,r+c,zc),point(X+side*g,s1,r+c,zc),point(X+side*g,s1,r+D+seal,zc),point(X+side*g,s0,r+D+seal,zc)],(X,0.,zc))
-                    oriented(groove,[point(X+side*g,s0,r+D,zc),point(X+side*g,s1,r+D,zc),point(X+side*w,s1,r+D,zc),point(X+side*w,s0,r+D,zc)],axis(X))
-                    oriented(groove,[point(X+side*w,s0,r+D,zc),point(X+side*w,s1,r+D,zc),point(X+side*w,s1,r+D+G+seal,zc),point(X+side*w,s0,r+D+G+seal,zc)],(X,0.,zc))
-                oriented(gap,[point(X-w,s0,r+D+G,zc),point(X-w,s1,r+D+G,zc),point(X+w,s1,r+D+G,zc),point(X+w,s0,r+D+G,zc)],axis(X))
-            previous = None
-            for a,b,depth in levels:
-                ua, ub = u+a/r, u+b/r; n = max(1, math.ceil((ub-ua)/step)); rad = r+c+depth
-                for i in range(n):
-                    s0, s1 = ua+(ub-ua)*i/n, ua+(ub-ua)*(i+1)/n
-                    oriented(fill,[point(X-g,s0,rad,zc),point(X-g,s1,rad,zc),point(X+g,s1,rad,zc),point(X+g,s0,rad,zc)],axis(X))
-                if previous is not None and abs(previous-rad) > 1e-9:   # step between filler levels
-                    lo_r, hi_r = sorted((previous, rad))
-                    oriented(fill,[point(X-g,ua,lo_r,zc),point(X+g,ua,lo_r,zc),point(X+g,ua,hi_r,zc),point(X-g,ua,hi_r,zc)],point(X,ua+(1 if rad>previous else -1)*1e-3,r,zc))
-                previous = rad
+        longs = []
+        for index,A in enumerate(edges[:-1]):
+            section = dict(kind='longitudinal', ring=ring, index=index, x_m=[x0,x1], angle_rad=A, **joint_sections(rng,p,x1-x0))
+            joints.append(section);longs.append(dict(A=A, section=section, wig={side:wiggle(rng,p) for side in (-1,1)}))
+        rings[ring] = dict(left=left, right=right, x0=x0, x1=x1, edges=edges, longs=longs)
+    ring_joints = {}
+    for ring, R in rings.items():
+        if not lo < R['left'] < hi: continue
+        recess = float(rng.uniform(*p['joint_filler_recess_m']))   # one level per ring joint
+        sections = []
+        for index,(u,v) in enumerate(zip(R['edges'][:-1],R['edges'][1:])):
+            section = dict(kind='ring', ring=ring, index=index, x_m=R['left'], angle_rad=[u,v], **joint_sections(rng,p,(v-u)*r))
+            if section['state'] == 'filled': section['filler_recess_m'] = recess
+            joints.append(section);sections.append(section)
+        ring_joints[ring] = dict(X=R['left'], sections=sections, recess=recess, wig={side:wiggle(rng,p) for side in (-1,1)})
 
-    def longitudinal_joint(A, x0, x1, ring, index, closed):
-        section = dict(kind='longitudinal', ring=ring, index=index, x_m=[x0,x1], angle_rad=A, **joint_sections(rng,p,x1-x0))
-        joints.append(section)
-        ah, ag, aw = h/r, g/r, w/r
-        centre = lambda x: point(x, A, r-1., zc)   # a point inside the tunnel above the joint
-        for side in (-1,1):
-            oriented(top,[point(x0,A+side*ah,r,zc),point(x1,A+side*ah,r,zc),point(x1,A+side*ag,r+c,zc),point(x0,A+side*ag,r+c,zc)],centre((x0+x1)/2))
-            oriented(groove,[point(x0,A+side*ag,r+c,zc),point(x1,A+side*ag,r+c,zc),point(x1,A+side*ag,r+D+seal,zc),point(x0,A+side*ag,r+D+seal,zc)],point((x0+x1)/2,A,r+c,zc))
-            oriented(groove,[point(x0,A+side*ag,r+D,zc),point(x1,A+side*ag,r+D,zc),point(x1,A+side*aw,r+D,zc),point(x0,A+side*aw,r+D,zc)],centre((x0+x1)/2))
-            oriented(groove,[point(x0,A+side*aw,r+D,zc),point(x1,A+side*aw,r+D,zc),point(x1,A+side*aw,r+D+G+seal,zc),point(x0,A+side*aw,r+D+G+seal,zc)],point((x0+x1)/2,A,r+D,zc))
-        oriented(gap,[point(x0,A-aw,r+D+G,zc),point(x1,A-aw,r+D+G,zc),point(x1,A+aw,r+D+G,zc),point(x0,A+aw,r+D+G,zc)],centre((x0+x1)/2))
-        for x, inward in ((x0,1),(x1,-1)):
-            if not closed[0 if inward>0 else 1]: continue
-            ref = point(x+inward*1e-3, A, r+c, zc)
-            oriented(groove,[point(x,A-ah,r,zc),point(x,A-ag,r+c,zc),point(x,A+ag,r+c,zc),point(x,A+ah,r,zc)],ref)
-            oriented(groove,[point(x,A-ag,r+c,zc),point(x,A-ag,r+D,zc),point(x,A+ag,r+D,zc),point(x,A+ag,r+c,zc)],ref)
-            oriented(groove,[point(x,A-aw,r+D,zc),point(x,A-aw,r+D+G,zc),point(x,A+aw,r+D+G,zc),point(x,A+aw,r+D,zc)],ref)
+    def crossing_ok(RJ, L):
+        return all(sec['state']=='filled' for sec in RJ['sections']) and L['section']['state']=='filled'
+
+    def openings(ring, side):
+        """Angular intervals of longitudinal grooves that open into ring joint `ring` on `side`."""
+        other = rings.get(ring if side > 0 else ring-1)
+        if other is None: return []
+        return [(L['A']-outer/r, L['A']+outer/r, L) for L in other['longs'] if crossing_ok(ring_joints[ring], L)]
+
+    def ring_joint(ring):
+        RJ = ring_joints[ring]; X = RJ['X']; wig = RJ['wig']
+        holes = {side:openings(ring, side) for side in (-1,1)}
+        edge = {-1:[], 1:[]}   # ring filler edge polyline per side: (angle, half width)
         previous = None
-        for a,b,depth in filler_levels(section, x1-x0):
-            rad = r+c+depth; xa, xb = x0+a, x0+b
-            oriented(fill,[point(xa,A-ag,rad,zc),point(xb,A-ag,rad,zc),point(xb,A+ag,rad,zc),point(xa,A+ag,rad,zc)],centre((xa+xb)/2))
-            if previous is not None and abs(previous-rad) > 1e-9:
-                lo_r, hi_r = sorted((previous, rad))
-                oriented(fill,[point(xa,A-ag,lo_r,zc),point(xa,A+ag,lo_r,zc),point(xa,A+ag,hi_r,zc),point(xa,A-ag,hi_r,zc)],point(xa+(1 if rad>previous else -1)*1e-3,A,r,zc))
-            previous = rad
+        for section in RJ['sections']:
+            u, v = section['angle_rad']
+            levels = filler_levels(section,(v-u)*r) or [(0.,(v-u)*r,None)]
+            for a,b,depth in levels:
+                ua, ub = u+a/r, u+b/r; n = max(1, math.ceil((ub-ua)/step))
+                # Hole edges mapped into this level's angle range (joint angles wrap at 2 pi).
+                wrapped = lambda e: ua+math.fmod(math.fmod(e-ua,2*math.pi)+2*math.pi,2*math.pi)
+                angles = sorted({ua+(ub-ua)*i/n for i in range(n+1)} |
+                                {wrapped(e) for side in (-1,1) for lo_a,hi_a,_ in holes[side] for e in (lo_a,hi_a) if ua < wrapped(e) < ub})
+                shapes = [cross_section(section, depth if depth is not None else 0., wig[-1](q*r), wig[1](q*r)) for q in angles]
+                for side in (-1,1):
+                    for q0,q1,(s0,_),(s1,_) in zip(angles[:-1],angles[1:],shapes[:-1],shapes[1:]):
+                        mid = (q0+q1)/2
+                        if any(math.fmod(math.fmod(mid-lo_a,2*math.pi)+2*math.pi,2*math.pi) <= hi_a-lo_a for lo_a,hi_a,_ in holes[side]):
+                            continue   # junction patch instead
+                        world = lambda s_,d_,end,q0=q0,q1=q1,side=side: point(X+side*s_, q1 if end else q0, r+d_, zc)
+                        sweep(top, s0[side][:len(profile)], s1[side][:len(profile)], world, (X,0.,zc))
+                        sweep(groove, s0[side][len(profile)-1:], s1[side][len(profile)-1:], world, (X,0.,zc))
+                if depth is not None:
+                    rad = r+c+depth
+                    for q0,q1,(_,w0),(_,w1) in zip(angles[:-1],angles[1:],shapes[:-1],shapes[1:]):
+                        oriented(fill,[point(X-w0[-1],q0,rad,zc),point(X-w1[-1],q1,rad,zc),point(X+w1[1],q1,rad,zc),point(X+w0[1],q0,rad,zc)],(X,0.,zc))
+                    for q,(_,wd) in zip(angles,shapes):
+                        for sd in (-1,1): edge[sd].append((q,wd[sd]))
+                    if previous is not None and abs(previous-rad) > 1e-9:   # step between filler levels
+                        lo_r, hi_r = sorted((previous, rad)); wl, wr = shapes[0][1][-1], shapes[0][1][1]
+                        oriented(fill,[point(X-wl,ua,lo_r,zc),point(X+wr,ua,lo_r,zc),point(X+wr,ua,hi_r,zc),point(X-wl,ua,hi_r,zc)],
+                                 point(X,ua+(1 if rad>previous else -1)*1e-3,r,zc))
+                    previous = rad
+                else:
+                    previous = None
+                if section['state'] != 'filled':
+                    for q0,q1 in zip(angles[:-1],angles[1:]):
+                        for side in (-1,1):
+                            oriented(groove,[point(X+side*g,q0,r+D,zc),point(X+side*g,q1,r+D,zc),point(X+side*w,q1,r+D,zc),point(X+side*w,q0,r+D,zc)],(X,0.,zc))
+                            oriented(groove,[point(X+side*w,q0,r+D,zc),point(X+side*w,q1,r+D,zc),point(X+side*w,q1,r+D+G+seal,zc),point(X+side*w,q0,r+D+G+seal,zc)],(X,0.,zc))
+                        oriented(gap,[point(X-w,q0,r+D+G,zc),point(X-w,q1,r+D+G,zc),point(X+w,q1,r+D+G,zc),point(X+w,q0,r+D+G,zc)],(X,0.,zc))
+        a0 = RJ['sections'][0]['angle_rad'][0]
+        for side in (-1,1):
+            poly = sorted(edge[side]); qs = np.array([q for q,_ in poly]); ws = np.array([v for _,v in poly])
+            for lo_a,hi_a,L in holes[side]:
+                junction(X, side, lo_a, hi_a, RJ, L, a0, qs, ws)
+
+    def junction(X, side, lo_a, hi_a, RJ, L, a0, qs, ws):
+        """Corner where a longitudinal groove opens into a ring groove: height field
+        depth = max(ring lip depth, longitudinal lip depth), clipped at the longitudinal filler."""
+        A, sec = L['A'], L['section']; fl = c+sec['filler_recess_m']; fr = c+RJ['recess']
+        x_of = lambda u: X+side*u
+        n_ring = RJ['wig'][side](A*r)                   # ring inner-edge offset at this crossing
+        u_ref = lip_half_width(g,c,rho,fr)+n_ring        # ring filler edge at the crossing centre
+        # Nodes as fractions between the ring filler edge (per angle, watertight with the ring
+        # filler) and the panel boundary; include the lip facet and filler-level positions.
+        cand = {q for q,_ in lip_points(n_ring)} | {lip_half_width(g,c,rho,fl)+n_ring}
+        # Dense near the ring filler edge, where the lip/filler boundary cells would otherwise
+        # form short steep facets.
+        taus = sorted({round(v,9) for v in {i/8 for i in range(9)} | {.015,.03,.06} |
+                       {(q-u_ref)/(outer-u_ref) for q in cand if u_ref < q < outer}})
+        # Ring filler edge: the same polyline the ring filler quads use (watertight join).
+        unwrap = lambda q: a0+math.fmod(math.fmod(q-a0,2*math.pi)+2*math.pi,2*math.pi)
+        u_min_at = lambda q: float(np.interp(unwrap(q), qs, ws))
+        Aw = unwrap(A)
+        ring_nodes = {(q-Aw)*r for q in qs if abs(q-Aw)*r < outer}
+        xm = x_of((u_ref+outer)/2)
+        hw = {sd:lip_half_width(g,c,rho,fl)+L['wig'][sd](xm) for sd in (-1,1)}
+        s_nodes = sorted({round(v,9) for v in {-outer, outer, -hw[-1], hw[1]} |
+                         {sd*q for sd in (-1,1) for q,_ in lip_points(L['wig'][sd](xm)) if q < outer} |
+                         {-outer+2*outer*i/24 for i in range(25)} | ring_nodes |
+                         {sd*(hw[sd]+e) for sd in (-1,1) for e in (-2e-4,-1e-4,1e-4,2e-4)} if abs(v) <= outer+1e-12})
+        def depth(u, s, tau):
+            # Filler level blends from the ring's (at its filler edge) to the longitudinal
+            # joint's (at the panel boundary): continuous mortar, no step at the crossing.
+            fl = fr+(c+sec['filler_recess_m']-fr)*tau
+            sd = 1 if s >= 0 else -1
+            dr = lip_depth(lip_points(RJ['wig'][side]((A+s/r)*r)), u)
+            dl = lip_depth(lip_points(L['wig'][sd](x_of(u))), abs(s))
+            removal = max(dr, dl)
+            return (fl, True) if removal >= fl-1e-12 else (removal, False)
+        U = [[u_min_at(A+q/r)+(outer-u_min_at(A+q/r))*tau for q in s_nodes] for tau in taus]
+        grid = [[depth(U[i][j], q, taus[i]) for j,q in enumerate(s_nodes)] for i in range(len(taus))]
+        toward = (X, 0., zc)
+        for i in range(len(taus)-1):
+            for j in range(len(s_nodes)-1):
+                corners = [(i,j),(i+1,j),(i+1,j+1),(i,j+1)]
+                is_fill = sum(grid[a][b][1] for a,b in corners) >= 3
+                pts = [point(x_of(U[a][b]), A+s_nodes[b]/r, r+grid[a][b][0], zc) for a,b in corners]
+                oriented(fill if is_fill else top, pts, toward)
+        # Step down/up to the ring filler along the ring filler edge.
+        for j in range(len(s_nodes)-1):
+            d0, d1 = grid[0][j][0], grid[0][j+1][0]
+            if abs(d0-fr) < 1e-9 and abs(d1-fr) < 1e-9: continue
+            q0, q1 = A+s_nodes[j]/r, A+s_nodes[j+1]/r; u0, u1 = U[0][j], U[0][j+1]
+            oriented(fill if grid[0][j][1] and grid[0][j+1][1] else groove,
+                     [point(x_of(u0),q0,r+d0,zc),point(x_of(u1),q1,r+d1,zc),point(x_of(u1),q1,r+fr,zc),point(x_of(u0),q0,r+fr,zc)],
+                     point(x_of(u0-1e-3),(q0+q1)/2,r,zc))
+
+    def longitudinal_joint(R, L, closed):
+        A, section, wig = L['A'], L['section'], L['wig']; x0, x1 = R['x0'], R['x1']
+        above = lambda x: point(x, A, r-1., zc)   # a point inside the tunnel above the joint
+        previous = None
+        levels = filler_levels(section, x1-x0) or [(0., x1-x0, None)]
+        for a,b,depth in levels:
+            xa, xb = x0+a, x0+b; n = max(1, math.ceil((xb-xa)/p['joint_along_step_m']))
+            xs = [xa+(xb-xa)*i/n for i in range(n+1)]
+            shapes = [cross_section(section, depth if depth is not None else 0., wig[-1](x), wig[1](x)) for x in xs]
+            for side in (-1,1):
+                for xa_,xb_,(s0,_),(s1,_) in zip(xs[:-1],xs[1:],shapes[:-1],shapes[1:]):
+                    world = lambda s_,d_,end,xa_=xa_,xb_=xb_,side=side: point(xb_ if end else xa_, A+side*s_/r, r+d_, zc)
+                    sweep(top, s0[side][:len(profile)], s1[side][:len(profile)], world, above((xa_+xb_)/2))
+                    sweep(groove, s0[side][len(profile)-1:], s1[side][len(profile)-1:], world, point((xa_+xb_)/2,A,r+c,zc))
+            if depth is not None:
+                rad = r+c+depth
+                for xa_,xb_,(_,w0),(_,w1) in zip(xs[:-1],xs[1:],shapes[:-1],shapes[1:]):
+                    oriented(fill,[point(xa_,A-w0[-1]/r,rad,zc),point(xb_,A-w1[-1]/r,rad,zc),point(xb_,A+w1[1]/r,rad,zc),point(xa_,A+w0[1]/r,rad,zc)],above((xa_+xb_)/2))
+                if previous is not None and abs(previous-rad) > 1e-9:
+                    lo_r, hi_r = sorted((previous, rad)); wl, wr = shapes[0][1][-1], shapes[0][1][1]
+                    oriented(fill,[point(xa,A-wl/r,lo_r,zc),point(xa,A+wr/r,lo_r,zc),point(xa,A+wr/r,hi_r,zc),point(xa,A-wl/r,hi_r,zc)],point(xa+(1 if rad>previous else -1)*1e-3,A,r,zc))
+                previous = rad
+            else:
+                previous = None
+            if section['state'] != 'filled':
+                aw, ag = w/r, g/r
+                for side in (-1,1):
+                    oriented(groove,[point(xa,A+side*ag,r+D,zc),point(xb,A+side*ag,r+D,zc),point(xb,A+side*aw,r+D,zc),point(xa,A+side*aw,r+D,zc)],above((xa+xb)/2))
+                    oriented(groove,[point(xa,A+side*aw,r+D,zc),point(xb,A+side*aw,r+D,zc),point(xb,A+side*aw,r+D+G+seal,zc),point(xa,A+side*aw,r+D+G+seal,zc)],point((xa+xb)/2,A,r+D,zc))
+                oriented(gap,[point(xa,A-aw,r+D+G,zc),point(xb,A-aw,r+D+G,zc),point(xb,A+aw,r+D+G,zc),point(xa,A+aw,r+D+G,zc)],above((xa+xb)/2))
+        # End walls only where the groove meets a ring joint without a junction patch.
+        for x, inward, is_closed in ((x0,1,closed[0]),(x1,-1,closed[1])):
+            if not is_closed: continue
+            sides, _ = cross_section(section, (filler_levels(section,x1-x0) or [(0,0,0.)])[0 if inward>0 else -1][2] or 0., wig[-1](x), wig[1](x))
+            Lp, Rp = sides[-1], sides[1]
+            if section['state'] != 'filled':
+                Lp = Lp+[(w, D), (w, D+G)]; Rp = Rp+[(w, D), (w, D+G)]
+            ref = point(x+inward*1e-3, A, r+c, zc)
+            for (sl,dl),(sl2,dl2),(sr2,dr2),(sr,dr) in zip(Lp[:-1],Lp[1:],Rp[1:],Rp[:-1]):
+                oriented(groove,[point(x,A-sl/r,r+dl,zc),point(x,A-sl2/r,r+dl2,zc),point(x,A+sr2/r,r+dr2,zc),point(x,A+sr/r,r+dr,zc)],ref)
 
     try:
         # Opaque lining behind all slot floors: closes crossings, no renderer fallback.
         cylinder_strip(groove,lo,hi,-math.pi,math.pi,edge_radius,zc,step)
-        width = p['ring_width_m']
-        for ring in range(math.floor(lo/width), math.ceil(hi/width)):
-            left, right = ring*width, (ring+1)*width
-            x0 = left+h if lo < left else lo
-            x1 = right-h if right < hi else hi
-            if x1 <= x0:
-                continue
-            a = math.radians(-p['angles_deg'][0]/2 + (ring % 2)*p['alternating_stagger_deg'])
-            if lo < left < hi:
-                ring_joint(left, a, ring)
-            for index, span in enumerate(p['angles_deg']):
-                b = a+math.radians(span)
-                cylinder_strip(top, x0, x1, a+h/r, b-h/r, r, zc, step)
-                longitudinal_joint(a, x0, x1, ring, index, (lo < left, right < hi))
-                panels.append(dict(ring=ring, index=index, x_m=[x0,x1], angle_rad=[a+h/r,b-h/r]))
-                a = b
+        for ring, R in rings.items():
+            if ring in ring_joints: ring_joint(ring)
+            for index, L in enumerate(R['longs']):
+                b = R['edges'][index+1]
+                cylinder_strip(top, R['x0'], R['x1'], L['A']+outer/r, b-outer/r, r, zc, step)
+                patched = lambda rj: rj in ring_joints and crossing_ok(ring_joints[rj], L)
+                longitudinal_joint(R, L, (ring in ring_joints and not patched(ring), ring+1 in ring_joints and not patched(ring+1)))
+                panels.append(dict(ring=ring, index=index, x_m=[R['x0'],R['x1']], angle_rad=[L['A']+outer/r,b-outer/r]))
     finally:
         top.close()
         groove.close()
@@ -319,9 +512,10 @@ def make_meshes(out, config, spec):
     counts = {k:sum(j['state']==k for j in joints) for k in ('filled','unfilled','damaged')}
     return dict(**counters, panels=panels, joints=joints, joint_state_counts=counts,
                 max_chord_sag_m=r*(1-math.cos(step/2)),
-                joint_profile=dict(chamfer_m=c, groove_half_width_m=g, depth_m=D, outer_width_m=2*h, contact_gap_m=2*w, gap_depth_m=G,
+                joint_profile=dict(chamfer_m=c, groove_half_width_m=g, depth_m=D, outer_width_m=2*outer, contact_gap_m=2*w, gap_depth_m=G,
+                                   edge_radius_m=rho, edge_fillet_steps=fsteps, edge_wiggle=p['joint_edge_wiggle'],
                                    filler_recess_m=p['joint_filler_recess_m'], states=p['joint_states'], damage=p['joint_damage'],
-                                   assumption='Chamfer, filler recess and damage are engineering assumptions; groove width/depth within Tianjin DB/T 29-272 ranges. Filler material: grey mortar (user choice).'),
+                                   assumption='Chamfer, edge radius/wiggle, filler recess and damage are engineering assumptions; groove width/depth within Tianjin DB/T 29-272 ranges. Filler material: grey mortar (user choice).'),
                 hidden_edge_overlap_m=seal, opaque_backing_radius_m=edge_radius)
 
 
