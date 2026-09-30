@@ -3,6 +3,7 @@
 #include <cmath>
 #include <fstream>
 #include <cstring>
+#include <random>
 #include <cuda_runtime.h>
 #include "ssb_core/optix_renderer.hpp"
 #include "ssb_core/stage_b_assets.hpp"
@@ -279,4 +280,24 @@ TEST_F(SurfaceFixture, AdaptiveSamplingAndVisibilityMatchTheFullRayReference) {
   for(size_t i=0;i<full.size();++i) {int error=std::abs(int(full[i])-fast[i]);worst=std::max(worst,error);substantial+=error>4;}
   EXPECT_LE(worst,8);EXPECT_LT(substantial,double(full.size())*.001);
 }
+}
+
+TEST_F(SurfaceFixture, FootprintMatchesScanOverAllPeriodicTiles) {
+  // Reference: the original scan over every q tile with -1/0/+1 period shifts.
+  StageBAssets assets(c);
+  std::mt19937 rng(7);std::uniform_real_distribution<double> theta(-M_PI,M_PI),xs(0,1);
+  const double step=c.pixel_pitch_m/c.FocalLength(),tan=std::abs(c.PixelTangent(0));
+  for(int i=0;i<400;++i) {
+    PoseSample pose{};pose.x=c.tunnel_x_min_m+2+xs(rng)*(c.tunnel_x_max_m-c.tunnel_x_min_m-4);pose.theta=theta(rng);
+    const HeadPose h=TrueHeadPose(c,pose);
+    const auto w=assets.Window(h,step,tan);
+    std::set<unsigned> brute;
+    for(unsigned iq=0;iq<assets.nq;++iq) {
+      double lo=assets.q0+iq*assets.core*assets.dq,hi=std::min(assets.q0+assets.period,lo+assets.core*assets.dq);
+      bool inside=false;
+      for(int k=-1;k<=1;++k) inside|=hi+k*assets.period>=w.centre_q-w.half_q&&lo+k*assets.period<=w.centre_q+w.half_q;
+      if(inside) for(int ix=w.ix0;ix<=w.ix1;++ix) brute.insert(iq*assets.nx+ix);
+    }
+    EXPECT_EQ(assets.Footprint(h,step,tan),brute) << "pose " << i;
+  }
 }

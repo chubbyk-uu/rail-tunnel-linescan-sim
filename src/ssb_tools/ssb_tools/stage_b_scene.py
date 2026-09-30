@@ -412,7 +412,7 @@ def make_meshes(out, config, spec):
         cand = {q for q,_ in lip_points(n_ring)} | {lip_half_width(g,c,rho,fl)+n_ring}
         # Dense near the ring filler edge, where the lip/filler boundary cells would otherwise
         # form short steep facets.
-        taus = sorted({round(v,9) for v in {i/8 for i in range(9)} | {.015,.03,.06} |
+        taus = sorted({round(v,9) for v in {i/4 for i in range(5)} | {.015,.03,.06} |
                        {(q-u_ref)/(outer-u_ref) for q in cand if u_ref < q < outer}})
         # Ring filler edge: the same polyline the ring filler quads use (watertight join).
         unwrap = lambda q: a0+math.fmod(math.fmod(q-a0,2*math.pi)+2*math.pi,2*math.pi)
@@ -423,7 +423,7 @@ def make_meshes(out, config, spec):
         hw = {sd:lip_half_width(g,c,rho,fl)+L['wig'][sd](xm) for sd in (-1,1)}
         s_nodes = sorted({round(v,9) for v in {-outer, outer, -hw[-1], hw[1]} |
                          {sd*q for sd in (-1,1) for q,_ in lip_points(L['wig'][sd](xm)) if q < outer} |
-                         {-outer+2*outer*i/24 for i in range(25)} | ring_nodes |
+                         {-outer+2*outer*i/12 for i in range(13)} | ring_nodes |
                          {sd*(hw[sd]+e) for sd in (-1,1) for e in (-2e-4,-1e-4,1e-4,2e-4)} if abs(v) <= outer+1e-12})
         def depth(u, s, tau):
             # Filler level blends from the ring's (at its filler edge) to the longitudinal

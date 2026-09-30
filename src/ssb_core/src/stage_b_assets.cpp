@@ -87,6 +87,7 @@ StageBAssets::StageBAssets(const Config& c) {
        std::isfinite(lamp_tangential)&&std::isfinite(lamp_radial),"nonfinite lamp geometry");
   Need(lamp_width==0 || light_samples==4,"rectangular COB requires four quadrature points");
   max_radius=c.tunnel_radius_m;
+  tunnel_radius=surface.at("tunnel").at("radius_m");tunnel_axis_z=surface.at("tunnel").at("axis_z_m");
   for(const auto& mesh:scene.at("meshes")) {
     auto p=verified(mesh);std::ifstream in(p);std::string line;
     const unsigned base=vertices.size();const unsigned material=mesh.at("material");
@@ -180,7 +181,7 @@ std::vector<SurfaceTexel> StageBAssets::ReadTile(unsigned index) const {
   const auto entry=surface.at("tiles").at(index);
   return ReadBinary<SurfaceTexel>(Resolve(surface_path.parent_path(),entry.at("file")),tile_bytes,entry.at("sha256"));
 }
-std::set<unsigned> StageBAssets::Footprint(const HeadPose& h,double pixel_step,double max_tan) const {
+StageBAssets::FootprintWindow StageBAssets::Window(const HeadPose& h,double pixel_step,double max_tan) const {
   // Bound every ray of the pixel area. For O+a*L+b*S the transverse norm has a
   // conservative lower bound. This also includes groove depth and off-axis mounts.
   double t=max_tan+pixel_step;
@@ -189,7 +190,7 @@ std::set<unsigned> StageBAssets::Footprint(const HeadPose& h,double pixel_step,d
   double u=a>0?std::clamp(-b/a,-t,t):0;
   double min_trans=std::hypot(h.optical[1]+u*h.line[1],h.optical[2]+u*h.line[2])-pixel_step;
   Need(min_trans>.01,"line points outside supported cache geometry");
-  double offset=std::hypot(h.origin[1],h.origin[2]-surface.at("tunnel").at("axis_z_m").get<double>());
+  double offset=std::hypot(h.origin[1],h.origin[2]-tunnel_axis_z);
   double travel=(max_radius+offset)/min_trans;
   double half_x=travel*(std::abs(h.optical[0])+t*std::abs(h.line[0])+pixel_step*std::abs(h.scan[0]))+2*dx;
   double theta=std::atan2(h.optical[1],h.optical[2]);
@@ -197,18 +198,28 @@ std::set<unsigned> StageBAssets::Footprint(const HeadPose& h,double pixel_step,d
   // normal/area sampling. This is conservative even when line twist is nonzero.
   double transverse_base=std::hypot(h.optical[1],h.optical[2]);
   double angle=std::asin(std::clamp((t*std::sqrt(a)+pixel_step)/transverse_base,0.,1.))+
-               std::asin(std::clamp(offset/surface.at("tunnel").at("radius_m").get<double>(),0.,1.));
-  double half_q=surface.at("tunnel").at("radius_m").get<double>()*angle+2*dq;
+               std::asin(std::clamp(offset/tunnel_radius,0.,1.));
+  double half_q=tunnel_radius*angle+2*dq;
   int ix0=std::max(0,int(std::floor((h.origin[0]-half_x-x0)/(core*dx))));
   int ix1=std::min(int(nx)-1,int(std::floor((h.origin[0]+half_x-x0)/(core*dx))));
-  double centre=surface.at("tunnel").at("radius_m").get<double>()*theta;
+  return {ix0,ix1,tunnel_radius*theta,half_q};
+}
+std::set<unsigned> StageBAssets::Footprint(const HeadPose& h,double pixel_step,double max_tan) const {
+  const auto win=Window(h,pixel_step,max_tan);
+  const int ix0=win.ix0,ix1=win.ix1;const double centre=win.centre_q,half_q=win.half_q;
   std::set<unsigned> result;
   // Periodic q tiles have a truncated final core: use physical period, never nq*core*dq.
-  for(unsigned iq=0;iq<nq;++iq) {
-    double lo=q0+iq*core*dq,hi=std::min(q0+period,lo+core*dq);
-    bool inside=false;
-    for(int k=-1;k<=1;++k) inside|=hi+k*period>=centre-half_q&&lo+k*period<=centre+half_q;
-    if(inside) for(int ix=ix0;ix<=ix1;++ix) result.insert(iq*nx+ix);
+  // Tile iq covers [q0+iq*w, min(q0+period, q0+(iq+1)*w)]; collect the tiles overlapping the
+  // window shifted by -1/0/+1 periods (same inclusive test as a scan over all tiles).
+  const double w=core*dq;
+  for(int k=-1;k<=1;++k) {
+    double lo=centre-half_q-k*period-q0, hi=centre+half_q-k*period-q0;
+    if(hi<0||lo>period) continue;
+    int first=std::max(0,int(std::ceil(lo/w))-1), last=std::min(int(nq)-1,int(std::floor(hi/w)));
+    for(int iq=first;iq<=last;++iq) {
+      double tlo=iq*w,thi=std::min(period,tlo+w);
+      if(thi>=lo&&tlo<=hi) for(int ix=ix0;ix<=ix1;++ix) result.insert(iq*nx+ix);
+    }
   }
   return result;
 }

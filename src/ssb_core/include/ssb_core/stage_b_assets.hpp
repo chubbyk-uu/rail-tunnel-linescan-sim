@@ -16,6 +16,7 @@ struct StageBAssets {
   std::string scene_hash, surface_hash, defect_hash;
   unsigned core=0, gutter=0, side=0, nx=0, nq=0, pixel_x=0, pixel_q=0;
   double x0=0, q0=0, dx=0, dq=0, period=0, max_radius=0;
+  double tunnel_radius=0, tunnel_axis_z=0;   // cached from the surface manifest (Footprint hot path)
   unsigned area_samples=2, time_samples=2, light_samples=3;
   bool light_enabled=true, shadows=true;
   bool convex_panel_visibility=false, adaptive_area=false;
@@ -44,6 +45,9 @@ struct StageBAssets {
   double crack_x0=0, crack_q0=0, crack_cell=0;
   unsigned crack_nx=0, crack_nq=0;
   std::vector<SurfaceTexel> ReadTile(unsigned index) const;
+  // Conservative texture window of one camera line: x tile columns and a periodic q interval.
+  struct FootprintWindow { int ix0, ix1; double centre_q, half_q; };
+  FootprintWindow Window(const HeadPose& h, double pixel_tangent_step, double max_tangent) const;
   std::set<unsigned> Footprint(const HeadPose& h, double pixel_tangent_step, double max_tangent) const;
   bool CpuHit(const HeadPose& h, double tangent, double scan_tangent, double* x, double* q) const;
 };
