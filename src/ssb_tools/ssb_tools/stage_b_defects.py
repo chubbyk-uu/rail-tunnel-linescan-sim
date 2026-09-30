@@ -293,7 +293,7 @@ def add_depth(source,output,spec_path):
     output.mkdir(parents=True)
     result=dict(old,instances=items,grid=grid,files=write_index(output,packed,offsets,indices,depths),
                 depth_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),spec_sha256=digest(spec_path),parameters=depth),
-                optical_model='Cavity reflectance of a V-profiled slot from the width and a synthetic effective visible depth (vertex_depth_m); not a measured or total depth, no geometric relief.',
+                optical_model='Cavity reflectance of a flat-bottomed slot from the width and a synthetic effective visible depth (vertex_depth_m); not a measured or total depth, no geometric relief.',
                 preparation_peak_rss_bytes=peak_rss_bytes())
     (output/'defects.json').write_text(json.dumps(result)+'\n')
     print(json.dumps(dict(grid=grid)))

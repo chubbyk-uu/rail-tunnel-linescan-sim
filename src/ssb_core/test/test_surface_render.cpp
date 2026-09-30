@@ -185,26 +185,29 @@ TEST_F(SurfaceFixture, IntegratedPixelPreservesPhysicalWidthsWithMotion) {
 }
 
 TEST_F(SurfaceFixture, CavityCrackDarkeningFollowsSlotReflectance) {
-  // V profile (bands at 1, 2/3, 1/3 of the half width) x slot reflectance rho*f/(1-rho(1-f)),
-  // f=w/(w+2D): integrated darkening across the crack is w*(2/3)*(1-k), k the interior/wall ratio.
+  // Flat slot, reflectance rho*f/(1-rho(1-f)), f=w/(w+2D): integrated darkening across the crack
+  // is w*(1-k), k the interior/wall ratio; the lip band (half width b, darkening e) adds
+  // 2*b*e*(1-k), i.e. it fades with the opening's darkening.
   scene["sampling"]["area_axis_samples"]=8;scene["sampling"]["time_samples"]=3;scene["sampling"]["integrated_cracks"]=true;
-  scene["crack_optics"]={{"model","cavity_v1"},{"edge_band_m",0.},{"edge_darkening",0.}};
   double previous=0;
-  for(double width:{.0003,.0006}) for(double depth:{.0001,.0004,.002}) {
+  for(double band:{0.,.0002}) for(double width:{.0003,.0006}) for(double depth:{.0001,.0004,.002}) {
+    scene["crack_optics"]={{"model","cavity_v2"},{"edge_band_m",band},{"edge_darkening",.2}};
     SetWidth(width);Binary("depths.bin",std::vector<float>{float(depth),float(depth)});
     nlohmann::json defects;std::ifstream(root/"defects.json")>>defects;
     defects["files"]["depths.bin"]=Entry("depths.bin");Json("defects.json",defects);
     nlohmann::json surface;std::ifstream(root/"surface.json")>>surface;
     surface["adaptive_defects_sha256"]=Sha256File(root/"defects.json");Json("surface.json",surface);
     scene["defects"]=Entry("defects.json");scene["surface"]=Entry("surface.json");SaveScene();
-    OptixRenderer renderer(c,DefaultPtxPath(),256);EXPECT_EQ(renderer.Describe().at("crack_optics_model"),"cavity_v1");
+    OptixRenderer renderer(c,DefaultPtxPath(),256);EXPECT_EQ(renderer.Describe().at("crack_optics_model"),"cavity_v2");
     const double rho=32768./65535,f=width/(width+2*depth),k=f/(1-rho*(1-f));
     std::vector<RowJob> jobs(160);const double spacing=.000025;
     for(size_t i=0;i<jobs.size();++i){jobs[i].pose.x=8;jobs[i].pose.theta=(.5+(double(i)-79.5)*spacing)/2.75;jobs[i].pose.v=.3515625;}
     std::vector<uint8_t> pixels;std::vector<double> hits;renderer.Render(jobs,pixels,hits);
     double sum=0;for(auto code:pixels)sum+=(128.-code)/128.;
-    const double measured=sum/c.width*spacing,expected=width*2/3*(1-k);
-    EXPECT_NEAR(measured,expected,.03*expected+1e-6)<<"width="<<width<<", depth="<<depth;
+    const double measured=sum/c.width*spacing,expected=(width+2*band*.2)*(1-k);
+    // 8-bit rounding does not average out: every column sees the same crack rows (+-0.5 code per row).
+    const double quantisation=.5/128*(width+2*band+.0004);
+    EXPECT_NEAR(measured,expected,.02*expected+quantisation)<<"band="<<band<<", width="<<width<<", depth="<<depth;
     if(depth>.0001)EXPECT_GT(measured,previous);  // same width: deeper slots are darker
     previous=measured;
   }

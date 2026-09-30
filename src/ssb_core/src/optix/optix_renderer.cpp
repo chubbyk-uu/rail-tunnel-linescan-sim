@@ -471,7 +471,7 @@ nlohmann::json OptixRenderer::Describe() const {
           {"adaptive_area",bool(s.params.adaptive_area)},
           {"area_pattern",s.params.area_rooks?"rooks":"grid"},
           {"integrated_cracks",bool(s.params.integrated_cracks)},
-          {"crack_optics_model",s.assets&&s.assets->crack_cavity?"cavity_v1":"flat_v1"},
+          {"crack_optics_model",s.assets&&s.assets->crack_cavity?"cavity_v2":"flat_v1"},
           {"texture_footprint_samples",s.params.texture_footprint_samples},
           {"joint_filler_texture",bool(s.params.filler)},{"texture_prefilter",bool(s.params.texture_prefilter)},
           {"optix_abi_version", OPTIX_VERSION},

@@ -8,12 +8,12 @@ from .stage_b_scene import digest,load_spec
 
 
 def crack_optics(defects):
-    """Crack appearance. With per-vertex effective depths (stage_b_defects --depth): V-profiled
-    slot cavity reflectance. Otherwise the flat B2 opening: interior reflectance as a fraction of
+    """Crack appearance. With per-vertex effective depths (stage_b_defects --depth): slot cavity
+    reflectance, flat cross-section (sharp lips), lip band scaled by the interior darkening. Otherwise the flat B2 opening: interior reflectance as a fraction of
     the wall albedo with debris-like variation. Both keep a slightly darker edge band (worn/dirty
     lips). Appearance assumptions, not measurements."""
     if 'depths.bin' in json.loads(Path(defects).read_text()).get('files',{}):
-        return dict(model='cavity_v1',edge_band_m=.00025,edge_darkening=.15)
+        return dict(model='cavity_v2',edge_band_m=.00025,edge_darkening=.15)
     return dict(interior_ratio=.2,interior_variation=.35,edge_band_m=.00025,edge_darkening=.15)
 
 

@@ -43,8 +43,9 @@ struct StageBAssets {
   double groove_albedo=.12, groove_detail_contrast=.3, gap_albedo=.02;
   // Crack appearance: legacy scenes (no crack_optics) keep the flat 0.035 opening, no edge band.
   double crack_interior=-1, crack_interior_variation=0, crack_edge_band=0, crack_edge_darkening=0;
-  // crack_optics.model "cavity_v1": interior from the defects' per-segment effective visible
-  // depth (depths.bin, [d0,d1] metres per segment) through a slot-cavity reflectance, V profile.
+  // crack_optics.model "cavity_v2": interior from the defects' per-segment effective visible
+  // depth (depths.bin, [d0,d1] metres per segment) through a slot-cavity reflectance, flat
+  // cross-section; lip band darkening scaled by the interior darkening.
   bool crack_cavity=false;
   std::vector<float> crack_depths;
   std::vector<CrackSegment> segments;

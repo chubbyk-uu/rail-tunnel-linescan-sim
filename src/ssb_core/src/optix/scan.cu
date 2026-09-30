@@ -114,13 +114,12 @@ __device__ bool Surface(double x,double q,float4* result,unsigned* guard=nullptr
 }
 // Edge band half width beside a crack of local radius r: fades out as the crack tapers.
 __device__ float EdgeBand(float r) {return params.crack_edge_band*fminf(1.f,r/1e-4f);}
-// Cavity model (crack_depths set): the opening is a V-shaped slot, approximated by three nested
-// bands at 1, 2/3 and 1/3 of the local half width, each carrying a third of the interior
-// darkening; the interior reflectance follows from the local depth/width ratio (see Shade).
+// Cavity model (crack_depths set): the opening is a slot with near-vertical faces (sharp lips,
+// flat cross-section); its interior reflectance follows from the local depth/width ratio (Shade).
 __device__ float SegmentDepth(unsigned index,float t) {
   return params.crack_depths[2*index]+(params.crack_depths[2*index+1]-params.crack_depths[2*index])*t;
 }
-// Point sample: (weighted opening coverage 0..1, edge band 0/1, depth/width ratio or -1).
+// Point sample: (opening 0/1, edge band 0/1, depth/width ratio or -1).
 __device__ float3 CrackPoint(double x,double q) {
   q=WrapQ(q);
   int ix=int(floor((x-params.crack_x0)/params.crack_cell)),iq=int(floor((q-params.crack_q0)/params.crack_cell));
@@ -133,14 +132,10 @@ __device__ float3 CrackPoint(double x,double q) {
       float dx=s.x1-s.x0,dq=s.q1-s.q0,px=float(x-s.x0),pq=float(q-s.q0);
       float t=fminf(1.f,fmaxf(0.f,(px*dx+pq*dq)/(dx*dx+dq*dq)));
       float radius=s.r0+(s.r1-s.r0)*t,d2=(px-t*dx)*(px-t*dx)+(pq-t*dq)*(pq-t*dq);
-      if(d2<=radius*radius) {
-        float c=1.f;
-        if(params.crack_depths) {
-          const float r2=radius*radius;c=(1.f+(d2<=r2*(4.f/9.f))+(d2<=r2*(1.f/9.f)))/3.f;
-          if(c>core)aspect=SegmentDepth(index,t)/fmaxf(2.f*radius,1e-6f);
-        }
-        core=fmaxf(core,c);
-      } else {float e=radius+EdgeBand(radius);if(d2<=e*e) edge=1.f;}
+      // The depth/width ratio also scales the lip band, so band-only points take it too.
+      const bool inside=d2<=radius*radius,band=!inside&&d2<=(radius+EdgeBand(radius))*(radius+EdgeBand(radius));
+      if(params.crack_depths&&(inside&&core<1.f||band&&core<1.f&&aspect<0))aspect=SegmentDepth(index,t)/fmaxf(2.f*radius,1e-6f);
+      if(inside)core=1.f;else if(band)edge=1.f;
     }
   }
   return make_float3(core,core>0?0.f:edge,aspect);
@@ -235,7 +230,10 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
         const float f=1.f/(1.f+2.f*crack.z);interior=tex.x*f/(1.f-tex.x*(1.f-f));
       } else interior=params.crack_interior<0 ? .035f :   // legacy scenes: flat dark opening
         params.crack_interior*tex.x*(1.f+params.crack_interior_variation*(Detail(x*1.7+.131,q*1.7+.293)-1.f));
-      albedo=tex.x*(1.f-params.crack_edge_darkening*edge)-core*(tex.x-interior);
+      // Cavity model: lip wear darkening scales with how dark the opening is (shallow, debris-
+      // filled stretches get a faint band, not a halo as dark as their core).
+      const float lip=crack.z>=0 ? params.crack_edge_darkening*(1.f-interior/fmaxf(tex.x,1e-6f)) : params.crack_edge_darkening;
+      albedo=tex.x*(1.f-lip*edge)-core*(tex.x-interior);
     }
   }
   if(!params.light_enabled) return albedo;
@@ -323,8 +321,7 @@ __device__ bool SlotVisibility(const DeviceRow& first,const DeviceRow& last,floa
 // band (exact box/linear-motion integral of its two half-planes, tapered radius) over the part
 // of the footprint within its extent; the union is approximated by the maximum. Consecutive
 // segments of one polyline need no special case, so bends do not fall back to sampling.
-// Returns (opening coverage, edge-band coverage, depth/width ratio of the dominant segment or -1);
-// with the cavity model the opening coverage is the V-profile weighted one.
+// Returns (opening coverage, edge-band coverage, depth/width ratio of the dominant segment or -1).
 __device__ float3 IntegratedCrack(double x,double q,double2 a,double2 b,double2 motion) {
   q=WrapQ(q);
   const float band=params.crack_edge_band;
@@ -334,7 +331,7 @@ __device__ float3 IntegratedCrack(double x,double q,double2 a,double2 b,double2 
   int hi_x=min(int(params.crack_nx)-1,int(floor((x+hx-params.crack_x0)/params.crack_cell)));
   int lo_q=max(0,int(floor((q-hq-params.crack_q0)/params.crack_cell)));
   int hi_q=min(int(params.crack_nq)-1,int(floor((q+hq-params.crack_q0)/params.crack_cell)));
-  float core=0,full=0,outer=0,aspect=-1,dominant=0;
+  float core=0,outer=0,aspect=-1;
   const float ax=a.x,ay=a.y,bx=b.x,by=b.y,mx=motion.x,my=motion.y;
   for(int iq=lo_q;iq<=hi_q;++iq)for(int ix=lo_x;ix<=hi_x;++ix) {
     unsigned cell=iq*params.crack_nx+ix;
@@ -349,24 +346,17 @@ __device__ float3 IntegratedCrack(double x,double q,double2 a,double2 b,double2 
       float rmax=fmaxf(s.r0,s.r1);
       if(fabsf(perp)>rmax+EdgeBand(rmax)+perp_half || along+along_half<0 || along-along_half>length)continue;
       float slope=(s.r1-s.r0)/length,r=s.r0+slope*fminf(length,fmaxf(0.f,along));
-      // Band of half width lambda*r(along): tapered edges at +/-lambda*r.
-      auto band=[&](float lambda) {
-        const float sl=lambda*slope,rr=lambda*r;
-        return ssb::BoxHalfPlaneT<float>(pa-sl*aa,pb-sl*ab,pt-sl*at,perp-rr)-
-               ssb::BoxHalfPlaneT<float>(pa+sl*aa,pb+sl*ab,pt+sl*at,perp+rr);
-      };
-      float c=band(1.f),weighted=c;
-      if(params.crack_depths) {
-        weighted=(c+band(2.f/3.f)+band(1.f/3.f))/3.f;
-        if(c>dominant){dominant=c;aspect=SegmentDepth(index,fminf(1.f,fmaxf(0.f,along/length)))/fmaxf(2.f*r,1e-6f);}
-      }
+      float c=ssb::BoxHalfPlaneT<float>(pa-slope*aa,pb-slope*ab,pt-slope*at,perp-r)-
+              ssb::BoxHalfPlaneT<float>(pa+slope*aa,pb+slope*ab,pt+slope*at,perp+r);
       float e=r+EdgeBand(r);
       float o=ssb::BoxHalfPlaneT<float>(pa,pb,pt,perp-e)-ssb::BoxHalfPlaneT<float>(pa,pb,pt,perp+e);
-      full=fmaxf(full,c);core=fmaxf(core,weighted);outer=fmaxf(outer,o);
+      // Ratio of the segment covering most of the footprint including its lip band.
+      if(params.crack_depths&&o>outer)aspect=SegmentDepth(index,fminf(1.f,fmaxf(0.f,along/length)))/fmaxf(2.f*r,1e-6f);
+      core=fmaxf(core,c);outer=fmaxf(outer,o);
     }
   }
-  core=fminf(1.f,fmaxf(0.f,core));full=fminf(1.f,fmaxf(0.f,full));
-  return make_float3(core,fmaxf(0.f,fminf(1.f,outer)-full),aspect);
+  core=fminf(1.f,fmaxf(0.f,core));
+  return make_float3(core,fmaxf(0.f,fminf(1.f,outer)-core),aspect);
 }
 __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,double x,double q,
                                 float3 point,float3 direction,unsigned primitive) {

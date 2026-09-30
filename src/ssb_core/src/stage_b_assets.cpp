@@ -126,7 +126,8 @@ StageBAssets::StageBAssets(const Config& c) {
   Need(std::all_of(face_material.begin(),face_material.end(),[](unsigned m){return m<=3;}),"unknown optical material");
   if(scene.contains("crack_optics")) {
     auto k=scene.at("crack_optics");const auto model=k.value("model",std::string("flat_v1"));
-    Need(model=="flat_v1"||model=="cavity_v1","crack optics model");crack_cavity=model=="cavity_v1";
+    // cavity_v1 (V profile, fixed lip band) was replaced by cavity_v2 and is no longer rendered.
+    Need(model=="flat_v1"||model=="cavity_v2","crack optics model");crack_cavity=model=="cavity_v2";
     crack_edge_band=k.at("edge_band_m");crack_edge_darkening=k.at("edge_darkening");
     if(!crack_cavity){crack_interior=k.at("interior_ratio");crack_interior_variation=k.at("interior_variation");}
     Need((crack_cavity||(crack_interior>=0&&crack_interior<1&&crack_interior_variation>=0&&crack_interior_variation<=1))&&
