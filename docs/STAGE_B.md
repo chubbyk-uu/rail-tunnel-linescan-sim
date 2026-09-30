@@ -227,3 +227,21 @@ python3 -m ssb_tools.stage_b_defects --depth NEW_REFINED \
 默认GUI配置改为 `optics_b3_quality64/capture.yaml`，它仅将v12的采样数显式改为64，
 其他光学资产、深度和照明不变。旧资产不覆盖。49项Python测试、3组C++/GPU测试通过；
 并集参考测试分别覆盖显式32和缺省64。历史32档性能记录仍是当时实测，不代表当前默认档。
+
+## 后续第2项：Concrete034 GUI 分块预览
+
+`python -m ssb_tools.stage_b_gui --scene local_data/stage_b/optics_b3_quality64/scene.json
+--world local_data/stage_b/crack_review_fix_v1/world.sdf --output local_data/stage_b/gui_c034_v1`
+从已验收配方生成预览，原生底色先面积滤波，再按同一裁片变换、混合遮罩及宏观亮度采样。
+将原始 `panels.obj` 的三角形分组并重映射UV，逐个保留其顶点、法线和面；不再用光滑圆柱
+覆盖倒角。原板缝、砂浆和槽底网格保留。裂缝采用同一线段/宽度/有效深度数据做4倍子像素
+胶囊覆盖预览，不人为加宽；不宣称与OptiX曝光积分和光度逐像素一致。
+
+x=3..6 m附近采用1 mm纹素，其余2 mm，原生采集网格仍为0.1 mm。GUI预算独立设为
+1280 MiB（RGBA8含完整mip链的预估），生成前检查总量和单纹理8K尺寸上限；实际贴图为中性灰RGB PNG，避免单通道纹理在不同渲染后端的通道解释差异。
+这是有界常驻分块加Ogre mipmap，不是动态流送。细裂缝远看会自然变淡，微米级量测仍看采集图。
+产物清单保存输入及各块哈希和三角形计数；输出目录拒绝覆盖。默认入口切换到该世界。
+
+本次产物140块，RGBA8含mip预估745.8 MiB，混凝土471652个三角形全部保留。
+52项Python测试通过，Gz实际加载并截图核查。全填缝场景的 `gap.obj` 无三角形，
+GUI不再提交这个空网格（消除Ogre加载错误）；光学资产不改。
