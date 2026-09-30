@@ -16,7 +16,7 @@ if(NOT CUDAToolkit_ROOT AND EXISTS "/usr/local/cuda")
 endif()
 find_package(CUDAToolkit REQUIRED)
 
-add_library(ssb_gazebo_scan SHARED src/scan_system.cpp)
+add_library(ssb_gazebo_scan SHARED src/scan_system.cpp src/contact_system.cpp)
 target_compile_options(ssb_gazebo_scan PRIVATE -Wall -Wextra)
 target_link_libraries(ssb_gazebo_scan ssb_core::ssb_core gz-sim8::gz-sim8 gz-plugin2::register)
 install(TARGETS ssb_gazebo_scan DESTINATION lib)

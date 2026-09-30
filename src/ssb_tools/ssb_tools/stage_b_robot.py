@@ -66,6 +66,7 @@ def mesh_visual(link,name,path,placement,color):
 
 def make_robot(out,config,spec):
     robot=spec['robot'];zc=config['tunnel']['axis_z_m']
+    contact=config.get('contact',{}).get('enabled',False)
     half=robot['wheelbase_m']/2;diameter=robot['wheel_diameter_m']
     rail_y=(spec['track']['gauge_m']+spec['track']['head_width_m'])/2
     guide_radius=robot.get('guide_bearing_radius_m',.025)
@@ -107,7 +108,7 @@ def make_robot(out,config,spec):
     car=ET.Element('model',name='scan_car')
     sub(car,'pose',pose(config['motion']['start_x_m']))
     base=sub(car,'link',name='base');sub(base,'pose',pose(z=.3))
-    inertial(base,robot['total_mass_kg']-35,(4.2,8.1,10.5))
+    inertial(base,robot['total_mass_kg']-35-(.8 if contact else 0),(4.2,8.1,10.5))
     # Helpers take coordinates in the car frame, converting into the base link.
     def base_box(name,x,y,z,size,color=WHITE,collision=False):
         box(base,name,pose(x,y,z-.3),size,color,collision)
@@ -128,7 +129,7 @@ def make_robot(out,config,spec):
             base_box(f'{side}_frame_socket_{x}',x,sign*(rail_y-.13),.245,'.10 .09 .095',METAL)
             # Patent [0038], bearings 351/352: vertical axes at the inner rail head.
             # Nominal tangent contact in the ideal guide; visual only, not contact dynamics.
-            gy=sign*(spec['track']['gauge_m']/2-guide_radius)
+            gy=sign*(spec['track']['gauge_m']/2-guide_radius-(.0002 if contact else 0))
             tag=f'{side}_guide_{x}'
             base_cylinder(tag,x,gy,guide_z,guide_radius,guide_width,METAL)
             # Dark shields inset within the outer race, central sleeve and mounting spindle.
@@ -204,9 +205,11 @@ def make_robot(out,config,spec):
     wheels=[]
     for i,(x,y) in enumerate(((-half,rail_y),(half,rail_y),(-half,-rail_y),(half,-rail_y))):
         sign=1 if y>0 else -1
+        if contact:
+            diameter=config['truth'].get('odo_left_diameter_m' if i==0 else 'odo_right_diameter_m' if i==2 else 'wheel_diameter_m',config['truth']['wheel_diameter_m'])
         name='odometer_wheel' if i==0 else f'wheel_{i}'
         joint='odometer' if i==0 else f'wheel_joint_{i}';wheels.append(joint)
-        wheel=sub(car,'link',name=name);sub(wheel,'pose',pose(x,y,diameter/2))
+        wheel=sub(car,'link',name=name);sub(wheel,'pose',pose(x,y,robot['wheel_diameter_m']/2))
         inertial(wheel,5,(.013,.025,.013))
         cylinder(wheel,'tread',pose(roll=math.pi/2),diameter/2,.060,DARK)
         # No unsupported rail flange: a flush side ring remains inside the tread radius.
@@ -217,12 +220,18 @@ def make_robot(out,config,spec):
             a=2*math.pi*j/6
             cylinder(wheel,f'hub_bolt_{j}',pose(diameter*.25*math.cos(a),sign*.04,
                      diameter*.25*math.sin(a),roll=math.pi/2),.005,.007,DARK)
-        if i in (1,2):
+        if i in (1,3):
             base_cylinder(f'hub_motor_{i}',x,y-sign*.081,diameter/2,.063,.071,DARK,roll=math.pi/2)
-        if i==0:
-            base_cylinder('odometer_drive_gear',x,y-.110,diameter/2,.035,.009,METAL,roll=math.pi/2)
-            base_cylinder('odometer_follow_gear',x+.060,y-.110,diameter/2+.040,.037,.009,METAL,roll=math.pi/2)
-            base_cylinder('odometer_encoder',x+.060,y-.137,diameter/2+.040,.023,.040,DARK,roll=math.pi/2)
+        if i in (0,2):
+            tag='odometer' if i==0 else 'right_odometer'
+            base_cylinder(tag+'_drive_gear',x,y-sign*.110,diameter/2,.035,.009,METAL,roll=math.pi/2)
+            base_cylinder(tag+'_follow_gear',x+.060,y-sign*.110,diameter/2+.040,.037,.009,METAL,roll=math.pi/2)
+            base_cylinder(tag+'_encoder',x+.060,y-sign*.137,diameter/2+.040,.023,.040,DARK,roll=math.pi/2)
+        if contact:
+            from .stage_b_track import friction
+            col=sub(wheel,'collision',name='tread_contact');sub(col,'pose',pose(roll=math.pi/2))
+            g=sub(sub(col,'geometry'),'cylinder');sub(g,'radius',diameter/2);sub(g,'length',.060)
+            friction(col,1.0)
         make_joint(car,joint,'revolute','base',name,'0 1 0')
 
     head=sub(car,'link',name='head');sub(head,'pose',pose(z=zc))
@@ -297,10 +306,36 @@ def make_robot(out,config,spec):
         material=visual.find('material')
         if material is not None:
             metal=sub(sub(material,'pbr'),'metal');sub(metal,'metalness',.08);sub(metal,'roughness',.52)
-    make_joint(car,'carriage','prismatic','world','base','1 0 0')
+    if contact:
+        from .stage_b_track import friction
+        # Move bearing races (not mounting spindles) from chassis visuals into free links.
+        for side,sign in [('left',1),('right',-1)]:
+            for x in (-half,half):
+                tag=f'{side}_guide_{x}'
+                gy=sign*(spec['track']['gauge_m']/2-guide_radius-.0002)
+                bearing=sub(car,'link',name=tag);sub(bearing,'pose',pose(x,gy,guide_z))
+                inertial(bearing,.2,(.00004,.00004,.000063))
+                for visual in list(base.findall('visual')):
+                    n=visual.get('name')
+                    if n==tag or n.startswith(tag+'_seal') or n.startswith(tag+'_inner_race'):
+                        base.remove(visual);coords=list(map(float,visual.findtext('pose').split()))
+                        coords[0]-=x;coords[1]-=gy;coords[2]+=.3-guide_z
+                        visual.find('pose').text=' '.join(map(str,coords));bearing.append(visual)
+                col=sub(bearing,'collision',name='guide_contact');g=sub(sub(col,'geometry'),'cylinder')
+                sub(g,'radius',guide_radius);sub(g,'length',guide_width);friction(col,.5)
+                make_joint(car,tag+'_joint','revolute','base',tag,'0 0 1')
+    else:
+        make_joint(car,'carriage','prismatic','world','base','1 0 0')
     make_joint(car,'scan','revolute','base','head','-1 0 0')
-    plugin=sub(car,'plugin',filename='ssb_gazebo_scan',name='ssb_gazebo::ScanSystem')
-    for tag,name in (('carriage_joint','carriage'),('scan_joint','scan'),('wheel_joint','odometer')):
-        sub(plugin,tag,name)
-    for name in wheels[1:]:sub(plugin,'follower_wheel_joint',name)
+    plugin=sub(car,'plugin',filename='ssb_gazebo_scan',name='ssb_gazebo::ContactSystem' if contact else 'ssb_gazebo::ScanSystem')
+    if contact:
+        cal=config['calibration'];settings=config['contact']
+        for tag,value in [('left_encoder','odometer'),('right_encoder','wheel_joint_2'),
+                          ('left_drive','wheel_joint_1'),('right_drive','wheel_joint_3'),
+                          ('left_diameter',cal.get('odo_left_diameter_m',cal['wheel_diameter_m'])),
+                          ('right_diameter',cal.get('odo_right_diameter_m',cal['wheel_diameter_m'])),
+                          ('drive_diameter',cal['wheel_diameter_m']),('settle_s',settings.get('settle_s',2.0))]:sub(plugin,tag,value)
+    else:
+        for tag,name in (('carriage_joint','carriage'),('scan_joint','scan'),('wheel_joint','odometer')):sub(plugin,tag,name)
+        for name in wheels[1:]:sub(plugin,'follower_wheel_joint',name)
     return car

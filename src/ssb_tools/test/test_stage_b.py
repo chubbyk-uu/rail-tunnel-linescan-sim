@@ -509,3 +509,25 @@ def test_track_sleepers_and_contact_planes(tmp_path,inputs):
         vertices.extend([list(map(float,l.split()[1:])) for l in file.read_text().splitlines() if l.startswith('v ')])
     assert min(v[2] for v in vertices)==pytest.approx(-.176)
     assert max(v[2] for v in vertices)==pytest.approx(0)
+
+
+def test_contact_front_drive_rear_encoders_and_free_guides(tmp_path,inputs):
+    from ssb_tools.stage_b_robot import make_robot
+    config,spec=inputs;config['contact']={'enabled':True}
+    config['truth'].update(odo_left_diameter_m=.198,odo_right_diameter_m=.202)
+    car=make_robot(tmp_path,config,spec)
+    assert car.find("joint[@name='carriage']") is None
+    assert all(j.findtext('parent')!='world' for j in car.findall('joint'))
+    plugin=car.find('plugin');assert plugin.get('name')=='ssb_gazebo::ContactSystem'
+    for tag in ('left_drive','right_drive','left_encoder','right_encoder'):
+        joint=car.find(f"joint[@name='{plugin.findtext(tag)}']")
+        link=car.find(f"link[@name='{joint.findtext('child')}']")
+        x=float(link.findtext('pose').split()[0])
+        assert (x>0) == tag.endswith('drive')
+        assert link.find('collision') is not None
+    for joint,diameter in [('odometer',.198),('wheel_joint_2',.202)]:
+        link=car.find(f"link[@name='{car.findtext('joint[@name="'+joint+'"]'+'/child')}']")
+        assert float(link.findtext('collision/geometry/cylinder/radius'))==pytest.approx(diameter/2)
+    assert len([j for j in car.findall('joint') if '_guide_' in j.get('name')])==4
+    assert len(car.findall('link'))==10
+    assert sum(float(m.text) for m in car.findall('link/inertial/mass'))==pytest.approx(120)
