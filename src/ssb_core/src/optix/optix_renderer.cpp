@@ -120,6 +120,7 @@ struct OptixRenderer::Impl {
     if(!assets) return;
     if(required.size()>tile_slots.size()) throw std::runtime_error("Stage B: one row exceeds GPU texture budget");
     active_peak_tiles=std::max(active_peak_tiles,required.size());
+    std::vector<std::pair<unsigned,SurfaceTexel*>> jobs;  // recipe tiles, generated in one launch
     for(auto tile:required) {
       auto found=std::find_if(tile_slots.begin(),tile_slots.end(),[&](const Slot& slot){return slot.tile==int(tile);});
       if(found!=tile_slots.end()) { found->used=++cache_clock; ++cache_hits; continue; }
@@ -130,13 +131,18 @@ struct OptixRenderer::Impl {
       if(target->tile>=0) tile_table[target->tile]=nullptr;
       if(!target->data) target->data=Alloc<SurfaceTexel>(assets->tile_bytes/sizeof(SurfaceTexel));
       auto start=std::chrono::steady_clock::now();
-      if(recipe)recipe->Generate(tile,target->data,stream);
+      if(recipe)jobs.push_back({tile,target->data});
       else {
         const auto& data=CpuTile(tile);
         SSB_CUDA(cudaMemcpy(target->data,data.data(),assets->tile_bytes,cudaMemcpyHostToDevice));
       }
       tile_load_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
       target->tile=tile;target->used=++cache_clock;tile_table[tile]=target->data;++cache_loads;
+    }
+    if(!jobs.empty()) {
+      auto start=std::chrono::steady_clock::now();
+      recipe->Generate(jobs,stream);
+      tile_load_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
     }
     size_t allocated=std::count_if(tile_slots.begin(),tile_slots.end(),[](const Slot& slot){return slot.data!=nullptr;});
     texture_peak_bytes=std::max(texture_peak_bytes,allocated*assets->tile_bytes);

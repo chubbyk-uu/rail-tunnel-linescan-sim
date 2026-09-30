@@ -46,6 +46,9 @@ class CudaSurfaceRecipe {
   ~CudaSurfaceRecipe();
   CudaSurfaceRecipe(const CudaSurfaceRecipe&)=delete;
   void Generate(unsigned tile,SurfaceTexel* output,void* stream);
+  // Generates several tiles with one launch and one synchronisation (per-call CUDA overhead
+  // dominates single-tile generation); results are identical to per-tile Generate.
+  void Generate(const std::vector<std::pair<unsigned,SurfaceTexel*>>& jobs,void* stream);
   size_t Bytes() const;
  private:
   struct Impl;

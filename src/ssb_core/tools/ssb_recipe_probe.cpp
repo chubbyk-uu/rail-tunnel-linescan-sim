@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <cstring>
 
 int main(int argc,char** argv){try{
   std::string surface,output,list;for(int i=1;i<argc;++i){std::string k=argv[i];if(++i>=argc)throw std::runtime_error("missing argument");
@@ -29,6 +30,17 @@ int main(int argc,char** argv){try{
     auto file=std::filesystem::path(output)/("tile_"+std::to_string(id)+".bin");std::ofstream stream(file,std::ios::binary);stream.write(reinterpret_cast<char*>(actual.data()),bytes);stream.close();
     report["tiles"].push_back({{"index",id},{"generation_seconds",seconds},{"max_channel_delta",{maxdiff[0],maxdiff[1],maxdiff[2],maxdiff[3]}},{"different_texels",changed},{"sha256",ssb::Sha256File(file)}});
   }
-  cudaFree(device);report["passed"]=passed;std::ofstream(std::filesystem::path(output)/"comparison.json")<<report.dump(2)<<"\n";
+  cudaFree(device);
+  {  // Batched generation (one launch) of the same tiles: time per tile and identity with the per-tile results.
+    std::vector<std::pair<unsigned,ssb::SurfaceTexel*>> jobs;
+    for(const auto& t:report["tiles"]){ssb::SurfaceTexel* p=nullptr;if(cudaMalloc(&p,bytes)!=cudaSuccess)throw std::runtime_error("allocation failed");jobs.push_back({t["index"],p});}
+    gpu.Generate(jobs,nullptr);auto start=std::chrono::steady_clock::now();gpu.Generate(jobs,nullptr);
+    double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();bool same=true;
+    for(size_t i=0;i<jobs.size();++i){std::vector<ssb::SurfaceTexel> a(size_t(side)*side);if(cudaMemcpy(a.data(),jobs[i].second,bytes,cudaMemcpyDeviceToHost)!=cudaSuccess)throw std::runtime_error("readback failed");
+      auto file=std::filesystem::path(output)/("tile_"+std::to_string(jobs[i].first)+".bin");std::ifstream in(file,std::ios::binary);std::vector<ssb::SurfaceTexel> b(a.size());in.read(reinterpret_cast<char*>(b.data()),bytes);
+      same&=std::memcmp(a.data(),b.data(),bytes)==0;cudaFree(jobs[i].second);}
+    report["batch"]={{"tiles",jobs.size()},{"seconds_per_tile",seconds/std::max<size_t>(1,jobs.size())},{"identical_to_single",same}};passed&=same;
+  }
+  report["passed"]=passed;std::ofstream(std::filesystem::path(output)/"comparison.json")<<report.dump(2)<<"\n";
   std::cout<<report.dump(2)<<"\n";return passed?0:1;
 }catch(const std::exception& e){std::cerr<<"ssb_recipe_probe: "<<e.what()<<"\n";return 1;}}
