@@ -161,7 +161,16 @@ def gate_geometry(cfg, truth, rows, row_truth):
                  rows_outside=int((~inside).sum()))
 
 
-def advance_per_rev(cfg, row_truth):
+def advance_per_rev(cfg, row_truth, poses=None):
+    if cfg.get("contact",{}).get("enabled"):
+        if poses is None or len(poses)<2: return check("encoder_advance_per_revolution",UNMEASURABLE)
+        a,b=row_truth[0],row_truth[-1]
+        l=np.interp([a["t_center"],b["t_center"]],poses["t"],poses["wheel"])
+        r=np.interp([a["t_center"],b["t_center"]],poses["t"],poses["right_wheel"])
+        cal=cfg["calibration"];distance=((l[1]-l[0])*cal["odo_left_diameter_m"]+(r[1]-r[0])*cal["odo_right_diameter_m"])/4
+        turns=(b["theta"]-a["theta"])/(2*np.pi);advance=distance/turns
+        relative=abs(advance/cfg["motion"]["advance_per_rev_m"]-1)
+        return check("encoder_advance_per_revolution",PASS if relative<.001 else FAIL,estimated_m=advance,actual_m=(b["x"]-a["x"])/turns,relative_error=relative,threshold=.001,note="servo follows estimated distance; actual pitch may differ")
     dth = row_truth['theta'][-1] - row_truth['theta'][0]
     if dth < math.pi:
         return check('advance_per_revolution', UNMEASURABLE, reason='less than half a revolution recorded')
@@ -240,6 +249,8 @@ def observable_from_source(src):
         ('odometer', 'ppr'): src['odometer']['ppr'], ('odometer', 'edges_per_cycle'): src['odometer']['edges_per_cycle'],
         ('odometer', 'gear_ratio'): src['odometer']['gear_ratio'],
         ('gate', 'start_rad'): src['gate']['start_deg'] * rad, ('gate', 'end_rad'): src['gate']['end_deg'] * rad,
+        **({('calibration','odo_left_diameter_m'):src['calibration'].get('odo_left_diameter_m',src['calibration']['wheel_diameter_m']),
+            ('calibration','odo_right_diameter_m'):src['calibration'].get('odo_right_diameter_m',src['calibration']['wheel_diameter_m'])} if src.get('contact',{}).get('enabled') else {}),
         ('calibration', 'wheel_diameter_m'): src['calibration']['wheel_diameter_m'],
         ('calibration', 'radius_m'): src['calibration']['radius_m'],
         ('calibration', 'head_mount_x_m'): src['calibration']['head_mount_x_m'],
@@ -259,6 +270,8 @@ def truth_from_source(src, source_sha):
         ('tunnel', 'radius_m'): src['tunnel']['radius_m'], ('tunnel', 'axis_z_m'): src['tunnel']['axis_z_m'],
         ('start_theta_rad',): src['motion']['start_theta_deg'] * rad,
         ('wheel_diameter_m',): t['wheel_diameter_m'],
+        **({('odo_left_diameter_m',):t.get('odo_left_diameter_m',t['wheel_diameter_m']),
+            ('odo_right_diameter_m',):t.get('odo_right_diameter_m',t['wheel_diameter_m'])} if src.get('contact',{}).get('enabled') else {}),
         ('scan_encoder_zero_rad',): t['scan_encoder_zero_deg'] * rad,
         ('gate_start_offset_rad',): t['gate_start_offset_deg'] * rad,
         ('gate_end_offset_rad',): t['gate_end_offset_deg'] * rad,

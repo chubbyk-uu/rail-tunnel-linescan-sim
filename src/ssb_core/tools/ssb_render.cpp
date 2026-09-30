@@ -1,6 +1,7 @@
 // Offline pose stream -> session. Sources: the config's kinematic profile, or an
 // archived pose stream (re-imaging, DESIGN.md §8.2).
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -22,18 +23,21 @@ void Usage() {
 std::vector<ssb::PoseSample> ReadPoses(const std::filesystem::path& path) {
   // A session's pose stream: verify it against the manifest beside it when present.
   const auto manifest = path.parent_path() / "manifest.json";
+  size_t stride=56; // unmanifested streams retain the original v1 contract
   if (std::filesystem::exists(manifest)) {
     std::ifstream m(manifest);
     const auto j = nlohmann::json::parse(m);
     const auto& entry = j.at("pose_stream");
+    stride=entry.at("record_size");
+    if(stride!=56 && stride!=sizeof(ssb::PoseSample))throw std::runtime_error("unsupported pose schema");
     if (entry.at("file") != path.filename().string() || entry.at("sha256") != ssb::Sha256File(path))
       throw std::runtime_error("pose stream does not match its manifest: " + path.string());
   }
   const auto bytes = std::filesystem::file_size(path);
-  if (bytes == 0 || bytes % sizeof(ssb::PoseSample)) throw std::runtime_error("bad pose stream size");
-  std::vector<ssb::PoseSample> samples(bytes / sizeof(ssb::PoseSample));
+  if (bytes == 0 || bytes % stride) throw std::runtime_error("bad pose stream size");
+  std::vector<ssb::PoseSample> samples(bytes / stride);
   std::ifstream in(path, std::ios::binary);
-  in.read(reinterpret_cast<char*>(samples.data()), static_cast<std::streamsize>(bytes));
+  for(auto& sample:samples)in.read(reinterpret_cast<char*>(&sample),stride);
   if (!in) throw std::runtime_error("cannot read " + path.string());
   return samples;
 }

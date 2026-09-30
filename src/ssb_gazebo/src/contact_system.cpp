@@ -34,6 +34,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       auto joint=[&](std::string name){gz::sim::Joint j(model.JointByName(ecm,name));if(!j.Valid(ecm))throw std::runtime_error("missing joint "+name);j.EnablePositionCheck(ecm,true);j.EnableVelocityCheck(ecm,true);return j;};
       for(int i=0;i<2;++i){enc_[i]=joint(sdf->Get<std::string>(i?"right_encoder":"left_encoder"));drive_[i]=joint(sdf->Get<std::string>(i?"right_drive":"left_drive"));diameter_[i]=sdf->Get<double>(i?"right_diameter":"left_diameter");}
       drive_diameter_=sdf->Get<double>("drive_diameter");settle_=sdf->Get<double>("settle_s");
+      if(!c_.contact_enabled || std::abs(diameter_[0]-c_.odo_left_calibrated)>1e-12 || std::abs(diameter_[1]-c_.odo_right_calibrated)>1e-12)throw std::runtime_error("contact world/config mismatch");
       scan_=joint("scan");scan_.ResetPosition(ecm,{c_.start_theta_rad});
       counts_per_rad_=c_.odo_ppr*c_.odo_edges_per_cycle*c_.odo_gear_ratio/(2*M_PI);
       target_theta_=c_.start_theta_rad;
@@ -57,18 +58,20 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       torque_[i]=std::clamp(12*error,-8.,8.);drive_[i].SetForce(ecm,{torque_[i]});}
     if(t<0){scan_.SetVelocity(ecm,{0});return;}
     if(!started_){
-      for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;zero_[i]=std::llround(p->front()*counts_per_rad_);}
+      for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;zero_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_));}
       started_=true;
-      if(!dynamics_only_)throw std::runtime_error("contact imaging requires the full-pose integration step; use physics-only validation meanwhile");
+      if(!dynamics_only_) {try {StartPipeline();} catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}}
     }
     double s=0;
     for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;
-      count_[i]=std::llround(p->front()*counts_per_rad_)-zero_[i];s+=.5*count_[i]/counts_per_rad_*diameter_[i]/2;}
+      count_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_))-zero_[i];s+=.5*count_[i]/counts_per_rad_*diameter_[i]/2;}
     filtered_speed_+=(s-s_hat_-filtered_speed_*dt)/(0.025+dt);s_hat_=s;
     target_theta_=c_.start_theta_rad+2*M_PI*s_hat_/c_.advance_per_rev_m;
     auto p=scan_.Position(ecm);if(p&&!p->empty()){
       double rate=2*M_PI*filtered_speed_/c_.advance_per_rev_m+12*(target_theta_-p->front());
-      scan_.SetVelocity(ecm,{std::clamp(rate,0.,3.3)});
+      // Finite servo bandwidth suppresses count quantization at the 1 ms control rate.
+      scan_command_+=(std::clamp(rate,0.,3.3)-scan_command_)*dt/(.005+dt);
+      scan_.SetVelocity(ecm,{scan_command_});
     }
   }
   void PostUpdate(const gz::sim::UpdateInfo& info,const gz::sim::EntityComponentManager& ecm) override {
@@ -83,6 +86,15 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       obs_<<t<<','<<count_[0]<<','<<count_[1]<<','<<s_hat_<<','<<target_theta_<<','<<th->front()<<','<<w->front()<<','<<torque_[0]<<','<<torque_[1]<<'\n';
       if(pipeline_) {
         ssb::PoseSample sample{t,pose.Pos().X(),linear->X(),th->front(),w->front(),a->front(),av->front()};
+        sample.body_valid=1;sample.y=pose.Pos().Y();sample.z=pose.Pos().Z();
+        sample.roll=rpy.X();sample.pitch=rpy.Y();sample.yaw=rpy.Z();sample.vy=linear->Y();sample.vz=linear->Z();
+        if(auto angular=base_.WorldAngularVelocity(ecm)){
+          const double horizontal=std::cos(sample.yaw)*angular->X()+std::sin(sample.yaw)*angular->Y();
+          sample.roll_rate=horizontal/std::cos(sample.pitch);
+          sample.pitch_rate=-std::sin(sample.yaw)*angular->X()+std::cos(sample.yaw)*angular->Y();
+          sample.yaw_rate=angular->Z()+std::tan(sample.pitch)*horizontal;
+        }
+        sample.right_wheel=b->front();sample.right_wheel_omega=bv->front();
         pipeline_->Push(sample);
       }
     }
@@ -106,7 +118,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
   ssb::Config c_;gz::sim::Joint enc_[2],drive_[2],scan_;gz::sim::Link base_;
   std::string config_path_,session_,log_root_;std::ofstream obs_,truth_;
   std::unique_ptr<ssb::Pipeline> pipeline_;std::future<nlohmann::json> completion_;
-  double diameter_[2]{},drive_diameter_=0,settle_=2,counts_per_rad_=0,torque_[2]{},s_hat_=0,filtered_speed_=0,target_theta_=0;
+  double diameter_[2]{},drive_diameter_=0,settle_=2,counts_per_rad_=0,torque_[2]{},s_hat_=0,filtered_speed_=0,target_theta_=0,scan_command_=0;
   long long count_[2]{},zero_[2]{};bool started_=false,finished_=false,dynamics_only_=false;
 };
 }

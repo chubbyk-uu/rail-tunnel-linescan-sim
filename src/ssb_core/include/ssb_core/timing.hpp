@@ -16,7 +16,7 @@ struct RowJob {
 };
 
 struct TimingOutput {
-  std::vector<EdgeRecord> scan_edges, odo_edges;
+  std::vector<EdgeRecord> scan_edges, odo_edges, right_odo_edges;
   std::vector<GateRecord> gates;
   std::vector<DroppedRowRecord> dropped;
   std::vector<RowJob> rows;
@@ -88,6 +88,7 @@ class TimingEngine {
   PoseSample last_;
   std::deque<PoseSample> window_;  // samples still needed for pose interpolation
   int64_t scan_abs_ = 0, scan_initial_ = 0, odo_abs_ = 0, odo_initial_ = 0;
+  int64_t right_odo_abs_=0,right_odo_initial_=0;
   int64_t gate_start_idx_ = 0, gate_end_idx_ = 0;
 
   // Rescaler state.

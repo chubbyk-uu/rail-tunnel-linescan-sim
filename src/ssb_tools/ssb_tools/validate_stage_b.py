@@ -90,7 +90,7 @@ def cpu_geometry(session,scene,scene_path,ray_count=64):
     if not columns or not len(row_truth): return check('cpu_triangle_hits',UNMEASURABLE,reason='no debug hits')
     rng=np.random.default_rng(20260929)
     rows=rng.integers(0,len(row_truth),size=ray_count);slots=rng.integers(0,len(columns),size=ray_count)
-    origin,optical,line=ref_geometry.head_pose(row_truth['theta'][rows],row_truth['x'][rows],session.truth())
+    origin,optical,line=ref_geometry.head_pose(row_truth['theta'][rows],row_truth['x'][rows],session.truth(),row_truth[rows])
     tangents=ref_geometry.pixel_tangents(session.config()['camera'],np.array(columns)[slots])
     radius=session.truth()['tunnel']['radius_m'];zc=session.truth()['tunnel']['axis_z_m']
     worst=0.;misses=0
@@ -121,7 +121,7 @@ def main(argv=None):
         checks.append(check('binary_matches_source',PASS if prov.get('binary_matches_source') else FAIL))
         checks.append(provenance_chain(session,cfg,truth,prov,backend));checks.append(planned_motion(session.summary))
         source=yaml.safe_load((session.root/'evaluation/config_source.yaml').read_text())
-        if prov.get('pose_source')=='gazebo':
+        if prov.get('pose_source') in ('gazebo','gazebo_contact'):
             world_entry=prov['inputs']['world'];world_path=Path(world_entry['path'])
             car=ET.parse(world_path).getroot().find("world/model[@name='scan_car']")
             world_x=float(car.find('pose').text.split()[0])
@@ -131,7 +131,17 @@ def main(argv=None):
         poses=session.evaluation('pose_stream');row_truth=session.evaluation('row_truth')
         timing,rows,dropped=compare_timing(session,cfg,truth,poses);checks.extend(timing)
         checks.extend([accounting(rows,dropped),valid_region(source,poses,rows,row_truth,dropped),
-                       gate_geometry(cfg,truth,rows,row_truth),advance_per_rev(cfg,row_truth)])
+                       gate_geometry(cfg,truth,rows,row_truth),advance_per_rev(cfg,row_truth,poses)])
+        if cfg.get('contact',{}).get('enabled'):
+            from .ref_timing import lattice_crossings
+            spacing=2*np.pi/(cfg['odometer']['ppr']*cfg['odometer']['edges_per_cycle']*cfg['odometer']['gear_ratio'])
+            ts,counts,dirs=lattice_crossings(poses,'right_wheel','right_wheel_omega',0.,spacing)
+            counts=counts-np.floor(poses['right_wheel'][0]/spacing)
+            recorded=session.metadata('odometer_right_edges')
+            equal=len(ts)==len(recorded)
+            equal=equal and np.array_equal(counts,recorded['count']) and np.array_equal(dirs,recorded['dir'])
+            delta=float(np.max(abs(ts-recorded['t']))) if equal and len(ts) else 0.
+            checks.append(check('right_encoder_edges',PASS if equal and delta<1e-6 else FAIL,count=len(recorded),max_time_error_s=delta))
         identity,scene,scene_path=optical_assets(session);checks.append(identity)
         checks.append(cpu_geometry(session,scene,scene_path))
         final=session.summary['performance']['backend_final'];budget=final['gpu_texture_budget_bytes'];peak=final['texture_allocated_peak_bytes']

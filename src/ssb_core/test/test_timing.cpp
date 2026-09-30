@@ -193,3 +193,22 @@ TEST(Timing, OdometerCountsMatchTheWheelAngle) {
   ASSERT_FALSE(run.all.odo_edges.empty());
   EXPECT_EQ(run.all.odo_edges.back().count, static_cast<int64_t>(std::floor(samples.back().wheel * counts_per_rad)));
 }
+
+TEST(Timing, BodyAndIndependentRearEncodersInterpolateThroughYawWrap) {
+  auto c=BaseConfig();c.contact_enabled=true;
+  TimingEngine engine(c);TimingOutput out;size_t rows=0,right=0,left=0;
+  for(int i=0;i<=1000;++i){
+    double t=i*.001;PoseSample p{t,3+.2*t,.2,1.5*t,1.5,2*t,2};
+    p.body_valid=1;p.y=.01+.02*t;p.vy=.02;p.z=.3;
+    p.yaw=std::remainder(3.13+.03*t,2*M_PI);p.yaw_rate=.03;
+    p.right_wheel=t;p.right_wheel_omega=1;
+    engine.Push(p,out);
+    for(const auto& job:out.rows){
+      ++rows;EXPECT_NEAR(job.pose.y,.01+.02*job.pose.t,1e-10);
+      EXPECT_NEAR(std::remainder(job.pose.yaw-(3.13+.03*job.pose.t),2*M_PI),0,1e-10);
+      EXPECT_NEAR(job.pose.right_wheel,job.pose.t,1e-10);
+    }
+    right+=out.right_odo_edges.size();left+=out.odo_edges.size();out.Clear();
+  }
+  EXPECT_GT(rows,100);EXPECT_GT(right,100);EXPECT_NEAR(double(left),2.*right,2);
+}

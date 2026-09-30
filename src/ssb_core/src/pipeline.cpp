@@ -168,6 +168,7 @@ void Pipeline::Impl::TimingLoop() {
     TableWriter rows_table(dir / "rows.bin", DtypeJson(RowFields()), sizeof(RowRecord));
     TableWriter scan_table(dir / "scan_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord));
     TableWriter odo_table(dir / "odometer_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord));
+    TableWriter right_odo_table(dir / "odometer_right_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord));
     TableWriter gate_table(dir / "gate_events.bin", DtypeJson(GateFields()), sizeof(GateRecord));
     TableWriter drop_table(dir / "dropped_rows.bin", DtypeJson(DroppedRowFields()), sizeof(DroppedRowRecord));
     TimingEngine engine(config);
@@ -177,7 +178,7 @@ void Pipeline::Impl::TimingLoop() {
     std::vector<RowTruthRecord> truth_records;
     auto drain = [&] {
       scan_table.Append(out.scan_edges);
-      odo_table.Append(out.odo_edges);
+      odo_table.Append(out.odo_edges);right_odo_table.Append(out.right_odo_edges);
       gate_table.Append(out.gates);
       drop_table.Append(out.dropped);
       row_records.clear();
@@ -185,7 +186,7 @@ void Pipeline::Impl::TimingLoop() {
       for (const auto& job : out.rows) {
         row_records.push_back(job.record);
         const auto& p = job.pose;
-        truth_records.push_back({job.record.sequence, job.record.t_center, p.theta, p.omega, p.x, p.v});
+        truth_records.push_back({job.record.sequence, job.record.t_center, p.theta, p.omega, p.x, p.v,p.y,p.z,p.roll,p.pitch,p.yaw,p.body_valid});
         batch.push_back(job);
         if (batch.size() == static_cast<size_t>(config.batch_rows)) {
           std::unique_lock<std::mutex> lock(mutex);
@@ -227,7 +228,7 @@ void Pipeline::Impl::TimingLoop() {
     engine.Finish(out);
     drain();
     nlohmann::json meta = {{"rows", rows_table.Close()}, {"scan_edges", scan_table.Close()},
-                           {"odometer_edges", odo_table.Close()}, {"gate_events", gate_table.Close()},
+                           {"odometer_edges", odo_table.Close()}, {"odometer_right_edges",right_odo_table.Close()}, {"gate_events", gate_table.Close()},
                            {"dropped_rows", drop_table.Close()}};
     nlohmann::json evalj = {{"pose_stream", pose_table.Close()}, {"row_truth", truth_table.Close()}};
     const auto& st = engine.Stats();

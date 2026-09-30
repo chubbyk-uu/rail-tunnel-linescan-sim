@@ -31,7 +31,7 @@ def _rot(axis, angle):
     return np.moveaxis(np.array(m), (0, 1), (-2, -1))
 
 
-def head_pose(theta, x, truth):
+def head_pose(theta, x, truth, body=None):
     """Optical centre, optical axis and line direction in the world frame.
 
     Scan angle theta is measured from the top towards +y, so the nominal optical axis
@@ -43,6 +43,11 @@ def head_pose(theta, x, truth):
     axis_point = np.stack([np.asarray(x, np.float64) + truth['head_mount_x_m'],
                            np.full(np.shape(x), m['dy_m']),
                            np.full(np.shape(x), truth['tunnel']['axis_z_m'] + m['dz_m'])], axis=-1)
+    if body is not None and 'body_valid' in body.dtype.names and np.any(body['body_valid']):
+        rotation=_rot('z',body['yaw']) @ _rot('y',body['pitch']) @ _rot('x',body['roll'])
+        nominal=np.array([truth['head_mount_x_m'],m['dy_m'],truth['tunnel']['axis_z_m']-.3+m['dz_m']])
+        axis_point=np.stack([np.asarray(x),body['y'],body['z']],axis=-1)+(rotation @ nominal)
+        head=rotation @ head
     origin = axis_point + head @ np.array([0.0, m['tangential_m'], m['e_m']])
     optical = head @ np.array([0.0, 0.0, 1.0])
     line = head @ np.array([np.cos(m['twist_rad']), np.sin(m['twist_rad']), 0.0])

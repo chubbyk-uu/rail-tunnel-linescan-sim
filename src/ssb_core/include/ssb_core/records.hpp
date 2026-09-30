@@ -13,7 +13,10 @@ struct PoseSample {
   double t = 0;
   double x = 0, v = 0;               // car reference along the track and its rate
   double theta = 0, omega = 0;       // scan axis angle (unwrapped) and rate
-  double wheel = 0, wheel_omega = 0; // odometer wheel angle and rate
+  double wheel = 0, wheel_omega = 0; // left/rear odometer wheel angle and rate
+  // v2 body pose: world base-link position/orientation; ZYX Euler rates.
+  double y=0,z=0,roll=0,pitch=0,yaw=0,vy=0,vz=0,roll_rate=0,pitch_rate=0,yaw_rate=0;
+  double body_valid=0,right_wheel=0,right_wheel_omega=0;
 };
 
 struct EdgeRecord {
@@ -61,12 +64,16 @@ struct RowTruthRecord {
   int64_t sequence;
   double t_center;
   double theta, omega, x, v;
+  double y=0,z=0,roll=0,pitch=0,yaw=0,body_valid=0;
 };
 
 using Fields = std::vector<std::pair<std::string, std::string>>;  // name, numpy type
 inline Fields PoseSampleFields() {
   return {{"t", "<f8"}, {"x", "<f8"}, {"v", "<f8"}, {"theta", "<f8"},
-          {"omega", "<f8"}, {"wheel", "<f8"}, {"wheel_omega", "<f8"}};
+          {"omega", "<f8"}, {"wheel", "<f8"}, {"wheel_omega", "<f8"},
+          {"y","<f8"},{"z","<f8"},{"roll","<f8"},{"pitch","<f8"},{"yaw","<f8"},
+          {"vy","<f8"},{"vz","<f8"},{"roll_rate","<f8"},{"pitch_rate","<f8"},{"yaw_rate","<f8"},
+          {"body_valid","<f8"},{"right_wheel","<f8"},{"right_wheel_omega","<f8"}};
 }
 inline Fields EdgeFields() { return {{"t", "<f8"}, {"count", "<i8"}, {"dir", "<i8"}}; }
 inline Fields GateFields() { return {{"t", "<f8"}, {"revolution", "<i8"}, {"kind", "<i4"}, {"dir", "<i4"}}; }
@@ -78,14 +85,15 @@ inline Fields RowFields() {
 }
 inline Fields RowTruthFields() {
   return {{"sequence", "<i8"}, {"t_center", "<f8"}, {"theta", "<f8"},
-          {"omega", "<f8"}, {"x", "<f8"}, {"v", "<f8"}};
+          {"omega", "<f8"}, {"x", "<f8"}, {"v", "<f8"},
+          {"y","<f8"},{"z","<f8"},{"roll","<f8"},{"pitch","<f8"},{"yaw","<f8"},{"body_valid","<f8"}};
 }
 
-static_assert(sizeof(PoseSample) == 56);
+static_assert(sizeof(PoseSample) == 160);
 static_assert(sizeof(EdgeRecord) == 24);
 static_assert(sizeof(GateRecord) == 24);
 static_assert(sizeof(DroppedRowRecord) == 32);
 static_assert(sizeof(RowRecord) == 40);
-static_assert(sizeof(RowTruthRecord) == 48);
+static_assert(sizeof(RowTruthRecord) == 96);
 
 }  // namespace ssb

@@ -178,3 +178,17 @@ TEST(Pipeline, TruncatedStreamIsDrainedButReportsMotionIncomplete) {
   EXPECT_DOUBLE_EQ(summary.at("motion").at("last_sample_s").get<double>(), 0.8);
   std::filesystem::remove_all(dir);
 }
+
+TEST(Render, FullBodyPoseRotatesCameraMountAboutBase) {
+  Config c=BaseConfig();c.truth.mount={};c.truth.head_mount_x_m=.2;
+  PoseSample p{};p.body_valid=1;p.x=4;p.y=.01;p.z=.3;p.yaw=M_PI/2;
+  auto h=TrueHeadPose(c,p);
+  EXPECT_NEAR(h.origin[0],4,1e-12);EXPECT_NEAR(h.origin[1],.21,1e-12);
+  EXPECT_NEAR(h.origin[2],c.tunnel_axis_z_m,1e-12);
+  EXPECT_NEAR(h.line[0],0,1e-12);EXPECT_NEAR(h.line[1],1,1e-12);
+  p.yaw=0;p.roll=M_PI/2;h=TrueHeadPose(c,p);
+  EXPECT_NEAR(h.origin[1],.01-(c.tunnel_axis_z_m-.3),1e-12);
+  EXPECT_NEAR(h.origin[2],.3,1e-12);EXPECT_NEAR(h.optical[1],-1,1e-12);
+  p.body_valid=0;h=TrueHeadPose(c,p);
+  EXPECT_NEAR(h.origin[0],4.2,1e-12);EXPECT_NEAR(h.origin[1],0,1e-12);
+}

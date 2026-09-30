@@ -15,7 +15,7 @@ int64_t FloorDiv(int64_t a, int64_t b) { return a / b - ((a % b != 0) && ((a < 0
 
 void TimingOutput::Clear() {
   scan_edges.clear();
-  odo_edges.clear();
+  odo_edges.clear();right_odo_edges.clear();
   gates.clear();
   dropped.clear();
   rows.clear();
@@ -40,7 +40,7 @@ double TimingEngine::SubtickTime(const Pending& p, int j) const {
 }
 
 void TimingEngine::Push(const PoseSample& s, TimingOutput& out) {
-  for (double v : {s.t, s.x, s.v, s.theta, s.omega, s.wheel, s.wheel_omega})
+  for (double v : {s.t, s.x, s.v, s.theta, s.omega, s.wheel, s.wheel_omega,s.y,s.z,s.roll,s.pitch,s.yaw,s.vy,s.vz,s.roll_rate,s.pitch_rate,s.yaw_rate,s.body_valid,s.right_wheel,s.right_wheel_omega})
     if (!std::isfinite(v)) throw std::invalid_argument("non-finite pose sample");
   ++stats_.samples;
   if (!have_sample_) {
@@ -49,6 +49,7 @@ void TimingEngine::Push(const PoseSample& s, TimingOutput& out) {
     window_.push_back(s);
     scan_abs_ = scan_initial_ = LatticeIndex(s.theta, scan_offset_, scan_spacing_);
     odo_abs_ = odo_initial_ = LatticeIndex(s.wheel, 0.0, odo_spacing_);
+    right_odo_abs_=right_odo_initial_=LatticeIndex(s.right_wheel,0.,odo_spacing_);
     gate_start_idx_ = LatticeIndex(s.theta, gate_start_offset_, kTwoPi);
     gate_end_idx_ = LatticeIndex(s.theta, gate_end_offset_, kTwoPi);
     const bool open = gate_start_idx_ == gate_end_idx_ + 1;
@@ -65,6 +66,11 @@ void TimingEngine::Push(const PoseSample& s, TimingOutput& out) {
   std::vector<Crossing> scan, odo, starts, ends;
   scan_abs_ = FindCrossings(theta, scan_offset_, scan_spacing_, scan_abs_, scan);
   odo_abs_ = FindCrossings(wheel, 0.0, odo_spacing_, odo_abs_, odo);
+  if(config_.contact_enabled){
+    const Hermite right{last_.t,s.t,last_.right_wheel,s.right_wheel,last_.right_wheel_omega,s.right_wheel_omega};
+    std::vector<Crossing> edges;right_odo_abs_=FindCrossings(right,0.,odo_spacing_,right_odo_abs_,edges);
+    for(auto& e:edges)out.right_odo_edges.push_back({e.t,e.index-right_odo_initial_,e.dir});
+  }
   gate_start_idx_ = FindCrossings(theta, gate_start_offset_, kTwoPi, gate_start_idx_, starts);
   gate_end_idx_ = FindCrossings(theta, gate_end_offset_, kTwoPi, gate_end_idx_, ends);
 
@@ -183,7 +189,19 @@ PoseSample TimingEngine::PoseAt(double t) const {
   const Hermite x{a.t, b.t, a.x, b.x, a.v, b.v};
   const Hermite th{a.t, b.t, a.theta, b.theta, a.omega, b.omega};
   const Hermite w{a.t, b.t, a.wheel, b.wheel, a.wheel_omega, b.wheel_omega};
-  return {t, x.Value(t), x.Slope(t), th.Value(t), th.Slope(t), w.Value(t), w.Slope(t)};
+  PoseSample p{t, x.Value(t), x.Slope(t), th.Value(t), th.Slope(t), w.Value(t), w.Slope(t)};
+  if(a.body_valid!=b.body_valid)throw std::runtime_error("mixed pose coordinate conventions");
+  p.body_valid=a.body_valid;
+  auto component=[&](double av,double bv,double ar,double br,double& value,double& rate,bool angle=false){
+    if(angle)bv=av+std::remainder(bv-av,kTwoPi);
+    Hermite h{a.t,b.t,av,bv,ar,br};value=h.Value(t);rate=h.Slope(t);
+  };
+  component(a.y,b.y,a.vy,b.vy,p.y,p.vy);component(a.z,b.z,a.vz,b.vz,p.z,p.vz);
+  component(a.roll,b.roll,a.roll_rate,b.roll_rate,p.roll,p.roll_rate,true);
+  component(a.pitch,b.pitch,a.pitch_rate,b.pitch_rate,p.pitch,p.pitch_rate,true);
+  component(a.yaw,b.yaw,a.yaw_rate,b.yaw_rate,p.yaw,p.yaw_rate,true);
+  component(a.right_wheel,b.right_wheel,a.right_wheel_omega,b.right_wheel_omega,p.right_wheel,p.right_wheel_omega);
+  return p;
 }
 
 void TimingEngine::FinalizeTriggers(double covered, TimingOutput& out) {

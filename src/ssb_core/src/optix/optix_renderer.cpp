@@ -396,9 +396,11 @@ void OptixRenderer::Render(const std::vector<RowJob>& jobs, std::vector<uint8_t>
       // velocity and scan speed. Acceleration terms are not inferred from commands.
       double dt=((sample-.5)/s.assets->time_samples-.5)*s.config.exposure_s;
       pose.x+=pose.v*dt;pose.theta+=pose.omega*dt;
+      pose.y+=pose.vy*dt;pose.z+=pose.vz*dt;pose.roll+=pose.roll_rate*dt;pose.pitch+=pose.pitch_rate*dt;pose.yaw+=pose.yaw_rate*dt;
     }
     const HeadPose h=TrueHeadPose(s.config,pose);
     DeviceRow& r=rows[i*s.params.row_stride+sample];
+    r.body_pose=pose.body_valid?1:0;
     r.origin_x=h.origin[0];r.origin_y=h.origin[1];r.origin_z=h.origin[2];
     for(int k=0;k<3;++k) {r.optical[k]=h.optical[k];r.line[k]=h.line[k];r.scan[k]=h.scan[k];}
     r.optical_q=s.config.tunnel_radius_m*std::atan2(double(r.optical[1]),double(r.optical[2]));

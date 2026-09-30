@@ -37,8 +37,11 @@ Mat3 Rz(double a) {
 HeadPose TrueHeadPose(const Config& config, const PoseSample& pose) {
   const auto& m = config.truth.mount;
   const Mat3 tilt = Mul(Rz(m.tilt_z_rad), Ry(m.tilt_y_rad));
-  const Mat3 head = Mul(tilt, Rx(-pose.theta));
-  const Vec3 axis_point{pose.x + config.truth.head_mount_x_m, m.dy_m, config.tunnel_axis_z_m + m.dz_m};
+  const Mat3 body=pose.body_valid ? Mul(Rz(pose.yaw),Mul(Ry(pose.pitch),Rx(pose.roll))) : Rx(0);
+  const Mat3 head = Mul(body,Mul(tilt, Rx(-pose.theta)));
+  Vec3 axis_point{pose.x + config.truth.head_mount_x_m, m.dy_m, config.tunnel_axis_z_m + m.dz_m};
+  if(pose.body_valid){const auto local=Mul(body,Vec3{config.truth.head_mount_x_m,m.dy_m,config.tunnel_axis_z_m-.3+m.dz_m});
+    axis_point={pose.x+local[0],pose.y+local[1],pose.z+local[2]};}
   const Vec3 offset = Mul(head, Vec3{0, m.tangential_m, m.e_m});
   HeadPose h;
   h.origin = {axis_point[0] + offset[0], axis_point[1] + offset[1], axis_point[2] + offset[2]};

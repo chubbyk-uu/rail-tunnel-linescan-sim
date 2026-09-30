@@ -188,7 +188,8 @@ __device__ float3 LampSample(const DeviceRow& row,unsigned i) {
     s=(i&1?1.f:-1.f)*.288675134595f*params.lamp_length;
     w=(i&2?1.f:-1.f)*.288675134595f*params.lamp_width;
   }
-  float3 centre=make_float3(float(row.origin_x)+params.lamp_axial,row.origin_y,row.origin_z);
+  float3 centre=row.body_pose ? Add(make_float3(float(row.origin_x),row.origin_y,row.origin_z),Mul(axis,params.lamp_axial)) :
+    make_float3(float(row.origin_x)+params.lamp_axial,row.origin_y,row.origin_z);
   return Add(centre,Add(Mul(optical,params.lamp_radial),
                        Add(Mul(scan,params.lamp_tangential+w),Mul(axis,s))));
 }
@@ -249,6 +250,17 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
   if(dqx>params.tex_period*.5) dqx-=params.tex_period;
   if(dqx<-params.tex_period*.5) dqx+=params.tex_period;
   float ax=2.f*float(x-row.origin_x-params.lamp_axial)/params.footprint_x,aq=2.f*float(dqx)/params.footprint_q;
+  if(row.body_pose) {
+    const float3 optical=make_float3(row.optical[0],row.optical[1],row.optical[2]);
+    const float3 scan=make_float3(row.scan[0],row.scan[1],row.scan[2]);
+    const float3 axis=Unit(Cross(scan,optical));
+    const float3 centre=Add(make_float3(float(row.origin_x),row.origin_y,row.origin_z),
+      Add(Mul(axis,params.lamp_axial),Add(Mul(scan,params.lamp_tangential),Mul(optical,params.lamp_radial))));
+    const float3 delta=Sub(point,centre);
+    const float forward=fmaxf(1e-6f,Dot(delta,optical));
+    ax=2.f*params.radius*Dot(delta,axis)/(forward*params.footprint_x);
+    aq=2.f*params.radius*atan2f(Dot(delta,scan),forward)/params.footprint_q;
+  }
   ax*=ax;ax*=ax;ax*=ax;aq*=aq;aq*=aq;aq*=aq;
   float beam=expf(-.69314718056f*(ax+aq));
   float intensity=0;

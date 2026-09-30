@@ -11,6 +11,7 @@ struct DeviceRow {
   float optical[3];
   float line[3];
   float scan[3];
+  unsigned body_pose;
   double optical_q;  // Per-exposure-frame beam centre, shared by all pixel samples.
 };
 

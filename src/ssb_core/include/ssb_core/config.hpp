@@ -33,6 +33,9 @@ struct Config {
   double start_theta_rad = 0, start_x_m = 0, sample_period_s = 0;
   std::vector<std::array<double, 2>> profile;  // [time_s, speed factor]
 
+  bool contact_enabled=false;
+  double odo_left_calibrated=0,odo_right_calibrated=0,odo_left_true=0,odo_right_true=0;
+
   struct Truth {
     double wheel_diameter_m = 0, scan_encoder_zero_rad = 0;
     double gate_start_offset_rad = 0, gate_end_offset_rad = 0, head_mount_x_m = 0;
