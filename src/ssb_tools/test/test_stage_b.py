@@ -72,15 +72,26 @@ def test_preview_world_has_no_wall_collision_and_camera_at_axis(tmp_path,inputs)
     assert lens_z-length/2 < 0 < lens_z+length/2
     assert not root.findall('world/light') # no fixed overhead lights
     assert len(base.findall('light'))==4
-    projector=head.find("projector[@name='cob_strip_preview']")
-    assert projector is not None
-    from PIL import Image
-    beam=np.asarray(Image.open(projector.find('texture').text))[:,:,3]
-    fov=float(projector.find('fov').text);far=float(projector.find('far_clip').text)
-    physical_width=2*far*math.tan(fov/2)
-    halfmax=beam.max()/2
-    assert (beam[beam.shape[0]//2]>=halfmax).sum()/beam.shape[1]*physical_width==pytest.approx(1.2,abs=.004)
-    assert (beam[:,beam.shape[1]//2]>=halfmax).sum()/beam.shape[0]*physical_width/10==pytest.approx(.12,abs=.004)
+    assert head.find('projector') is None  # no unoccluded decal behind blockers
+    lights=head.findall('light')
+    assert len(lights)==17 and len(lights)+len(base.findall('light'))<=25
+    # Independently evaluate the generated cones on the nominal wall plane.
+    def irradiance(xs,ys):
+        result=np.zeros(np.broadcast(xs,ys).shape)
+        for light in lights:
+            origin=np.array(list(map(float,light.findtext('pose').split()[:3])))
+            direction=np.array(list(map(float,light.findtext('direction').split())))
+            rays=np.stack(np.broadcast_arrays(xs,ys,np.full(result.shape,config['tunnel']['radius_m']-origin[2])),axis=-1)
+            distances=np.linalg.norm(rays,axis=-1)
+            cosines=(rays/distances[...,None])@direction
+            outer=math.cos(float(light.findtext('spot/outer_angle'))/2)
+            result+=float(light.findtext('intensity'))*np.clip((cosines-outer)/(1-outer),0,1)/(1+distances**2)
+            assert light.findtext('cast_shadows')=='true'
+            assert origin[2]>.008  # emitter outside the opaque lens preview
+        return result
+    xs=np.linspace(-.9,.9,1801);ys=np.linspace(-.2,.2,2001)
+    for axis,values,expected in [(xs,irradiance(xs,0),1.2),(ys,irradiance(0,ys),.12)]:
+        assert np.ptp(axis[values>=values.max()/2])==pytest.approx(expected,abs=.025 if expected>1 else .01)
     lp=list(map(float,car.find("frame[@name='lamp_optical']/pose").text.split()))
     assert lp[0]==pytest.approx(spec['robot']['lamp_offset_axial_m'])
     assert lp[1:]==[0]*5 # common axial row, parallel optical axes

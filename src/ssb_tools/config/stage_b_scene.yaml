@@ -62,7 +62,7 @@ preview:
   work_light_outer_deg: 90.0   # full support cone angle
   work_light_range_m: 8.0
   indirect_fill_relative: 0.002 # effective weak reflected irradiance / nominal strip; uncalibrated
-  strip_light_enabled: true    # attached Ogre2 projector; OptiX remains the imager
+  strip_light_enabled: true    # 17 shadowed GUI spots; OptiX remains the imager
 materials:
   sources: [plastered_wall_04, Concrete030, plastered_wall_03]
   # Concrete030 has no verified physical coverage size: explicit initial assumption.
