@@ -122,7 +122,17 @@ def main(argv=None):
         final=session.summary['performance']['backend_final'];budget=final['gpu_texture_budget_bytes'];peak=final['texture_allocated_peak_bytes']
         checks.append(check('gpu_texture_budget',PASS if 0<peak<=budget else FAIL,peak_bytes=peak,budget_bytes=budget))
         budget=final['cpu_texture_budget_bytes'];peak=final['cpu_texture_allocated_peak_bytes']
-        checks.append(check('cpu_texture_budget',PASS if 0<peak<=budget else FAIL,peak_bytes=peak,budget_bytes=budget))
+        if final.get('runtime_surface_recipe'):
+            # Tiles are generated on the GPU from the recipe: the CPU tile cache must stay
+            # unused, and the recipe source upload has its own device budget.
+            source_budget=read_json(Path(scene['surface']['file']))['resources']['gpu_source_budget_bytes']
+            used=final['recipe_source_device_bytes']
+            checks.append(check('cpu_texture_budget',PASS if peak==0 else FAIL,peak_bytes=peak,budget_bytes=budget,
+                                note='runtime recipe: CPU tile cache unused'))
+            checks.append(check('recipe_source_budget',PASS if 0<used<=source_budget else FAIL,
+                                device_bytes=used,budget_bytes=source_budget))
+        else:
+            checks.append(check('cpu_texture_budget',PASS if 0<peak<=budget else FAIL,peak_bytes=peak,budget_bytes=budget))
         checks.append(compare_sessions(session.root,Path(args.compare)) if args.compare else
                       check('reimaging_byte_identical',UNMEASURABLE,reason='--compare required'))
     except Exception as error:
