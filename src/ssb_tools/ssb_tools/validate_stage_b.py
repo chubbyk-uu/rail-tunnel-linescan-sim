@@ -45,7 +45,8 @@ def optical_assets(session):
         e=surface['recipe'];rp=surface_path.parent/e['file']
         if sha256_file(rp)!=e['sha256']:errors.append('runtime recipe identity')
         recipe=read_json(rp);files+=1
-        for entry in [*recipe['sources'],recipe['alpha']]:
+        # Every payload the generator reads, including the optional low-frequency macro map.
+        for entry in [*recipe['sources'],recipe['alpha'],*([recipe['macro']] if recipe.get('macro') else [])]:
             if sha256_file(rp.parent/entry['file'])!=entry['sha256']:errors.append(entry['file'])
             files+=1
     else:

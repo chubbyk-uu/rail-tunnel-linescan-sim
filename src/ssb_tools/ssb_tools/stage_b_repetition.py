@@ -5,6 +5,11 @@ bilinear seam alpha) over a wall region, then for random windows searches a
 neighbourhood by normalised cross-correlation and reports the best match away
 from the window's own position. A high off-peak score means a translated copy of
 that window exists nearby, i.e. a candidate false match for strip registration.
+
+Scores are computed on a high-passed image (default: subtract a 10 mm Gaussian): smooth
+large-scale shading correlates with its own small shifts, which is similarity, not
+repeated texture. --area tiles a whole wall rectangle into regions so a result can
+cover e.g. the full 20 m x 240 deg instead of one sample region.
 """
 import argparse
 import json
@@ -72,6 +77,10 @@ def off_peak(image, pitch, window_m=.1, search_m=.3, exclude_m=.015, count=300, 
     return np.asarray(scores)
 
 
+def highpass(image, pitch, sigma_m):
+    return image if sigma_m <= 0 else (image-cv2.GaussianBlur(image, (0, 0), sigma_m/pitch)).astype(np.float32)
+
+
 def summary(scores):
     return dict(windows=len(scores), p50=float(np.median(scores)), p95=float(np.percentile(scores, 95)),
                 max=float(scores.max()), fraction_above_0_8=float((scores > .8).mean()), fraction_above_0_9=float((scores > .9).mean()))
@@ -82,14 +91,30 @@ def main():
     p.add_argument('--surface', required=True); p.add_argument('--x', type=float, default=4.0); p.add_argument('--q', type=float, default=-1.5)
     p.add_argument('--size', type=float, default=3.0); p.add_argument('--pitch', type=float, default=.001)
     p.add_argument('--png'); p.add_argument('--output'); p.add_argument('--no-macro', action='store_true')
+    p.add_argument('--highpass-m', type=float, default=.01, help='Gaussian sigma removed before matching; 0 disables')
+    p.add_argument('--windows', type=int, default=300, help='windows per region'); p.add_argument('--search-m', type=float, default=.3)
+    p.add_argument('--window-m', type=float, default=.1)
+    p.add_argument('--area', type=float, nargs=4, metavar=('X0', 'X1', 'Q0', 'Q1'), help='tile this wall rectangle with --size regions')
     a = p.parse_args()
-    img = compose(a.surface, a.x, a.q, a.size, a.pitch, not a.no_macro)
-    result = dict(surface=str(Path(a.surface).resolve()), region_xq_m=[a.x, a.q, a.size], pitch_m=a.pitch, macro=not a.no_macro, **summary(off_peak(img, a.pitch)))
-    if a.png:
+    regions = [(a.x, a.q)]
+    if a.area:
+        x0, x1, q0, q1 = a.area
+        regions = [(x, q) for x in np.arange(x0, x1-a.size+1e-9, a.size) for q in np.arange(q0, q1-a.size+1e-9, a.size)]
+    scope = dict(region_size_m=a.size, regions=len(regions), windows_per_region=a.windows, window_m=a.window_m, search_m=a.search_m,
+                 highpass_sigma_m=a.highpass_m, pitch_m=a.pitch, macro=not a.no_macro,
+                 limit='Translation-only NCC inside each region; repeats across region borders or farther than search_m are not measured.')
+    per, pooled, img = [], [], None
+    for i, (x, q) in enumerate(regions):
+        img = compose(a.surface, x, q, a.size, a.pitch, not a.no_macro)
+        sc = off_peak(highpass(img, a.pitch, a.highpass_m), a.pitch, a.window_m, a.search_m, count=a.windows, seed=1+i)
+        per.append(dict(x_m=float(x), q_m=float(q), **summary(sc))); pooled.append(sc)
+        print(json.dumps(per[-1]), flush=True)
+    result = dict(surface=str(Path(a.surface).resolve()), scope=scope, pooled=summary(np.concatenate(pooled)), regions=per)
+    if a.png and len(regions) == 1:
         v = np.clip(img/img.mean()*.45, 0, 1); cv2.imwrite(a.png, np.uint8(np.where(v <= .0031308, 12.92*v, 1.055*v**(1/2.4)-.055)*255+.5))
     if a.output:
         Path(a.output).write_text(json.dumps(result, indent=2)+'\n')
-    print(json.dumps(result))
+    print(json.dumps(dict(scope=scope, pooled=result['pooled'])))
 
 
 if __name__ == '__main__':

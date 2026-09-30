@@ -123,9 +123,11 @@ def test_scene_composition_ten_metre_spine_and_bounds():
     assert instances==assemble(config,spec,long,short)
 
 
-def test_spatial_index_never_loses_crack_coverage_at_grid_boundaries():
+@pytest.mark.parametrize('cell_m',[.01,.05])
+def test_spatial_index_never_loses_crack_coverage_at_grid_boundaries(cell_m):
     item=dict(paths_xq_m=[[[.1,.05],[.8,.3],[.9,.05]]],vertex_radius_m=[[.00015,.0003,.0001]])
-    segments,offsets,indices,grid=build_grid([item],[0,1,0,.5])
+    segments,offsets,indices,grid=build_grid([item],[0,1,0,.5],cell_m)
+    assert grid['cell_m']==cell_m
     rng=np.random.default_rng(101)
     probes=[]
     for s in segments:
@@ -139,7 +141,7 @@ def test_spatial_index_never_loses_crack_coverage_at_grid_boundaries():
         r=s['r0']+(s['r1']-s['r0'])*t
         return bool((((point-a-t[:,None]*v)**2).sum(axis=1)<=r*r).any())
     for p in probes:
-        ix,iq=np.floor(p/.05).astype(int);cell=iq*grid['cells_xq'][0]+ix
+        ix,iq=np.floor(p/grid['cell_m']).astype(int);cell=iq*grid['cells_xq'][0]+ix
         selected=indices[offsets[cell]:offsets[cell+1]]
         assert covered(p,selected)==covered(p,np.arange(len(segments)))
     with pytest.raises(ValueError,match='budget'): build_grid([item],[0,100,0,100],max_index_bytes=1000)
@@ -305,3 +307,14 @@ def test_orientation_subset_is_respected(tmp_path):
     assert used<={0,1,4,5} and len(used)>1
     for p in layout['placements']:   # image x stays along wall x: no quarter turns
         m=np.asarray(p['source_matrix']);assert m[0,1]==0 and m[1,0]==0
+
+
+def test_repetition_measure_finds_a_planted_translated_copy():
+    from ssb_tools.stage_b_repetition import off_peak,highpass
+    rng=np.random.default_rng(4);pitch=.002
+    img=cv2.GaussianBlur(rng.standard_normal((500,500)).astype(np.float32),(0,0),1.5)
+    clean=off_peak(highpass(img,pitch,.01),pitch,count=60,seed=3)
+    assert clean.max()<.5                               # unrepeated texture: no strong off-peak match
+    near=img.copy();near[200:300,300:400]=near[200:300,200:300]  # 0.2 m copy inside the search
+    sc=off_peak(highpass(near,pitch,.01),pitch,count=400,seed=3)
+    assert sc.max()>.95

@@ -269,3 +269,17 @@ def test_generated_long_candidates_have_ten_metre_main_paths():
         measured=np.linalg.norm(np.diff(item['main_path_xq_m'],axis=0),axis=1).sum()
         assert measured==pytest.approx(10,abs=1e-7)
         assert .2<=item['body_width_mm']<=.6
+
+
+def test_optics_config_persists_accepted_texture_footprint_sampling(tmp_path):
+    from ssb_tools.stage_b_optics import prepare as optics
+    geometry=tmp_path/'geometry';geometry.mkdir()
+    for name in ('panels.obj','joints.obj'):(geometry/name).write_text('v 0 0 0\n')
+    (tmp_path/'surface.json').write_text('{}');(tmp_path/'defects.json').write_text('{}')
+    (tmp_path/'config.yaml').write_text('render: {}\n')
+    scene=optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out',integrated=True)
+    written=json.loads((tmp_path/'out/scene.json').read_text())
+    assert scene['sampling']['texture_footprint_samples']==2 and written['sampling']['texture_footprint_samples']==2
+    assert written['sampling']['texture_prefilter'] is False
+    with pytest.raises(ValueError,match='sample limits'):
+        optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out2',texture_footprint_samples=9)

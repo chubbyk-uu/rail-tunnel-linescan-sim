@@ -7,19 +7,23 @@ import yaml
 from .stage_b_scene import digest,load_spec
 
 
-def prepare(config_path,geometry,surface,defects,output,area_samples=8,time_samples=3,spec_path=None,adaptive=False,integrated=False):
+def prepare(config_path,geometry,surface,defects,output,area_samples=8,time_samples=3,spec_path=None,adaptive=False,integrated=False,
+            texture_footprint_samples=2,texture_prefilter=False):
     output=Path(output).resolve()
     if output.exists(): raise ValueError('optical configuration output already exists')
     geometry,surface,defects=(Path(p).resolve() for p in (geometry,surface,defects))
     if any((p/'FAILED').exists() for p in (geometry,surface.parent,defects.parent)):
         raise ValueError('refuse failed preparation output')
-    if not 1<=area_samples<=16 or not 1<=time_samples<=16: raise ValueError('sample limits')
+    if not 1<=area_samples<=16 or not 1<=time_samples<=16 or not 1<=texture_footprint_samples<=8: raise ValueError('sample limits')
     if integrated and time_samples!=3: raise ValueError('integrated cracks require three exposure frames')
     def entry(path,**extra): return dict(file=str(path),sha256=digest(path),**extra)
     scene=dict(schema='ssb.optical_scene.v1',surface=entry(surface),defects=entry(defects),
                meshes=[entry(geometry/name,material=i) for i,name in enumerate(('panels.obj','joints.obj'))],
                sampling=dict(area_axis_samples=area_samples,time_samples=time_samples,
-                             adaptive_area=adaptive,integrated_cracks=integrated),
+                             adaptive_area=adaptive,integrated_cracks=integrated,
+                             # Accepted B1 setting: 2x2 texture taps over the pixel footprint on the
+                             # integrated background path (centre-point sampling showed beat stripes).
+                             texture_footprint_samples=texture_footprint_samples,texture_prefilter=texture_prefilter),
                convex_panel_visibility=True,
                lamp=dict(enabled=True,shadows=True,samples=4,length_m=.02,width_m=.02,footprint_m=[1.2,.12],
                          offset_axial_m=-.115,offset_tangential_m=0.,offset_radial_m=0.),response_gain=3.2,
@@ -50,7 +54,10 @@ def main():
     p.add_argument('--spec',type=Path)
     p.add_argument('--adaptive',action='store_true',help='enable guarded background area reduction; verify convergence before use')
     p.add_argument('--integrated',action='store_true',help='integrate metric crack coverage analytically; keep full ray sampling at critical geometry')
-    a=p.parse_args();prepare(a.config,a.geometry,a.surface,a.defects,a.output,a.area_samples,a.time_samples,a.spec,a.adaptive,a.integrated)
+    p.add_argument('--texture-footprint-samples',type=int,default=2,help='texture taps per axis over the pixel footprint (integrated path); 2 is the accepted B1 setting')
+    p.add_argument('--texture-prefilter',action='store_true',help='average taps before shading (faster; less exact with strong normal maps)')
+    a=p.parse_args();prepare(a.config,a.geometry,a.surface,a.defects,a.output,a.area_samples,a.time_samples,a.spec,a.adaptive,a.integrated,
+                             a.texture_footprint_samples,a.texture_prefilter)
 
 
 if __name__=='__main__': main()
