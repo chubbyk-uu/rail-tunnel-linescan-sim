@@ -114,7 +114,7 @@ ros2 run ssb_tools validate_stage_b_smoke sessions/b_capture --compare sessions/
 
 `stage_b.yaml` 自身仅是几何/时序基线；必须使用 `stage_b_optics` 输出的配置启用纹理光学后端。Gazebo 预览直接读取哈希校验后的实际烘焙底色，以约 2 mm/像素为每个管片生成独立贴图，采用完整 OBJ 法线；旧版缺少法线会导致 Ogre2 材质构建失败。已停用 20 mm quilting 引导图作为 GUI 底色。GUI 贴图 RGBA8+mip 保守估计约 499 MiB，预算 768 MiB，准备实测峰值约 211 MiB。GUI 预览不用于线阵成像，矢量裂缝目前仍只在 OptiX 采集层呈现。
 
-本机现行入口是 `tools/run_gz_gui.sh`，默认加载 `gui_c034_rail_v2/world.sdf` 与 `optics_b3_quality64/capture.yaml`：使用优化后的 B2 几何，车体从 x=3 m 起步，3 m 短程采集，光学层为 Concrete034、修正后的裂缝和 0.8 有效深度。初始暂停，点击 Play 开始采集；结束后后台完成落盘和摘要。GUI墙面已更新为Concrete034配方预览；预览为1–2 mm纹素，采集仍为0.1 mm生成网格，两者用途不同。相邻 4WIDS_agv 的私有 Mesa 启动器可由 `SSB_MESA_WRAPPER` 指定。其他输出通过 `tools/run_gz_gui.sh SESSION CONFIG WORLD` 指定，旧 `geometry_light_v1`/`optical_light_v1` 仅作历史对照。
+本机现行入口是 `tools/run_gz_gui.sh`，默认加载 `gui_contact_glare_v8/world/world.sdf` 与同目录的 `capture.yaml`：使用优化后的 B2 几何，车体从 x=3 m 起步，3 m 短程采集，光学层为 Concrete034、修正后的裂缝和 0.8 有效深度。初始暂停，点击 Play 开始采集；结束后后台完成落盘和摘要。GUI墙面已更新为Concrete034配方预览；预览为1–2 mm纹素，采集仍为0.1 mm生成网格，两者用途不同。相邻 4WIDS_agv 的私有 Mesa 启动器可由 `SSB_MESA_WRAPPER` 指定。其他输出通过 `tools/run_gz_gui.sh SESSION CONFIG WORLD` 指定，旧 `geometry_light_v1`/`optical_light_v1` 仅作历史对照。
 
 `ssb_probe` 用于指定姿态的光学检查和吞吐测量，不代表编码器采集验收。`stage_b_tag_cracks` 可在背景烘焙后加入保守保护标记，再以 `stage_b_optics --adaptive` 显式开启自适应加速；当前解析覆盖档不需要这一步。
 
@@ -418,9 +418,32 @@ GT定位的长裂缝ROI有1589个核心像素，对比度约52.7%，变化−0.0
 
 灯面采用暖白自发光材质；Gazebo聚光灯本身只照亮受光物体，普通反射材质不能
 表现迎面看到的发光面。该材质使灯面在暗环境下可见，不增加光源数量；
-光晕/眩光和真实光度响应尚未建模，不用增强曝光模拟发光灯面。
+该版本尚未加入光晕/眩光，下一节补充GUI显示效果；真实光度响应仍未标定。
 
 100°版本 `gui_contact_forward100_v7` / `contact_gui_forward100_v7` GUI烟测完成3 m、
 284445行，成像进度RTF0.99444，整卡显存采样峰值6575 MiB。灯面暖白自发光
 已人工检查；28项相关场景测试通过。默认GUI入口切换到此版本。扫描光源的
 更强自发光显示和镜头眩光效果在下一步处理。
+
+### 灯面及扫描COB发光与GUI眩光
+
+扫描透镜原有低自发光值0.10/0.12/0.12改为暖白1.0/0.96/0.90，工作灯沿用暖白
+灯面；扫描壁面projector及OptiX扫描照明不变。使用Gazebo Rendering 8原生
+[LensFlarePass](https://gazebosim.org/api/rendering/8/classgz_1_1rendering_1_1LensFlarePass.html)，
+自定义GUI插件 `SsbLightGlare` 只挂到带 `user-camera` 标记的观察相机。
+
+资源限制：五个候选发光面只选最强可见源，最多一个全屏GPU后处理；代理点光源
+强度为0、不开阴影，不参与照明。每200 ms最多5条遮挡射线，优先用GPU拾取。
+比较交点到观察相机的距离，避免原生遮挡逻辑按世界原点距离比较造成平移错误。
+发光面背对视角、离开视锥或被挡住时关闭眩光，遮挡更新延迟最多约200 ms；
+朝向与距离每帧更新。该效果不是物理标定，只有最强灯具有光晕，其余灯面仍可见。
+不模拟多灯光晕叠加，也不改原始Mono8、相机曝光或OptiX光度模型。
+
+默认派生世界更新到 `gui_contact_glare_v8`，GUI入口增加 `GZ_GUI_PLUGIN_PATH`。
+迎面预览确认灯面和暖白光晕可见，扫描COB透镜亮起；宽角100°/偏转15°和深灰轨枕
+保持上一版本。首次3 m烟测284445行，成像进度RTF0.99453，整卡显存采样峰值6506 MiB；
+该次为调试运行，期间编译来源发生变动，不作为来源验收记录。相关31项Python测试通过。
+
+最终眩光验收会话 `contact_gui_glare_final_v8`：284445行，成像RTF0.99469，
+整卡显存采样峰值6539 MiB；22项采集检查全部通过，包括来源一致性、有效区无丢行
+及333行批次重放逐字节一致。迎面遮挡板对照确认被挡灯的光晕消失。

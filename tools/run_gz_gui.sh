@@ -3,8 +3,8 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 session=$(realpath -m "${1:-$repo/sessions/gui_$(date +%Y%m%d_%H%M%S)}")
-config=$(realpath "${2:-$repo/local_data/stage_b/gui_contact_forward100_v7/capture.yaml}")
-world=$(realpath "${3:-$repo/local_data/stage_b/gui_contact_forward100_v7/world/world.sdf}")
+config=$(realpath "${2:-$repo/local_data/stage_b/gui_contact_glare_v8/capture.yaml}")
+world=$(realpath "${3:-$repo/local_data/stage_b/gui_contact_glare_v8/world/world.sdf}")
 [[ ! -e "$session" ]] || { echo "Session already exists: $session" >&2; exit 2; }
 mesa_wrapper=${SSB_MESA_WRAPPER:-$repo/../4WIDS_agv/tools/with_mesa_runtime.py}
 [[ -f "$mesa_wrapper" ]] || { echo "Private Mesa launcher missing: $mesa_wrapper" >&2; exit 2; }
@@ -19,6 +19,7 @@ python3 "$mesa_wrapper" bash "$repo/tools/with_optix_runtime.sh" bash -c '
   source /opt/ros/jazzy/setup.bash
   source "$1/install/setup.bash"
   export GZ_SIM_SYSTEM_PLUGIN_PATH="$1/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
+  export GZ_GUI_PLUGIN_PATH="$1/install/ssb_gazebo/lib${GZ_GUI_PLUGIN_PATH:+:$GZ_GUI_PLUGIN_PATH}"
   exec gz sim -v 3 --gui-config "$1/src/ssb_gazebo/worlds/stage_b_gui.config" "$SSB_WORLD"
 ' _ "$repo" > "$log_dir/gazebo.log" 2>&1
 if [[ -d "$session" ]]; then

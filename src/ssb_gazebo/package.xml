@@ -9,6 +9,8 @@
   <depend>ssb_core</depend>
   <depend>gz_sim_vendor</depend>
   <depend>gz_plugin_vendor</depend>
+  <depend>gz_gui_vendor</depend>
+  <depend>gz_rendering_vendor</depend>
   <export>
     <build_type>ament_cmake</build_type>
   </export>

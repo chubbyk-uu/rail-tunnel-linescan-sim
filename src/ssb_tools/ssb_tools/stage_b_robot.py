@@ -293,7 +293,7 @@ def make_robot(out,config,spec):
     visual=sub(head,'visual',name='lamp_window');sub(visual,'pose',pose(lamp_x,0,-.004))
     geometry=sub(visual,'geometry');ellipsoid=sub(geometry,'ellipsoid');sub(ellipsoid,'radii','.038 .038 .012')
     material=sub(visual,'material');sub(material,'diffuse','0.58 0.77 0.79 1')
-    sub(material,'ambient','0.58 0.77 0.79 1');sub(material,'emissive','0.10 0.12 0.12 1')
+    sub(material,'ambient','0.58 0.77 0.79 1');sub(material,'emissive','1.0 0.96 0.90 1')
     # Expose the shared effective exit plane separately from the lens glass surface.
     lamp_frame=sub(car,'frame',name='lamp_optical',attached_to='head')
     sub(lamp_frame,'pose',pose(lamp_x))
