@@ -7,14 +7,15 @@ import yaml
 from .stage_b_scene import digest,load_spec
 
 
-def prepare(config_path,geometry,surface,defects,output,area_samples=8,time_samples=3,spec_path=None,adaptive=False,integrated=False,
-            texture_footprint_samples=2,texture_prefilter=False,filler=None):
+def prepare(config_path,geometry,surface,defects,output,area_samples=16,time_samples=3,spec_path=None,adaptive=False,integrated=False,
+            texture_footprint_samples=2,texture_prefilter=False,filler=None,area_pattern='rooks'):
     output=Path(output).resolve()
     if output.exists(): raise ValueError('optical configuration output already exists')
     geometry,surface,defects=(Path(p).resolve() for p in (geometry,surface,defects))
     if any((p/'FAILED').exists() for p in (geometry,surface.parent,defects.parent)):
         raise ValueError('refuse failed preparation output')
     if not 1<=area_samples<=16 or not 1<=time_samples<=16 or not 1<=texture_footprint_samples<=8: raise ValueError('sample limits')
+    if area_pattern not in ('grid','rooks'): raise ValueError('area pattern')
     if integrated and time_samples!=3: raise ValueError('integrated cracks require three exposure frames')
     def entry(path,**extra): return dict(file=str(path),sha256=digest(path),**extra)
     scene=dict(schema='ssb.optical_scene.v1',surface=entry(surface),defects=entry(defects),
@@ -27,7 +28,9 @@ def prepare(config_path,geometry,surface,defects,output,area_samples=8,time_samp
                # gap under near-coaxial light), debris-like variation, slightly darker edge band
                # (worn/dirty lips). Appearance assumptions, not measurements.
                crack_optics=dict(interior_ratio=.2,interior_variation=.35,edge_band_m=.00025,edge_darkening=.15),
-               sampling=dict(area_axis_samples=area_samples,time_samples=time_samples,
+               # Full-ray pixels (critical geometry): 'grid' traces area_samples^2 rays per exposure
+               # sample; 'rooks' traces area_samples (N-rooks lattice, offset per exposure sample).
+               sampling=dict(area_axis_samples=area_samples,area_pattern=area_pattern,time_samples=time_samples,
                              adaptive_area=adaptive,integrated_cracks=integrated,
                              # Accepted B1 setting: 2x2 texture taps over the pixel footprint on the
                              # integrated background path (centre-point sampling showed beat stripes).
@@ -61,15 +64,16 @@ def prepare(config_path,geometry,surface,defects,output,area_samples=8,time_samp
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for arg in ('config','geometry','surface','defects','output'): p.add_argument('--'+arg,required=True,type=Path)
-    p.add_argument('--area-samples',type=int,default=8);p.add_argument('--time-samples',type=int,default=3)
+    p.add_argument('--area-samples',type=int,default=16);p.add_argument('--time-samples',type=int,default=3)
     p.add_argument('--spec',type=Path)
     p.add_argument('--adaptive',action='store_true',help='enable guarded background area reduction; verify convergence before use')
     p.add_argument('--integrated',action='store_true',help='integrate metric crack coverage analytically; keep full ray sampling at critical geometry')
     p.add_argument('--texture-footprint-samples',type=int,default=2,help='texture taps per axis over the pixel footprint (integrated path); 2 is the accepted B1 setting')
     p.add_argument('--texture-prefilter',action='store_true',help='average taps before shading (faster; less exact with strong normal maps)')
+    p.add_argument('--area-pattern',choices=('grid','rooks'),default='rooks',help="full-ray pattern: rooks (N per exposure sample; default, N=16) or grid (N x N per exposure sample, the pre-2026-09-30 setting with N=8)")
     p.add_argument('--filler',type=Path,help='joint filler texture (stage_b_runtime_surface prepare-filler filler.json)')
     a=p.parse_args();prepare(a.config,a.geometry,a.surface,a.defects,a.output,a.area_samples,a.time_samples,a.spec,a.adaptive,a.integrated,
-                             a.texture_footprint_samples,a.texture_prefilter,a.filler)
+                             a.texture_footprint_samples,a.texture_prefilter,a.filler,a.area_pattern)
 
 
 if __name__=='__main__': main()

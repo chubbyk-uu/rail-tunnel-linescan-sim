@@ -20,6 +20,9 @@ struct StageBAssets {
   unsigned area_samples=2, time_samples=2, light_samples=3;
   bool light_enabled=true, shadows=true;
   bool convex_panel_visibility=false, adaptive_area=false;
+  // Full-ray area pattern: 0 = area_samples x area_samples grid per exposure sample; otherwise
+  // the rank-1 lattice generator of an area_samples-point N-rooks pattern (see scan.cu).
+  unsigned area_rooks=0;
   bool integrated_cracks=false;
   // Background texture taps per axis over the pixel footprint (integrated path only).
   unsigned texture_footprint_samples=1;

@@ -1,6 +1,7 @@
 #include "ssb_core/stage_b_assets.hpp"
 #include "ssb_core/sha256.hpp"
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <array>
 #include <fstream>
@@ -70,6 +71,18 @@ StageBAssets::StageBAssets(const Config& c) {
   Need(cache_slots>0 && cache_slots<=1024 && cpu_budget>=tile_bytes,"tile cache budget");
   auto sampling=scene.at("sampling");area_samples=sampling.at("area_axis_samples");time_samples=sampling.at("time_samples");
   adaptive_area=sampling.value("adaptive_area",false);
+  const auto pattern=sampling.value("area_pattern",std::string("grid"));
+  Need(pattern=="grid"||pattern=="rooks","area pattern");
+  if(pattern=="rooks") {
+    // Generator coprime with N maximising the minimum toroidal point distance (first on ties).
+    double best=-1;
+    for(unsigned g=1;g<std::max(2u,area_samples);++g) {
+      if(std::gcd(g,area_samples)!=1)continue;double d=1e9;
+      for(unsigned k=1;k<area_samples;++k){unsigned y=k*g%area_samples;
+        d=std::min(d,std::hypot(double(std::min(k,area_samples-k)),double(std::min(y,area_samples-y))));}
+      if(d>best){best=d;area_rooks=g;}
+    }
+  }
   integrated_cracks=sampling.value("integrated_cracks",false);
   texture_footprint_samples=sampling.value("texture_footprint_samples",1u);
   texture_prefilter=sampling.value("texture_prefilter",false);

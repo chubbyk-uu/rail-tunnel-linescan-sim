@@ -420,11 +420,21 @@ __device__ void StageBScan(unsigned u,unsigned r) {
     if(Surface(x,q,&tex,&guard) && !guard) area=1;
   }
   float sum=0;
+  // Grid: area x area samples per exposure sample. Rooks: `area` samples per exposure sample on
+  // a rank-1 lattice (one per row and column of the area x area grid); exposure samples are
+  // offset by 1/(time_samples*area) on both axes, so their union resolves an edge aligned with
+  // either pixel axis into time_samples*area coverage levels instead of area.
+  const unsigned rooks=params.area_rooks,count=rooks&&area>1?area:area*area;
   for(unsigned t=0;t<params.time_samples;++t) {
     DeviceRow row=params.rows[r*params.row_stride+1+t];
-    for(unsigned sy=0;sy<area;++sy) for(unsigned sx=0;sx<area;++sx) {
-      float tangent=params.tangents[u]+((sx+.5f)/area-.5f)*params.pixel_step;
-      float scan=((sy+.5f)/area-.5f)*params.pixel_step;
+    for(unsigned k=0;k<count;++k) {
+      float fx,fy;
+      if(count==area&&area>1) {
+        const float T=params.time_samples;
+        fx=(k+(t+.5f)/T)/area;fy=(k*rooks%area+(T-1-t+.5f)/T)/area;
+      } else {fx=(k%area+.5f)/area;fy=(k/area+.5f)/area;}
+      float tangent=params.tangents[u]+(fx-.5f)*params.pixel_step;
+      float scan=(fy-.5f)*params.pixel_step;
       double hx,hq;float3 hp,hd;unsigned tri;float4 tex;
       bool ok=Hit(row,tangent,scan,&hx,&hq,&hp,&hd,&tri);
       unsigned reason=ok?0:1;
@@ -439,6 +449,6 @@ __device__ void StageBScan(unsigned u,unsigned r) {
     }
   }
   if(!valid) atomicAdd(params.invalid+r,1u);
-  float value=sum/(params.time_samples*area*area)*params.response_gain;
+  float value=sum/(params.time_samples*count)*params.response_gain;
   params.pixels[size_t(r)*params.width+u]=static_cast<unsigned char>(fminf(255.f,fmaxf(0.f,value*255.f+.5f)));
 }

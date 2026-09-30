@@ -197,7 +197,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
     const auto& a=*s.assets;
     s.params.area_samples=a.area_samples;s.params.time_samples=a.time_samples;s.params.light_samples=a.light_samples;
     s.params.light_enabled=a.light_enabled;s.params.shadows=a.shadows;
-    s.params.adaptive_area=a.adaptive_area;
+    s.params.adaptive_area=a.adaptive_area;s.params.area_rooks=a.area_rooks;
     s.params.convex_panel_visibility=a.convex_panel_visibility;
     s.params.texture_footprint_samples=a.texture_footprint_samples;s.params.texture_prefilter=a.texture_prefilter;
   }
@@ -274,7 +274,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   std::vector<OptixModuleCompileBoundValueEntry> bound;
 #define SSB_BOUND(field) bound.push_back({offsetof(LaunchParams,field),sizeof(s.params.field),&s.params.field,#field})
   SSB_BOUND(stage_b);SSB_BOUND(row_stride);SSB_BOUND(area_samples);SSB_BOUND(time_samples);SSB_BOUND(light_samples);
-  SSB_BOUND(light_enabled);SSB_BOUND(shadows);SSB_BOUND(adaptive_area);SSB_BOUND(convex_panel_visibility);SSB_BOUND(integrated_cracks);
+  SSB_BOUND(light_enabled);SSB_BOUND(shadows);SSB_BOUND(adaptive_area);SSB_BOUND(area_rooks);SSB_BOUND(convex_panel_visibility);SSB_BOUND(integrated_cracks);
   SSB_BOUND(texture_footprint_samples);SSB_BOUND(texture_prefilter);
 #undef SSB_BOUND
   mc.boundValues=bound.data();mc.numBoundValues=bound.size();
@@ -361,7 +361,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
     s.params.area_samples=a.area_samples;s.params.time_samples=a.time_samples;s.params.light_samples=a.light_samples;
     s.params.pixel_step=config.pixel_pitch_m/config.FocalLength();s.params.response_gain=a.response_gain;
     s.params.light_enabled=a.light_enabled;s.params.shadows=a.shadows;s.params.lamp_length=a.lamp_length;
-    s.params.adaptive_area=a.adaptive_area;
+    s.params.adaptive_area=a.adaptive_area;s.params.area_rooks=a.area_rooks;
     s.params.integrated_cracks=a.integrated_cracks;
     if(a.integrated_cracks)s.params.critical_edges=s.Alloc<unsigned>(a.critical_edges.size(),a.critical_edges.data());
     s.params.convex_panel_visibility=a.convex_panel_visibility;
@@ -468,6 +468,7 @@ nlohmann::json OptixRenderer::Describe() const {
           {"area_axis_samples", s.params.area_samples}, {"exposure_time_samples", s.params.time_samples},
           {"convex_panel_visibility",bool(s.params.convex_panel_visibility)},
           {"adaptive_area",bool(s.params.adaptive_area)},
+          {"area_pattern",s.params.area_rooks?"rooks":"grid"},
           {"integrated_cracks",bool(s.params.integrated_cracks)},
           {"texture_footprint_samples",s.params.texture_footprint_samples},
           {"joint_filler_texture",bool(s.params.filler)},{"texture_prefilter",bool(s.params.texture_prefilter)},

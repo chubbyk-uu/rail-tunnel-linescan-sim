@@ -149,6 +149,22 @@ TEST_F(SurfaceFixture, AreaSamplingPreservesSubmillimetreWidthAndExposureIntegra
   }
 }
 
+TEST_F(SurfaceFixture, RooksAreaSamplingPreservesSubmillimetreWidth) {
+  // N-rooks full-ray pattern (16 rays per exposure sample): same width integral as the grid.
+  scene["sampling"]["area_axis_samples"]=16;scene["sampling"]["area_pattern"]="rooks";scene["sampling"]["time_samples"]=3;SaveScene();
+  for(double width:{.0002,.0003,.0004,.0005,.0006}) {
+  SetWidth(width);OptixRenderer renderer(c,DefaultPtxPath(),256);EXPECT_EQ(renderer.Describe().at("area_pattern"),"rooks");
+  for(double omega:{0.,c.NominalOmega()}) {
+    std::vector<RowJob> jobs(160);const double spacing=.000025;
+    for(size_t i=0;i<jobs.size();++i) {jobs[i].pose.x=8;jobs[i].pose.theta=(.5+(double(i)-79.5)*spacing)/2.75;jobs[i].pose.omega=omega;}
+    std::vector<uint8_t> pixels;std::vector<double> hits;renderer.Render(jobs,pixels,hits);
+    double sum=0;for(auto code:pixels) sum+=(128.-code)/(128.-9.);
+    EXPECT_NEAR(sum/c.width*spacing,width,.000010) << "width="<<width<<", omega="<<omega;
+  }
+  }
+  scene["sampling"]["area_pattern"]="spiral";SaveScene();EXPECT_THROW(StageBAssets invalid(c),std::runtime_error);
+}
+
 TEST_F(SurfaceFixture, IntegratedPixelPreservesPhysicalWidthsWithMotion) {
   scene["sampling"]["area_axis_samples"]=8;scene["sampling"]["time_samples"]=3;
   scene["sampling"]["integrated_cracks"]=true;SaveScene();
