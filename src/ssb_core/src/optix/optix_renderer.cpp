@@ -97,7 +97,7 @@ struct OptixRenderer::Impl {
   std::vector<Slot> tile_slots;
   uint64_t cache_clock=0, cache_loads=0, cache_hits=0;
   size_t texture_peak_bytes=0, active_peak_tiles=0;
-  double tile_load_seconds=0;
+  double tile_load_seconds=0, footprint_seconds=0, launch_seconds=0;
   struct CpuSlot { std::vector<SurfaceTexel> data; uint64_t used=0; };
   std::map<unsigned,CpuSlot> cpu_tiles;
   uint64_t cpu_clock=0,cpu_cache_hits=0;
@@ -371,6 +371,7 @@ void OptixRenderer::Render(const std::vector<RowJob>& jobs, std::vector<uint8_t>
   if (n == 0 || n > s.capacity) throw std::invalid_argument("render batch size out of range");
   std::vector<DeviceRow> rows(n*s.params.row_stride);
   std::vector<std::set<unsigned>> footprints(s.assets?n:0);
+  auto prep_start=std::chrono::steady_clock::now();
   for (size_t i = 0; i < n; ++i) for(unsigned sample=0;sample<s.params.row_stride;++sample) {
     PoseSample pose=jobs[i].pose;
     if(sample) {
@@ -389,6 +390,7 @@ void OptixRenderer::Render(const std::vector<RowJob>& jobs, std::vector<uint8_t>
       footprints[i].insert(required.begin(),required.end());
     }
   }
+  s.footprint_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-prep_start).count();
   pixels.resize(n*s.params.width);hits.resize(n*s.debug_columns.size()*2);
   size_t first=0;
   while(first<n) {
@@ -405,6 +407,7 @@ void OptixRenderer::Render(const std::vector<RowJob>& jobs, std::vector<uint8_t>
     s.LoadTiles(required);
     const size_t count=end-first, hit_values=count*s.debug_columns.size()*2;
     s.params.row_count=count;
+    auto launch_start=std::chrono::steady_clock::now();
     SSB_CUDA(cudaMemcpyAsync(const_cast<DeviceRow*>(s.params.rows),rows.data()+first*s.params.row_stride,
                               count*s.params.row_stride*sizeof(DeviceRow),cudaMemcpyHostToDevice,s.stream));
     SSB_CUDA(cudaMemsetAsync(s.params.invalid,0,count*sizeof(unsigned),s.stream));
@@ -419,6 +422,7 @@ void OptixRenderer::Render(const std::vector<RowJob>& jobs, std::vector<uint8_t>
     SSB_CUDA(cudaMemcpyAsync(s.invalid_columns.data(),s.params.invalid_column,count*sizeof(unsigned),cudaMemcpyDeviceToHost,s.stream));
     if(hit_values) SSB_CUDA(cudaMemcpyAsync(s.host_hits,s.params.debug_hits,hit_values*sizeof(double),cudaMemcpyDeviceToHost,s.stream));
     SSB_CUDA(cudaStreamSynchronize(s.stream));
+    s.launch_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-launch_start).count();
     for(size_t i=0;i<count;++i) if(s.host_invalid[i])
       throw std::runtime_error("OptiX batch rejected: row sequence "+std::to_string(jobs[first+i].record.sequence)+
                                " has "+std::to_string(s.host_invalid[i])+" invalid wall/cache samples, flags="+
@@ -444,6 +448,7 @@ nlohmann::json OptixRenderer::Describe() const {
           {"texture_allocated_peak_bytes", s.texture_peak_bytes},
           {"active_texture_peak_tiles", s.active_peak_tiles},
           {"tile_loads", s.cache_loads}, {"tile_hits", s.cache_hits}, {"tile_load_seconds", s.tile_load_seconds},
+          {"footprint_seconds", s.footprint_seconds}, {"launch_seconds", s.launch_seconds},
           {"runtime_surface_recipe",bool(s.recipe)},
           {"recipe_source_device_bytes",s.recipe?s.recipe->Bytes():0},
           {"area_axis_samples", s.params.area_samples}, {"exposure_time_samples", s.params.time_samples},

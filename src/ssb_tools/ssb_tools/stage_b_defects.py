@@ -106,7 +106,7 @@ def assemble(config,spec,long_catalog,short_catalog,count=60):
     return result
 
 
-def build_grid(instances,bounds,cell_m=.05,max_index_bytes=32<<20):
+def build_grid(instances,bounds,cell_m=.01,max_index_bytes=32<<20):
     x0,x1,q0,q1=bounds
     if not 0<cell_m<=.2 or x1<=x0 or q1<=q0: raise ValueError('invalid crack grid')
     nx,nq=math.ceil((x1-x0)/cell_m),math.ceil((q1-q0)/cell_m)
@@ -150,7 +150,7 @@ def prepare(config_path,spec_path,long_path,short_path,output,count=60):
     items=assemble(config,spec,long,short,count)
     r=config['tunnel']['radius_m']
     bounds=[config['tunnel']['x_min_m'],config['tunnel']['x_max_m'],-math.pi*r,math.pi*r]
-    packed,offsets,indices,grid=build_grid(items,bounds)
+    packed,offsets,indices,grid=build_grid(items,bounds)  # default 10 mm cells
     output.mkdir(parents=True)
     for name,data in (('segments.bin',packed),('offsets.bin',offsets),('indices.bin',indices)): data.tofile(output/name)
     result=dict(schema='ssb.defect_layout.v1',seed=spec['seed'],instances=items,grid=grid,
@@ -168,11 +168,35 @@ def prepare(config_path,spec_path,long_path,short_path,output,count=60):
     return result
 
 
+def regrid(source,output,cell_m):
+    """Same crack instances, new spatial index cell size (renderer lookup cost only)."""
+    source=Path(source).resolve();output=Path(output).resolve()
+    if output.exists(): raise ValueError('defect output already exists')
+    old=json.loads((source/'defects.json').read_text())
+    config=yaml.safe_load(Path(old['inputs']['config']['file']).read_text());r=config['tunnel']['radius_m']
+    bounds=[config['tunnel']['x_min_m'],config['tunnel']['x_max_m'],-math.pi*r,math.pi*r]
+    g=old['grid']
+    if abs(g['origin_xq_m'][0]-bounds[0])>1e-12 or abs(g['origin_xq_m'][1]-bounds[2])>1e-12: raise ValueError('grid bounds changed')
+    packed,offsets,indices,grid=build_grid(old['instances'],bounds,cell_m)
+    output.mkdir(parents=True)
+    for name,data in (('segments.bin',packed),('offsets.bin',offsets),('indices.bin',indices)): data.tofile(output/name)
+    result=dict(old,grid=grid,files={name:dict(file=name,sha256=digest(output/name)) for name in ('segments.bin','offsets.bin','indices.bin')},
+                regridded_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),cell_m=g['cell_m']),
+                preparation_peak_rss_bytes=peak_rss_bytes())
+    (output/'defects.json').write_text(json.dumps(result,indent=2)+'\n')
+    print(json.dumps(dict(grid=grid)))
+    return result
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    for arg in ('config','spec','long-catalog','short-catalog','output'): p.add_argument('--'+arg,required=True,type=Path)
-    p.add_argument('--count',type=int,default=60)
-    a=p.parse_args();prepare(a.config,a.spec,a.long_catalog,a.short_catalog,a.output,a.count)
+    p.add_argument('--regrid',type=Path,help='existing defect layout: rebuild only its crack index')
+    p.add_argument('--cell-m',type=float,default=.01)
+    for arg in ('config','spec','long-catalog','short-catalog'): p.add_argument('--'+arg,type=Path)
+    p.add_argument('--output',required=True,type=Path);p.add_argument('--count',type=int,default=60)
+    a=p.parse_args()
+    if a.regrid: regrid(a.regrid,a.output,a.cell_m)
+    else: prepare(a.config,a.spec,a.long_catalog,a.short_catalog,a.output,a.count)
 
 
 if __name__=='__main__': main()
