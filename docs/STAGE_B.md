@@ -155,3 +155,10 @@ RTX 5080 上，高精度档的 4096 行名义运动探测约 483 行/秒；一�
 仍需完成原生高清背景及整体重复纹理检查、填充/损伤板缝和手孔、镜头模糊/离焦/噪声与光度标定、标定尺寸下裂缝自然程度审查、完整 20 m 负载测量。本阶段的短程采集不代表已输出 20 m 隧道全图；完整采集覆盖、拼接和全局优化继续按阶段 C/D 推进。
 
 GUI 投影语义参考本机 Ogre2Projector 实现及 [Gazebo Rendering 源码](https://github.com/gazebosim/gz-rendering/blob/gz-rendering8/ogre2/src/Ogre2Projector.cc)。
+
+## B2 板缝（2026-10-01）
+
+- **几何**：`stage_b_scene` 生成 `panels.obj`（含倒角）、`joints.obj`（槽侧壁和槽底）、`filler.obj`（砂浆）和 `gap.obj`（接触缝后的止水垫），共约30万个三角面，预算为60万。环缝按下一环的分块分段，纵缝按环分段，每段的状态与缺失区段记入 `geometry.joints`。
+- **材质**：0 号为墙面和倒角；1 号为槽内混凝土（反照率 0.12、低对比细节、坐标错开）；2 号为砂浆（`prepare-filler`，grey_plaster 去掉 10 mm 以上色调、对比度 0.35、均值 0.17）；3 号为止水垫（0.02）。全部为外观假设。
+- **入口**：`stage_b_runtime_surface prepare-filler`；`stage_b_optics --filler`，有 `filler.obj` 时必须提供。验收工具会校验砂浆纹理的哈希。
+- **结果**：`sessions/b_b2_joints_v1`，GUI 成像实时率 0.978（加缝前 0.994），21 项检查及 333 行批次重放全部通过。前后对比图在 `local_data/stage_b/b2_run/joints_before_after_1to1.png`；三种状态的探针图、暗边拆解和灯光换边图在 `local_data/stage_b/b2_probe/`。
