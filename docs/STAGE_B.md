@@ -162,4 +162,5 @@ GUI 投影语义参考本机 Ogre2Projector 实现及 [Gazebo Rendering 源码](
 - **材质**：0 号为墙面和倒角；1 号为槽内混凝土（反照率 0.12、低对比细节、坐标错开）；2 号为砂浆（`prepare-filler`，grey_plaster 去掉 10 mm 以上色调、对比度 0.35、均值 0.15，最初为 0.17）；3 号为止水垫（0.02）。全部为外观假设。
 - **入口**：`stage_b_runtime_surface prepare-filler`；`stage_b_optics --filler`，有 `filler.obj` 时必须提供。验收工具会校验砂浆纹理的哈希。
 - **尺寸**：倒角 3 mm、槽宽 10 mm，从墙面看缝区总宽 16 mm（用户确认）；最初的 5 mm 倒角、15 mm 槽宽版本总宽 25 mm，偏宽。三种宽度的对比图在 `local_data/stage_b/b2_run/joints_widths_1to1.png`。
-- **结果**：`sessions/b_b2_joints_v2`，GUI 成像实时率 0.982（加缝前 0.994），21 项检查及 333 行批次重放全部通过。前后对比图在 `local_data/stage_b/b2_run/joints_before_after_1to1.png`；三种状态的探针图、暗边拆解和灯光换边图在 `local_data/stage_b/b2_probe/`。
+- **结果**：`sessions/b_b2_joints_v2`，GUI 成像实时率 0.982（加缝前 0.994），21 项检查及 333 行批次重放全部通过。
+- **定稿（`geometry_b2_v3`，`sessions/b_b2_joints_v3`）**：全部已填；倒角两侧 1 mm 圆角、内缘轻微起伏；T 形交叉用高度场连通，交界沿用环缝砂浆边的折线以保证不漏光，砂浆面在交叉内平滑过渡。约 78 万个三角面（预算 80 万）。GUI 成像实时率 0.981，21 项检查及重放全部通过。图在 `local_data/stage_b/b2_run/joints_final_1to1.png`、`b2_probe/junction_zoom3x_v4.png`。崩角样块（`chip_sample/`）不自然，代码未保留。前后对比图在 `local_data/stage_b/b2_run/joints_before_after_1to1.png`；三种状态的探针图、暗边拆解和灯光换边图在 `local_data/stage_b/b2_probe/`。
