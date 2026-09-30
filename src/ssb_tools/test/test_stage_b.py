@@ -550,3 +550,11 @@ def test_work_light_cones_miss_imaging_arc_and_cast_shadows(tmp_path,inputs):
         assert top_direction<-.3
         assert float(lamp.find('pose').text.split()[2])+.3 < lowest_image_z-.15
         assert lamp.find('cast_shadows').text=='true'
+        base=car.find("link[@name='base']")
+        origin=np.array(list(map(float,lamp.find('pose').text.split()[:3])))
+        for label in ['hood','glass']:
+            v=base.find(f"visual[@name='{lamp.get('name')}_{label}']")
+            centre=np.array(list(map(float,v.find('pose').text.split()[:3])))
+            depth=float(v.find('geometry/box/size').text.split()[2])
+            assert np.dot(centre-origin,d)+depth/2 < -.005
+        assert lamp.find('visualize').text=='false'

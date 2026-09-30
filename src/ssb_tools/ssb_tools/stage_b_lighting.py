@@ -57,18 +57,23 @@ def add_work_lights(base, spec):
             name=f'work_{sx}_{sy}'
             direction=np.array([sx*.40, sy*.35, -.847])
             direction/=np.linalg.norm(direction)
-            x,y,z=sx*.31,sy*.59,.15  # world rail-relative height 0.45 m
+            x,y,z=sx*.51,sy*.59,.15  # world rail-relative height 0.45 m
+            # Put the emitter beyond the deck edge; otherwise the electronics lid
+            # blocks the downward beam once real shadow maps are enabled.
+            box(base,name+'_post',f'{sx*.36} {y} .075 0 0 0','.025 .025 .19','0.48 0.53 0.59 1')
+            box(base,name+'_arm',f'{sx*.43} {y} .17 0 0 0','.16 .025 .022','0.48 0.53 0.59 1')
             # A little hood behind the emission plane; local +z looks out/down.
             pitch=math.acos(direction[2]);yaw=math.atan2(direction[1],direction[0])
-            for label,depth,size,color in [('hood',-.018,'.060 .046 .030','0.06 0.07 0.08 1'),
-                                            ('glass',-.001,'.048 .034 .004','0.82 0.86 0.89 1')]:
+            for label,depth,size,color in [('hood',-.027,'.060 .046 .030','0.06 0.07 0.08 1'),
+                                            ('glass',-.010,'.048 .034 .004','0.82 0.86 0.89 1')]:
                 p=np.array([x,y,z])+direction*depth
                 box(base,name+'_'+label,f'{p[0]} {p[1]} {p[2]} 0 {pitch} {yaw}',size,color)
+                if label=='glass':sub(base.find(f"visual[@name='{name}_glass']"),'cast_shadows','false')
             light=sub(base,'light',name=name,type='spot')
             sub(light,'pose',f'{x} {y} {z} 0 0 0')
             sub(light,'direction',' '.join(map(str,direction)))
             sub(light,'diffuse','1.0 .96 .90 1');sub(light,'specular','.2 .2 .2 1')
-            sub(light,'cast_shadows','true');sub(light,'intensity',1.2);sub(light,'visualize','false')
+            sub(light,'cast_shadows','true');sub(light,'intensity',2.0);sub(light,'visualize','false')
             attenuation=sub(light,'attenuation')
             for k,v in [('range',4),('constant',1),('linear',.15),('quadratic',.15)]:sub(attenuation,k,v)
             spot=sub(light,'spot');sub(spot,'inner_angle',.35);sub(spot,'outer_angle',.65);sub(spot,'falloff',1)
