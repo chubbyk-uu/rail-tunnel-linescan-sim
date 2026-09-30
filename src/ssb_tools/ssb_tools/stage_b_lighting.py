@@ -56,7 +56,7 @@ def add_work_lights(base, spec):
     down=math.radians(settings.get('work_light_down_deg',15.))
     sideways=math.radians(settings.get('work_light_side_deg',15.))
     inner=math.radians(settings.get('work_light_inner_deg',80.))
-    outer=math.radians(settings.get('work_light_outer_deg',100.))
+    outer=math.radians(settings.get('work_light_outer_deg',90.))
     reach=settings.get('work_light_range_m',8.)
     if not (0<down<math.pi/4 and 0<sideways<math.pi/2 and 0<inner<outer<math.pi and math.isfinite(reach) and reach>0):
         raise ValueError('invalid work light pitch, full cone angles or range')

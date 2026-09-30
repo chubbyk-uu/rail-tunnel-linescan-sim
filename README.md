@@ -50,7 +50,7 @@ Commands and remaining Stage B acceptance work: [docs/STAGE_B.md](docs/STAGE_B.m
 The accepted Concrete034 runtime surface, refined cracks and filled joints are retained.
 The current demo uses rigid wheel/rail friction contact, two front motors, two rear
 encoders and four side guide bearings. Scanning follows estimated rear-wheel travel,
-so calibrated wheel diameter errors change the real scan pitch. Four chassis work lights, offset sideways/down by 15 degrees with 100-degree
+so calibrated wheel diameter errors change the real scan pitch. Four chassis work lights, offset sideways/down by 15 degrees with 90-degree
 full cones, cast shadows and avoid the nominal instantaneous camera stripe; reflected acquisition light is an explicit weak approximation.
 The work lamp faces and scanning COB lens emit warm white in the preview. A GUI-only
 lens flare follows the strongest visible source, with direction and occlusion checks;
@@ -58,7 +58,7 @@ it does not change OptiX illumination or raw images.
 
 Open the prepared 3 m contact demo with `tools/run_gz_gui.sh` (paused initially).
 Play includes 2 s of settling before capture. The default assets are in
-`local_data/stage_b/gui_contact_glare_v8/`. To derive another demo from the accepted
+`local_data/stage_b/gui_contact_glare90_v9/`. To derive another demo from the accepted
 local assets, use `python3 tools/prepare_contact_demo.py --output NEW_DIRECTORY`;
 then pass its `capture.yaml` and `world/world.sdf` as the second/third GUI arguments.
 Old ideal configurations/worlds remain usable when supplied explicitly.

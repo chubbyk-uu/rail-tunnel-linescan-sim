@@ -114,7 +114,7 @@ ros2 run ssb_tools validate_stage_b_smoke sessions/b_capture --compare sessions/
 
 `stage_b.yaml` 自身仅是几何/时序基线；必须使用 `stage_b_optics` 输出的配置启用纹理光学后端。Gazebo 预览直接读取哈希校验后的实际烘焙底色，以约 2 mm/像素为每个管片生成独立贴图，采用完整 OBJ 法线；旧版缺少法线会导致 Ogre2 材质构建失败。已停用 20 mm quilting 引导图作为 GUI 底色。GUI 贴图 RGBA8+mip 保守估计约 499 MiB，预算 768 MiB，准备实测峰值约 211 MiB。GUI 预览不用于线阵成像，矢量裂缝目前仍只在 OptiX 采集层呈现。
 
-本机现行入口是 `tools/run_gz_gui.sh`，默认加载 `gui_contact_glare_v8/world/world.sdf` 与同目录的 `capture.yaml`：使用优化后的 B2 几何，车体从 x=3 m 起步，3 m 短程采集，光学层为 Concrete034、修正后的裂缝和 0.8 有效深度。初始暂停，点击 Play 开始采集；结束后后台完成落盘和摘要。GUI墙面已更新为Concrete034配方预览；预览为1–2 mm纹素，采集仍为0.1 mm生成网格，两者用途不同。相邻 4WIDS_agv 的私有 Mesa 启动器可由 `SSB_MESA_WRAPPER` 指定。其他输出通过 `tools/run_gz_gui.sh SESSION CONFIG WORLD` 指定，旧 `geometry_light_v1`/`optical_light_v1` 仅作历史对照。
+本机现行入口是 `tools/run_gz_gui.sh`，默认加载 `gui_contact_glare90_v9/world/world.sdf` 与同目录的 `capture.yaml`：使用优化后的 B2 几何，车体从 x=3 m 起步，3 m 短程采集，光学层为 Concrete034、修正后的裂缝和 0.8 有效深度。初始暂停，点击 Play 开始采集；结束后后台完成落盘和摘要。GUI墙面已更新为Concrete034配方预览；预览为1–2 mm纹素，采集仍为0.1 mm生成网格，两者用途不同。相邻 4WIDS_agv 的私有 Mesa 启动器可由 `SSB_MESA_WRAPPER` 指定。其他输出通过 `tools/run_gz_gui.sh SESSION CONFIG WORLD` 指定，旧 `geometry_light_v1`/`optical_light_v1` 仅作历史对照。
 
 `ssb_probe` 用于指定姿态的光学检查和吞吐测量，不代表编码器采集验收。`stage_b_tag_cracks` 可在背景烘焙后加入保守保护标记，再以 `stage_b_optics --adaptive` 显式开启自适应加速；当前解析覆盖档不需要这一步。
 
@@ -447,3 +447,20 @@ GT定位的长裂缝ROI有1589个核心像素，对比度约52.7%，变化−0.0
 最终眩光验收会话 `contact_gui_glare_final_v8`：284445行，成像RTF0.99469，
 整卡显存采样峰值6539 MiB；22项采集检查全部通过，包括来源一致性、有效区无丢行
 及333行批次重放逐字节一致。迎面遮挡板对照确认被挡灯的光晕消失。
+
+### 工作灯收窄至90°与底部扫描光斑排查
+
+按最新要求，四灯外锥总角改为90°，内锥80°，前后方向偏左/右15°、下俯15°。
+默认世界为 `gui_contact_glare90_v9`，保留已经验证的发光灯面和GUI眩光。
+
+底部扫描光斑消失的实现原因：`add_strip_projector` 将投影限制在半径2.75 m附近
+的2.65–2.85 m薄层，没有对扫描架、底盘等近场物体施加条光，也不产生它们的条光阴影。
+底部的衬砌投影还会被道床/车体挡住观察视线；这不等于光源到衬砌之间做了真实遮挡。
+支架若实际截获条光，其迎光面应该被照亮，后方应该有阴影。当前GUI不能验证这一点。
+后续需要带遮挡的条形配光照明；单纯调小projector近裁剪面会让光穿过支架继续投影，
+不能作为正确修复。OptiX当前光学网格仅含衬砌及板缝等，不应把GUI现象解释成采集层
+已经计算了车体遮挡。此次仅修正工作灯角度并记录问题，未改变扫描照明模型。
+
+90°版本31项相关测试通过，生成世界中的四灯外锥均核验为π/2；
+前后轨道/侧壁目标覆盖及当前曝光条带避让检查通过。本次未重复RTF测量，
+上一版0.99469的结果仅作为眩光实现的性能记录。

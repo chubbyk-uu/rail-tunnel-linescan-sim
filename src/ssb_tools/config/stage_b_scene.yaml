@@ -59,7 +59,7 @@ preview:
   work_light_down_deg: 15.0
   work_light_side_deg: 15.0
   work_light_inner_deg: 80.0   # full bright cone angle, not half-angle
-  work_light_outer_deg: 100.0   # full support cone angle
+  work_light_outer_deg: 90.0   # full support cone angle
   work_light_range_m: 8.0
   indirect_fill_relative: 0.002 # effective weak reflected irradiance / nominal strip; uncalibrated
   strip_light_enabled: true    # attached Ogre2 projector; OptiX remains the imager
