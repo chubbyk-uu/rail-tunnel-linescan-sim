@@ -283,3 +283,34 @@ def test_optics_config_persists_accepted_texture_footprint_sampling(tmp_path):
     assert written['sampling']['texture_prefilter'] is False
     with pytest.raises(ValueError,match='sample limits'):
         optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out2',texture_footprint_samples=9)
+
+
+def test_joint_profile_states_and_filler_geometry(tmp_path,inputs):
+    config,spec = inputs
+    config['tunnel'].update(x_min_m=-1.5,x_max_m=21.5)
+    geometry = make_meshes(tmp_path,config,spec)
+    p=spec['panels'];r=config['tunnel']['radius_m'];zc=config['tunnel']['axis_z_m']
+    c,g,D=p['joint_chamfer_m'],p['joint_groove_half_width_m'],p['joint_depth_m']
+    joints=geometry['joints'];n=len(joints)
+    frac={k:geometry['joint_state_counts'][k]/n for k in ('filled','unfilled','damaged')}
+    assert n>200 and abs(frac['filled']-.8)<.08 and abs(frac['unfilled']-.15)<.07 and 0<frac['damaged']<.12
+    assert geometry['triangles']<=spec['resources']['max_mesh_triangles']
+    other=tmp_path/'b';other.mkdir();again=make_meshes(other,config,spec)
+    assert again['joints']==joints                               # deterministic from the spec seed
+    def radii(name):
+        v=np.array([[float(x) for x in l.split()[1:]] for l in (tmp_path/name).read_text().splitlines() if l.startswith('v ')])
+        return v,np.hypot(v[:,1],v[:,2]-zc)
+    v,rad=radii('panels.obj')   # lining at r, chamfer bottoms at r+c
+    assert np.all(np.isclose(rad,r,atol=1e-9)|np.isclose(rad,r+c,atol=1e-9)) and np.isclose(rad,r+c,atol=1e-9).any()
+    _,rad=radii('gap.obj');assert np.allclose(rad,r+D+p['joint_gap_depth_m'],atol=1e-9)
+    v,rad=radii('filler.obj')
+    deepest=c+max(p['joint_filler_recess_m'][1],p['joint_damage']['loss_depth_m'][1])
+    assert rad.min()>=r+c-1e-9 and rad.max()<=r+deepest+1e-9
+    # Unfilled sections carry no filler: no filler vertex at a ring joint section marked unfilled.
+    for j in joints:
+        if j['kind']!='ring' or j['state']!='unfilled':continue
+        ang=np.arctan2(v[:,1],v[:,2]-zc);u,w=j['angle_rad']
+        inside=(np.abs(v[:,0]-j['x_m'])<g+1e-9)&(np.mod(ang-u,2*np.pi)>1e-6)&(np.mod(ang-u,2*np.pi)<(w-u)-1e-6)
+        assert not inside.any()
+    damaged=[j for j in joints if j['state']=='damaged']
+    assert all(j['losses_m'] and all(l[2]>j['filler_recess_m'] for l in j['losses_m']) for j in damaged)

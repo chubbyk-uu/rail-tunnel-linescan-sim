@@ -5,9 +5,19 @@ panels:
   angles_deg: [10, 67, 72, 72, 72, 67]
   alternating_stagger_deg: 18.0
   angular_step_deg: 0.5       # chord sag <=0.027 mm at R=2.75 m
-  # Initial unfilled joint preview; filled/damaged variants remain to implement.
-  joint_width_m: 0.012
-  joint_depth_m: 0.035
+  # Joint profile (all assumptions unless noted): 45 deg inner-edge chamfer, caulking groove
+  # (Tianjin DB/T 29-272: depth 25-55 mm, single-side width 5-10 mm), filler recess below the
+  # chamfer bottom. Outer visible opening = 2*(half width + chamfer) = 25 mm.
+  joint_chamfer_m: 0.005
+  joint_groove_half_width_m: 0.0075
+  joint_depth_m: 0.035            # surface to groove floor
+  joint_contact_gap_m: 0.002      # segment contact gap in the groove floor (assumption)
+  joint_gap_depth_m: 0.02         # visible gap depth before the dark gasket/void (assumption)
+  joint_filler_recess_m: [0.0, 0.002]
+  # Per joint section (ring joints split at the segment boundaries of the ring after them,
+  # longitudinal joints per ring): user-confirmed ratios, grey mortar filler.
+  joint_states: {filled: 0.80, unfilled: 0.15, damaged: 0.05}
+  joint_damage: {loss_fraction: [0.3, 0.7], stretch_m: [0.05, 0.30], loss_depth_m: [0.005, 0.020]}
 track:
   gauge_m: 1.435
   head_width_m: 0.073
@@ -66,6 +76,6 @@ resources:
   gpu_texture_budget_bytes: 2147483648
   cpu_texture_cache_bytes: 1073741824
   gpu_preview_texture_budget_bytes: 805306368 # separate GUI RGBA8 + mip allowance
-  max_mesh_triangles: 150000
-  max_scene_vertices: 300000
+  max_mesh_triangles: 600000      # chamfered, stateful joints (~2.5x the bare-slot mesh)
+  max_scene_vertices: 1200000
   overview_max_side: 2048

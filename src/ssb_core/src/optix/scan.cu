@@ -178,12 +178,31 @@ __device__ float3 LampSample(const DeviceRow& row,unsigned i) {
   return Add(centre,Add(Mul(optical,params.lamp_radial),
                        Add(Mul(scan,params.lamp_tangential+w),Mul(axis,s))));
 }
+// Mean-normalised mortar detail tiled by wall (x, q), bilinear with wrap.
+__device__ float Detail(double x,double q) {
+  if(!params.filler) return 1.f;
+  const double w=params.filler_width,h=params.filler_height;
+  double u=fmod(x/params.filler_pitch-.5,w),v=fmod(q/params.filler_pitch-.5,h);if(u<0)u+=w;if(v<0)v+=h;
+  int x0=int(u),y0=int(v);float fx=float(u-x0),fy=float(v-y0);
+  auto at=[&](int i,int j){return float(params.filler[size_t((y0+j)%params.filler_height)*params.filler_width+(x0+i)%params.filler_width]);};
+  float s=(at(0,0)*(1-fx)+at(1,0)*fx)*(1-fy)+(at(0,1)*(1-fx)+at(1,1)*fx)*fy;
+  return float(s/params.filler_scale);
+}
+__device__ float Filler(double x,double q) {return params.filler_mean*Detail(x,q);}
+// Groove walls/floor: darker concrete with low-contrast detail at an offset (not continuous
+// with the lining texture seen through the joint opening).
+__device__ float GrooveConcrete(double x,double q) {
+  return params.groove_albedo*(1.f+params.groove_detail_contrast*(Detail(x+.371,q+.529)-1.f));
+}
 __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned primitive,double x,double q,float4 tex,float coverage=-1.f,unsigned visibility=~0u) {
   uint3 tri=params.triangles[primitive];
   float3 normal=Unit(Cross(Sub(params.vertices[tri.y],params.vertices[tri.x]),Sub(params.vertices[tri.z],params.vertices[tri.x])));
   if(Dot(normal,view)>0) normal=Mul(normal,-1.f); // double-sided optical lining, inward visible normal
-  bool joint=params.face_material[primitive]!=0;
-  float albedo=joint ? .14f : tex.x;
+  // Materials: 0 lining panel and chamfers (texture, normal map, cracks); 1 groove walls/floor
+  // (dusty concrete, face normal); 2 joint filler (mortar); 3 gasket/void behind the contact gap.
+  const unsigned material=params.face_material[primitive];
+  bool joint=material!=0;
+  float albedo=material==0 ? tex.x : material==1 ? GrooveConcrete(x,q) : material==2 ? Filler(x,q) : params.gap_albedo;
   if(!joint) {if(coverage>=0)albedo=tex.x+coverage*(.035f-tex.x);else if(Crack(x,q))albedo=.035f;}
   if(!params.light_enabled) return albedo;
   if(!joint) {
@@ -220,7 +239,7 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
     float ndl=fmaxf(0.f,Dot(normal,L));
     // Relative rough diffuse approximation. Absolute photometry and
     // measured camera gain remain uncalibrated; no claim of lux or SNR.
-    float rough=joint?.9f:tex.y;
+    float rough=material==0?tex.y:material==2?params.filler_roughness:.9f;
     float diffuse=ndl*(1.f-.12f*rough*rough);
     intensity+=diffuse*float(params.radius*params.radius)/(distance*distance);
   }

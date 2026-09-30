@@ -45,5 +45,10 @@ struct LaunchParams {
   unsigned convex_panel_visibility, adaptive_area;
   unsigned integrated_cracks;
   unsigned texture_footprint_samples, texture_prefilter;
+  const unsigned short* filler;  // material 2 albedo detail (code/scale), tiled by (x, q)
+  unsigned filler_width, filler_height;
+  double filler_pitch, filler_scale;
+  float filler_mean, filler_roughness;
+  float groove_albedo, groove_detail_contrast, gap_albedo;
   float lamp_length, footprint_x, footprint_q, lamp_tangential, lamp_radial, lamp_axial, lamp_width;
 };

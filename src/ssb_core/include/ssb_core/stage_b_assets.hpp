@@ -30,6 +30,13 @@ struct StageBAssets {
   std::vector<OpticalTriangle> triangles;
   std::vector<unsigned> face_material;
   std::vector<unsigned> critical_edges;
+  // Joint filler (material 2): mean-normalised albedo detail tiled by wall (x, q).
+  std::vector<uint16_t> filler;
+  unsigned filler_width=0, filler_height=0;
+  double filler_pitch=0, filler_scale=1, filler_mean=0, filler_roughness=.9;
+  std::string filler_hash;
+  // Groove walls/floor (material 1) and the dark gasket/void behind the contact gap (3).
+  double groove_albedo=.12, groove_detail_contrast=.3, gap_albedo=.02;
   std::vector<CrackSegment> segments;
   std::vector<unsigned> offsets, indices;
   double crack_x0=0, crack_q0=0, crack_cell=0;

@@ -287,6 +287,31 @@ def prepare_set(set_path, sources_root, config_path, spec_path, output, working_
         (output/'FAILED').write_text(str(e)+'\n');raise
 
 
+def prepare_filler(downloads, output, mean_albedo=.17, flatten_m=.01, contrast=.35):
+    """Joint filler (grey mortar) albedo map: fine detail of a real sandy plaster, tone above
+    flatten_m removed (moss, shading), mean normalised; tiled by wall (x, q) at render time."""
+    downloads=Path(downloads).resolve();output=Path(output).resolve();source=json.loads(downloads.read_text())
+    if output.exists():raise ValueError('filler output exists; do not overwrite')
+    if not 0<mean_albedo<1 or flatten_m<=0 or not 0<contrast<=1:raise ValueError('invalid filler parameters')
+    entry=source['channels']['diffuse'];path=downloads.parent/entry['file']
+    if digest(path)!=entry['sha256']:raise ValueError('filler source hash mismatch')
+    output.mkdir(parents=True)
+    raw=output/'decode.raw';decoded=_decode(path,raw);h,w=decoded.shape[:2]
+    v=decoded.astype(np.float32)/np.iinfo(decoded.dtype).max;decoded._mmap.close();del decoded;raw.unlink()
+    lum=srgb_to_linear(v[:,:,:3])@np.array([.2126,.7152,.0722],np.float32);del v
+    pitch=source['source_width_m']/w;sigma=flatten_m/pitch;pad=int(3*sigma)+1
+    low=cv2.GaussianBlur(np.pad(lum,pad,mode='wrap'),(0,0),sigma)[pad:-pad,pad:-pad]   # seamless source
+    detail=lum/np.maximum(low,1e-6);detail/=detail.mean()
+    # The source keeps residual grain shading; filler faces have no normal map, so this is the
+    # only grain cue, scaled down to a sandy-mortar level (assumption).
+    detail=np.clip(1+contrast*(detail-1),0,None)
+    scale=32768;code=np.uint16(np.clip(np.rint(detail*scale),0,65535));code.tofile(output/'filler.bin')
+    meta=dict(schema='ssb.joint_filler.v1',file='filler.bin',sha256=digest(output/'filler.bin'),width=w,height=h,pitch_m=pitch,scale=scale,
+              mean_albedo=mean_albedo,roughness=.9,std=float(detail.std()),flatten_m=flatten_m,contrast=contrast,source_downloads_sha256=digest(downloads),
+              assumption='Grey mortar appearance (user choice) from a real sandy plaster; mean albedo is an assumption, not a measurement.')
+    (output/'filler.json').write_text(json.dumps(meta,indent=2)+'\n');return meta
+
+
 class ReferenceRecipe:
     """Float64 NumPy reference, independently samples the packed native sources."""
     def __init__(self,surface_path):
@@ -356,11 +381,14 @@ def main():
     a=sub.add_parser('prepare')
     for k in ['downloads','config','spec','output']:a.add_argument('--'+k,required=True)
     a.add_argument('--brightness',type=float,default=.8)
+    fl=sub.add_parser('prepare-filler');fl.add_argument('--downloads',required=True);fl.add_argument('--output',required=True)
+    fl.add_argument('--mean-albedo',type=float,default=.17);fl.add_argument('--contrast',type=float,default=.35)
     m=sub.add_parser('prepare-set')
     for k in ['set','sources','config','spec','output']:m.add_argument('--'+k,required=True)
     args=p.parse_args();kw=vars(args);command=kw.pop('command')
     if command in ['prepare','prepare-set']:kw['config_path']=kw.pop('config');kw['spec_path']=kw.pop('spec')
     if command=='prepare-set':kw['set_path']=kw.pop('set');kw['sources_root']=kw.pop('sources')
+    if command=='prepare-filler':print(json.dumps(prepare_filler(kw['downloads'],kw['output'],kw['mean_albedo'],contrast=kw['contrast'])));return
     result=dict(fetch=fetch,prepare=prepare)[command](**kw) if command!='prepare-set' else prepare_set(**kw)
     print(json.dumps({k:v for k,v in result.items() if k not in ['channels','inputs']}))
 

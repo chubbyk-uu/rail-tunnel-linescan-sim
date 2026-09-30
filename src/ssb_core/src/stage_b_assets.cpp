@@ -103,10 +103,29 @@ StageBAssets::StageBAssets(const Config& c) {
         Need(a>0&&b>0&&d>0&&std::max({a,b,d})<=vertices.size()-base,"invalid OBJ indices");
         triangles.push_back({base+a-1,base+b-1,base+d-1});face_material.push_back(material);
       }
-      Need(vertices.size()<=300000&&triangles.size()<=150000,"optical geometry exceeds budget");
+      Need(vertices.size()<=1200000&&triangles.size()<=600000,"optical geometry exceeds budget");
     }
   }
   Need(!triangles.empty() && max_radius<c.tunnel_radius_m+.1,"empty/invalid optical geometry");
+  const bool has_filler_faces=std::find(face_material.begin(),face_material.end(),2u)!=face_material.end();
+  Need(std::all_of(face_material.begin(),face_material.end(),[](unsigned m){return m<=3;}),"unknown optical material");
+  if(scene.contains("joint_concrete")) {
+    auto j=scene.at("joint_concrete");groove_albedo=j.at("albedo");groove_detail_contrast=j.at("detail_contrast");
+    gap_albedo=j.value("gap_albedo",.02);
+    Need(groove_albedo>0&&groove_albedo<1&&groove_detail_contrast>=0&&groove_detail_contrast<=1&&gap_albedo>=0&&gap_albedo<1,"joint concrete parameters");
+  }
+  if(scene.contains("filler")) {
+    auto meta_path=verified(scene.at("filler"));auto meta=ReadJson(meta_path);filler_hash=Sha256File(meta_path);
+    Need(meta.at("schema")=="ssb.joint_filler.v1","filler schema");
+    filler_width=meta.at("width");filler_height=meta.at("height");filler_pitch=meta.at("pitch_m");filler_scale=meta.at("scale");
+    filler_mean=meta.at("mean_albedo");filler_roughness=meta.value("roughness",.9);
+    Need(filler_width>1&&filler_height>1&&filler_width<=16384&&filler_height<=16384&&filler_pitch>0&&filler_scale>0&&
+         filler_mean>0&&filler_mean<1,"filler dimensions");
+    auto bin=Resolve(meta_path.parent_path(),meta.at("file"));
+    Need(std::filesystem::file_size(bin)==size_t(filler_width)*filler_height*2 && Sha256File(bin)==meta.at("sha256"),"filler payload identity");
+    filler.resize(size_t(filler_width)*filler_height);std::ifstream(bin,std::ios::binary).read(reinterpret_cast<char*>(filler.data()),filler.size()*2);
+  }
+  Need(!has_filler_faces || !filler.empty(),"filler faces require a scene filler texture");
   if(integrated_cracks) {
     // OBJ quads duplicate vertices. Match geometric edges, including periodic
     // boundaries; internal diagonals and <=1 degree wall facets are smooth.

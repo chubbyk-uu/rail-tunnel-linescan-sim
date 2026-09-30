@@ -53,6 +53,13 @@ def optical_assets(session):
         for tile in surface['tiles']:
             if sha256_file(surface_path.parent/tile['file'])!=tile['sha256']: errors.append(tile['file'])
             files+=1
+    if scene.get('filler'):
+        fp=scene_path.parent/scene['filler']['file']
+        if sha256_file(fp)!=scene['filler']['sha256']:errors.append('filler identity')
+        else:
+            meta=read_json(fp)
+            if sha256_file(fp.parent/meta['file'])!=meta['sha256']:errors.append(meta['file'])
+            files+=2
     defect_path=scene_path.parent/scene['defects']['file']
     for entry in archive['defects']['files'].values():
         if sha256_file(defect_path.parent/entry['file'])!=entry['sha256']: errors.append(entry['file'])

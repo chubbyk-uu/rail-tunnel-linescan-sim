@@ -344,6 +344,12 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
     s.params.crack_indices=s.Alloc<unsigned>(std::max<size_t>(1,a.indices.size()),a.indices.empty()?nullptr:a.indices.data());
     s.params.crack_x0=a.crack_x0;s.params.crack_q0=a.crack_q0;s.params.crack_cell=a.crack_cell;
     s.params.crack_nx=a.crack_nx;s.params.crack_nq=a.crack_nq;
+    s.params.groove_albedo=a.groove_albedo;s.params.groove_detail_contrast=a.groove_detail_contrast;s.params.gap_albedo=a.gap_albedo;
+    if(!a.filler.empty()) {
+      s.params.filler=s.Alloc<unsigned short>(a.filler.size(),a.filler.data());
+      s.params.filler_width=a.filler_width;s.params.filler_height=a.filler_height;s.params.filler_pitch=a.filler_pitch;
+      s.params.filler_scale=a.filler_scale;s.params.filler_mean=a.filler_mean;s.params.filler_roughness=a.filler_roughness;
+    }
     s.params.area_samples=a.area_samples;s.params.time_samples=a.time_samples;s.params.light_samples=a.light_samples;
     s.params.pixel_step=config.pixel_pitch_m/config.FocalLength();s.params.response_gain=a.response_gain;
     s.params.light_enabled=a.light_enabled;s.params.shadows=a.shadows;s.params.lamp_length=a.lamp_length;
@@ -455,7 +461,8 @@ nlohmann::json OptixRenderer::Describe() const {
           {"convex_panel_visibility",bool(s.params.convex_panel_visibility)},
           {"adaptive_area",bool(s.params.adaptive_area)},
           {"integrated_cracks",bool(s.params.integrated_cracks)},
-          {"texture_footprint_samples",s.params.texture_footprint_samples},{"texture_prefilter",bool(s.params.texture_prefilter)},
+          {"texture_footprint_samples",s.params.texture_footprint_samples},
+          {"joint_filler_texture",bool(s.params.filler)},{"texture_prefilter",bool(s.params.texture_prefilter)},
           {"optix_abi_version", OPTIX_VERSION},
           {"device", s.device.name},
           {"compute_capability", std::to_string(s.device.major) + "." + std::to_string(s.device.minor)},
