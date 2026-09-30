@@ -55,6 +55,7 @@ def prepare(config_path,geometry,surface,defects,output,area_samples=16,time_sam
     if spec_path:
         spec=load_spec(spec_path)
         robot=spec['robot']
+        scene['indirect_fill_relative']=spec.get('preview',{}).get('indirect_fill_relative',0.)
         scene['lamp'].update(length_m=robot['lamp_length_m'],width_m=robot['lamp_width_m'],
                              offset_axial_m=robot['lamp_offset_axial_m'],footprint_m=robot['lamp_wall_footprint_m'],
                              offset_tangential_m=robot['lamp_offset_tangential_m'],

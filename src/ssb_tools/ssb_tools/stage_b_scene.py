@@ -598,6 +598,8 @@ def make_world(out, config, spec, previews=None):
     world.append(make_track(out,config,spec))
     from .stage_b_robot import make_robot
     world.append(make_robot(out,config,spec))
+    from .stage_b_lighting import apply_work_light_environment
+    apply_work_light_environment(world,spec)
     ET.indent(root)
     ET.ElementTree(root).write(out/'world.sdf', encoding='unicode', xml_declaration=True)
 

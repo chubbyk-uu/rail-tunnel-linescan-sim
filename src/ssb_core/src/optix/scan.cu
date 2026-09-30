@@ -287,7 +287,10 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
     float diffuse=ndl*(1.f-.12f*rough*rough);
     intensity+=diffuse*float(params.radius*params.radius)/(distance*distance);
   }
-  return albedo*beam*intensity/params.light_samples;
+  // Weak diffuse-reflection sensitivity term, not a computed multi-bounce solution.
+  // Cavity albedo already includes crack depth. Recessed joints get a conservative
+  // opening factor instead of lifting every shadow with a constant pixel value.
+  return albedo*(beam*intensity/params.light_samples+params.indirect_fill*(joint?.2f:1.f));
 }
 }
 // Local affine footprint in metric (x,q); curvature across a ~0.2 mm pixel

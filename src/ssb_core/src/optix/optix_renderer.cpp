@@ -361,7 +361,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
       s.params.filler_scale=a.filler_scale;s.params.filler_mean=a.filler_mean;s.params.filler_roughness=a.filler_roughness;
     }
     s.params.area_samples=a.area_samples;s.params.time_samples=a.time_samples;s.params.light_samples=a.light_samples;
-    s.params.pixel_step=config.pixel_pitch_m/config.FocalLength();s.params.response_gain=a.response_gain;
+    s.params.pixel_step=config.pixel_pitch_m/config.FocalLength();s.params.response_gain=a.response_gain;s.params.indirect_fill=a.indirect_fill;
     s.params.light_enabled=a.light_enabled;s.params.shadows=a.shadows;s.params.lamp_length=a.lamp_length;
     s.params.adaptive_area=a.adaptive_area;s.params.area_rooks=a.area_rooks;
     s.params.crack_area_samples=a.crack_area_samples;s.params.crack_area_rooks=a.crack_area_rooks;

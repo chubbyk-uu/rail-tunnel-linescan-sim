@@ -1,4 +1,4 @@
-"""Updated machine-photo assembly; six rigid links retain the ideal rail guide.
+"""Updated machine-photo assembly; optional front-drive wheel/rail contact.
 
 User photos (2026-09-29) supersede the patent head and post arrangement.
 80 mm square heatsink and 20 mm square COB are confirmed; remaining dimensions
@@ -299,8 +299,9 @@ def make_robot(out,config,spec):
     sub(lamp_frame,'pose',pose(lamp_x))
     for x in (lamp_x-.029,lamp_x+.029):
         tube(head,f'lamp_mount_{x}',(x,0,-.169),(x,0,-.106),.006,ORANGE)
-    from .stage_b_lighting import add_strip_projector
+    from .stage_b_lighting import add_strip_projector, add_work_lights
     add_strip_projector(head,folder,config,spec)
+    add_work_lights(base,spec)
     for visual in car.findall('link/visual'):
         # Uniform rough finishes, small low-poly primitives; no extra texture maps.
         material=visual.find('material')

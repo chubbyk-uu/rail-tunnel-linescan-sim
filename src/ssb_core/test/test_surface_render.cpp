@@ -432,3 +432,15 @@ TEST_F(SurfaceFixture, FootprintMatchesScanOverAllPeriodicTiles) {
     EXPECT_EQ(assets.Footprint(h,step,tan),brute) << "pose " << i;
   }
 }
+
+TEST_F(SurfaceFixture, WeakReflectedFillIsBoundedAndDoesNotMoveHits) {
+  scene["lamp"]["enabled"]=true;scene["indirect_fill_relative"]=0.;SaveScene();
+  std::vector<RowJob> jobs(8);
+  for(size_t i=0;i<jobs.size();++i){jobs[i].pose.x=8;jobs[i].pose.theta=.5/2.75+(double(i)-4)*.00002;}
+  OptixRenderer dark(c,DefaultPtxPath(),8);
+  std::vector<uint8_t> a,b;std::vector<double> ha,hb;dark.Render(jobs,a,ha);
+  scene["indirect_fill_relative"]=.002;SaveScene();OptixRenderer fill(c,DefaultPtxPath(),8);fill.Render(jobs,b,hb);
+  ASSERT_EQ(a.size(),b.size());EXPECT_EQ(ha,hb);
+  for(size_t i=0;i<a.size();++i){EXPECT_GE(b[i],a[i]);EXPECT_LE(int(b[i])-int(a[i]),1);}
+  scene["indirect_fill_relative"]=-.1;SaveScene();EXPECT_THROW(StageBAssets invalid(c),std::runtime_error);
+}

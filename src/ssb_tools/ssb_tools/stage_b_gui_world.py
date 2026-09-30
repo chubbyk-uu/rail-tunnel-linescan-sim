@@ -31,6 +31,8 @@ def prepare(world,config,spec,output,mode):
         old=w.find("model[@name='scan_car']")
         w.remove(old);w.append(make_robot(output,c,s))
     else: raise ValueError('unknown GUI update mode')
+    from .stage_b_lighting import apply_work_light_environment
+    apply_work_light_environment(w,s)
     ET.indent(tree);tree.write(output/'world.sdf',encoding='unicode',xml_declaration=True)
     report=dict(mode=mode,source_world=dict(file=str(world),sha256=digest(world)),
         config=dict(file='inputs/config.yaml',source_file=str(config),sha256=digest(config)),

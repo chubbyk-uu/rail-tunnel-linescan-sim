@@ -70,7 +70,8 @@ def test_preview_world_has_no_wall_collision_and_camera_at_axis(tmp_path,inputs)
     lens=head.find("visual[@name='lens_barrel']")
     lens_z=float(lens.find('pose').text.split()[2]);length=float(lens.find('geometry/cylinder/length').text)
     assert lens_z-length/2 < 0 < lens_z+length/2
-    assert not root.findall('.//light') # no fixed omnidirectional lights
+    assert not root.findall('world/light') # no fixed overhead lights
+    assert len(base.findall('light'))==4
     projector=head.find("projector[@name='cob_strip_preview']")
     assert projector is not None
     from PIL import Image
@@ -531,3 +532,21 @@ def test_contact_front_drive_rear_encoders_and_free_guides(tmp_path,inputs):
     assert len([j for j in car.findall('joint') if '_guide_' in j.get('name')])==4
     assert len(car.findall('link'))==10
     assert sum(float(m.text) for m in car.findall('link/inertial/mass'))==pytest.approx(120)
+
+
+def test_work_light_cones_miss_imaging_arc_and_cast_shadows(tmp_path,inputs):
+    config,spec=inputs
+    from ssb_tools.stage_b_robot import make_robot
+    car=make_robot(tmp_path,config,spec)
+    lamps=car.findall("link[@name='base']/light")
+    assert len(lamps)==4
+    lowest_image_z=config['tunnel']['axis_z_m']+config['tunnel']['radius_m']*math.cos(math.radians(120))
+    for lamp in lamps:
+        d=np.array(list(map(float,lamp.find('direction').text.split())))
+        a=float(lamp.find('spot/outer_angle').text)
+        top_direction=d[2]*math.cos(a)+np.linalg.norm(d[:2])*math.sin(a)
+        # Even the top rim of each cone goes downward. At nominal attitude the
+        # complete beam lies below 0.45 m; imaged wall starts at 0.64 m.
+        assert top_direction<-.3
+        assert float(lamp.find('pose').text.split()[2])+.3 < lowest_image_z-.15
+        assert lamp.find('cast_shadows').text=='true'

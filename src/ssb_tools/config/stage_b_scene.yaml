@@ -54,7 +54,9 @@ robot:
   lamp_offset_tangential_m: 0.0
   lamp_offset_radial_m: 0.0   # effective optical exit plane, parallel to camera
 preview:
-  ambient_rgb: [1.0, 1.0, 1.0] # readable GUI surroundings; independent of OptiX photometry
+  ambient_rgb: [0.6, 0.6, 0.6] # readable GUI surroundings; independent of OptiX photometry
+  work_lights_enabled: true    # four downward shielded chassis spots with shadows
+  indirect_fill_relative: 0.002 # effective weak reflected irradiance / nominal strip; uncalibrated
   strip_light_enabled: true    # attached Ogre2 projector; OptiX remains the imager
 materials:
   sources: [plastered_wall_04, Concrete030, plastered_wall_03]

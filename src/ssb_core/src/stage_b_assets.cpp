@@ -103,6 +103,8 @@ StageBAssets::StageBAssets(const Config& c) {
   light_samples=scene.at("lamp").at("samples");
   Need(area_samples>=1&&area_samples<=16 && time_samples>=1&&time_samples<=16 && light_samples>=1&&light_samples<=9,"sample limits");
   Need(!integrated_cracks || time_samples==3,"integrated cracks require three exposure frames");
+  indirect_fill=scene.value("indirect_fill_relative",0.);
+  Need(std::isfinite(indirect_fill)&&indirect_fill>=0&&indirect_fill<=.01,"weak indirect fill must be in [0,0.01]");
   auto lamp=scene.at("lamp");light_enabled=lamp.at("enabled");shadows=lamp.at("shadows");
   response_gain=scene.at("response_gain");lamp_length=lamp.at("length_m");footprint_x=lamp.at("footprint_m")[0];
   footprint_q=lamp.at("footprint_m")[1];lamp_tangential=lamp.at("offset_tangential_m");lamp_radial=lamp.at("offset_radial_m");

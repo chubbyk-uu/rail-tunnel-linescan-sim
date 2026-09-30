@@ -29,7 +29,7 @@ struct LaunchParams {
   unsigned debug_count;
   double* debug_hits;            // [row][slot][x, q]
   unsigned stage_b, row_stride, area_samples, time_samples, light_samples;
-  float pixel_step, response_gain;
+  float pixel_step, response_gain, indirect_fill;
   const ssb::SurfaceTexel* const* tiles;
   unsigned tile_core, tile_gutter, tile_side, tiles_x, tiles_q, pixels_x, pixels_q;
   double tex_x0, tex_q0, tex_dx, tex_dq, tex_period;
