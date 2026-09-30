@@ -347,9 +347,44 @@ OptiX `indirect_fill_relative=0.002` 是未标定的弱反射敏感性参数，�
 首轮GUI3 m烟测完成284445行、成像RTF约0.977；最终参数与独占GPU测速待联合验收。
 
 复用已验收资产生成演示：
-`python3 tools/prepare_contact_demo.py --output local_data/stage_b/gui_contact_lit_v2`
+`python3 tools/prepare_contact_demo.py --output local_data/stage_b/gui_contact_lit_v4`
 该工具快照场景规范、保留Concrete034/裂缝/板缝资产，只派生接触模型、照明与3米剖面。
 
 照明遮挡复查：发光点移到电子舱盖边缘外侧，并留出玻璃前方8 mm净空；
 增加四个细支臂。阴影开启时确认轨道/轨枕实际受光，避免舱盖把光束全部挡住。
 透明灯玻璃不投影，遮光罩及车体仍投影；新增几何净空测试通过。
+
+
+### 本轮最终联合验收与默认入口
+
+默认 `tools/run_gz_gui.sh` 已切换到 `gui_contact_lit_v4/capture.yaml` 与
+`gui_contact_lit_v4/world/world.sdf`。Play后先静置2 s，再按0.2 m/s巡航、
+缓起停行驶3 m；仍可显式传入旧理想配置/世界。未改变光学纹理、裂缝或板缝资产。
+
+最终会话 `sessions/contact_gui_final_v4`，重放 `contact_gui_final4_replay`：
+
+- 真实行程2.9999995 m，扫描依据后轮平均量化里程2.9999697 m。
+- 284445行；有效区3.1–5.7 m内256025行，无缺行；本段门内取消触发为0。
+- 22项采集检查、11项接触检查全部通过；333行批次重放81个文件逐字节一致。
+- 4096像素、28.444 kHz名义触发、复杂裂缝64条采样、曝光积分和完整写盘均开启。
+- GUI与采集同时运行，成像进度RTF **0.99395**，动力学RTF **0.99943**；
+  动力学结束后0.0939 s写完。统计从首个位姿开始，不含资产加载/GPU初始化。
+- nvidia-smi每2 s采样的整卡占用峰值6596 MiB，含GUI与桌面，不是分配器精确峰值。
+  原有2 GiB纹理缓存、原生源预算、有限渲染/写入队列继续生效。
+- 最终伺服版本 `contact_final_20m_dynamics` 20 m检查通过：行程19.9999995 m，
+  最大滑移速度约7.76e-5 m/s，扫描跟踪误差≤0.01049 rad。
+  标定轮径±1%对照 `contact_final_cal_plus/minus_dynamics` 的实测螺距
+  分别0.593980/0.605980 m；四轮真实直径均为0.2 m。
+
+弱补光对照 `contact_gui_final_v2` / `contact_gui_no_fill` 共1165086720像素：
+每像素增加0或1级Mono8，平均增加0.33246级；255值比例从约1.00e-7至1.09e-7。
+GT定位的长裂缝ROI有1589个核心像素，对比度约52.7%，变化−0.00320个百分点。
+最终v4的全部raw索引/块hash与v2相同，因此该比较覆盖最终图像；报告位于
+`contact_gui_final_v2/evaluation/reports/reflected_fill.json`。
+它仅验证假设弱杂散光下的敏感性，仍不是实测照度或真实多次反射/机器人挡光验证。
+
+最终GUI预览：
+`local_data/stage_b/gui_contact_lit_v4/screenshots/2026-09-30T22:56:12.269491944.png`。
+轨道、轨枕、轮子和灯具的可见阴影已人工检查；验证结束后关闭测试GUI/服务端。
+本轮完成直轨接触、双编码器、实际位姿采集、车载照明与短程联合验收；
+20 m为动力学稳定性测试，尚未完成20 m完整成像拼接，曲线轨道也未实现。
