@@ -343,3 +343,27 @@ def test_lip_profile_is_tangent_and_meets_filler_on_the_fillet():
     for depth in np.linspace(c,c+t,7):                             # filler edge lies on the inner fillet
         x=lip_half_width(g,c,rho,depth)
         assert np.isclose(np.hypot(x-(g+rho),depth-(c+t)),rho,atol=1e-12) or np.isclose(x,g)
+
+
+def test_crack_refinement_keeps_topology_and_width_range(inputs):
+    from ssb_tools.stage_b_defects import refine_path
+    config,spec=inputs;cr=spec['cracks']
+    rng=np.random.default_rng(3)
+    # A 4.8 mm pixel staircase like the source skeleton, 0.3 m long, shared start (branch point).
+    xs=np.arange(0,.3,.0048);ys=.0048*np.round(np.cumsum(rng.normal(0,.6,len(xs))))
+    path=np.column_stack([xs,ys]);arc=np.r_[0,np.cumsum(np.hypot(*np.diff(path,axis=0).T))]
+    radius=.0002*np.minimum(1,(arc[-1]-arc)/.005)          # free tip at the end
+    q,r=refine_path(path,radius,(True,False),np.random.default_rng(5),spec,cr)
+    np.testing.assert_allclose(q[0],path[0],atol=1e-12);np.testing.assert_allclose(q[-1],path[-1],atol=1e-12)
+    seg=np.hypot(*np.diff(q,axis=0).T);assert seg.max()<.001        # wiggle lengthens, never jumps
+    chord=np.hypot(*(path[-1]-path[0]));assert seg.sum()<1.3*chord    # tortuosity stays moderate
+    lo,hi=cr['width_min_mm']*.0005,cr['width_max_mm']*.0005
+    body=r[:len(r)//2];assert body.min()>=lo-1e-12 and body.max()<=hi+1e-12 and np.ptp(body)>.1*body.mean()
+    assert r[-1]<1e-9                                        # free tip still tapers to zero
+    # A straight crack drawn as a one-pixel staircase: refined path stays near the line, with
+    # moderate tortuosity (synthetic wiggle, not the source staircase or a random walk).
+    xs=np.arange(0,.3,.0048);stair=np.column_stack([xs,.0048*np.floor(xs/.05)])
+    q2,_=refine_path(stair,np.full(len(xs),.0002),(False,False),np.random.default_rng(6),spec,cr)
+    line=np.polyfit(stair[:,0],stair[:,1],1);dev=q2[:,1]-np.polyval(line,q2[:,0])
+    src=np.abs(stair[:,1]-np.polyval(line,stair[:,0])).max()   # the staircase's own quantisation
+    assert np.abs(dev).max()<src+.0015 and np.hypot(*np.diff(q2,axis=0).T).sum()<1.15*np.hypot(*(stair[-1]-stair[0]))

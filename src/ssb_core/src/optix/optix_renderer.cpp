@@ -344,6 +344,8 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
     s.params.crack_indices=s.Alloc<unsigned>(std::max<size_t>(1,a.indices.size()),a.indices.empty()?nullptr:a.indices.data());
     s.params.crack_x0=a.crack_x0;s.params.crack_q0=a.crack_q0;s.params.crack_cell=a.crack_cell;
     s.params.crack_nx=a.crack_nx;s.params.crack_nq=a.crack_nq;
+    s.params.crack_interior=a.crack_interior;s.params.crack_interior_variation=a.crack_interior_variation;
+    s.params.crack_edge_band=a.crack_edge_band;s.params.crack_edge_darkening=a.crack_edge_darkening;
     s.params.groove_albedo=a.groove_albedo;s.params.groove_detail_contrast=a.groove_detail_contrast;s.params.gap_albedo=a.gap_albedo;
     if(!a.filler.empty()) {
       s.params.filler=s.Alloc<unsigned short>(a.filler.size(),a.filler.data());

@@ -23,6 +23,10 @@ def prepare(config_path,geometry,surface,defects,output,area_samples=8,time_samp
                # Groove walls/floor (material 1): dusty, shadowed concrete; detail from the filler
                # map at an offset so it is not continuous with the lining texture (assumption).
                joint_concrete=dict(albedo=.12,detail_contrast=.3),
+               # Crack opening: interior reflectance as a fraction of the wall albedo (narrow, deep
+               # gap under near-coaxial light), debris-like variation, slightly darker edge band
+               # (worn/dirty lips). Appearance assumptions, not measurements.
+               crack_optics=dict(interior_ratio=.2,interior_variation=.35,edge_band_m=.00025,edge_darkening=.15),
                sampling=dict(area_axis_samples=area_samples,time_samples=time_samples,
                              adaptive_area=adaptive,integrated_cracks=integrated,
                              # Accepted B1 setting: 2x2 texture taps over the pixel footprint on the

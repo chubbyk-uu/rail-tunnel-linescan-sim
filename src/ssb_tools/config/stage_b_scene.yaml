@@ -77,6 +77,14 @@ cracks:
   branch_probability_in_slender: 0.08  # provisional small subset inside BOTH slender classes
   required_long_crack_length_m: 10.0
   # Length/density/depth selected after candidate review, not inferred from source PNG.
+  # Path/width refinement (B2, synthetic detail): the source skeleton has ~4.8 mm pixels, so
+  # shape below smooth_m is replaced by self-affine wiggle; widths vary along the crack.
+  refine:
+    resample_m: 0.0005
+    smooth_m: 0.005                 # Gaussian sigma removing the source pixel staircase
+    wiggle: {min_wavelength_m: 0.0005, max_wavelength_m: 0.02, amplitude_m: 0.0005, reference_wavelength_m: 0.01, hurst: 0.75}
+    junction_taper_m: 0.01          # wiggle fades to zero at shared (branch) endpoints
+    width_log_sigma: [0.18, 0.08]   # slow (5-20 mm) and fine (1-2 mm) width variation
 resources:
   # Hard limits for preparation stages which implement the relevant allocation.
   asset_working_set_bytes: 536870912

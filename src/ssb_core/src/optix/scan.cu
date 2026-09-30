@@ -112,19 +112,26 @@ __device__ bool Surface(double x,double q,float4* result,unsigned* guard=nullptr
                    tile[(top+1)*params.tile_side+left].reserved | tile[(top+1)*params.tile_side+left+1].reserved;
   return true;
 }
-__device__ bool Crack(double x,double q) {
+// Edge band half width beside a crack of local radius r: fades out as the crack tapers.
+__device__ float EdgeBand(float r) {return params.crack_edge_band*fminf(1.f,r/1e-4f);}
+// Point classification: 2 inside the crack opening, 1 in its edge band, 0 outside.
+__device__ int CrackPoint(double x,double q) {
   q=WrapQ(q);
   int ix=int(floor((x-params.crack_x0)/params.crack_cell)),iq=int(floor((q-params.crack_q0)/params.crack_cell));
-  if(ix<0||iq<0||ix>=int(params.crack_nx)||iq>=int(params.crack_nq)) return false;
-  unsigned cell=iq*params.crack_nx+ix;
-  for(unsigned k=params.crack_offsets[cell];k<params.crack_offsets[cell+1];++k) {
-    auto s=params.cracks[params.crack_indices[k]];
-    double dx=s.x1-s.x0,dq=s.q1-s.q0,px=x-s.x0,pq=q-s.q0;
-    double t=fmin(1.,fmax(0.,(px*dx+pq*dq)/(dx*dx+dq*dq)));
-    double radius=s.r0+(s.r1-s.r0)*t;
-    if((px-t*dx)*(px-t*dx)+(pq-t*dq)*(pq-t*dq)<=radius*radius) return true;
+  if(ix<0||iq<0||ix>=int(params.crack_nx)||iq>=int(params.crack_nq)) return 0;
+  int best=0;
+  for(int jq=max(0,iq-1);jq<=min(int(params.crack_nq)-1,iq+1);++jq)for(int jx=max(0,ix-1);jx<=min(int(params.crack_nx)-1,ix+1);++jx) {
+    unsigned cell=jq*params.crack_nx+jx;
+    for(unsigned k=params.crack_offsets[cell];k<params.crack_offsets[cell+1];++k) {
+      auto s=params.cracks[params.crack_indices[k]];
+      float dx=s.x1-s.x0,dq=s.q1-s.q0,px=float(x-s.x0),pq=float(q-s.q0);
+      float t=fminf(1.f,fmaxf(0.f,(px*dx+pq*dq)/(dx*dx+dq*dq)));
+      float radius=s.r0+(s.r1-s.r0)*t,d2=(px-t*dx)*(px-t*dx)+(pq-t*dq)*(pq-t*dq);
+      if(d2<=radius*radius) return 2;
+      float e=radius+EdgeBand(radius);if(d2<=e*e) best=1;
+    }
   }
-  return false;
+  return best;
 }
 __device__ float TriangleMargin(float3 point,unsigned primitive) {
   uint3 tri=params.triangles[primitive];float3 a=params.vertices[tri.x],b=params.vertices[tri.y],c=params.vertices[tri.z];
@@ -194,7 +201,7 @@ __device__ float Filler(double x,double q) {return params.filler_mean*Detail(x,q
 __device__ float GrooveConcrete(double x,double q) {
   return params.groove_albedo*(1.f+params.groove_detail_contrast*(Detail(x+.371,q+.529)-1.f));
 }
-__device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned primitive,double x,double q,float4 tex,float coverage=-1.f,unsigned visibility=~0u) {
+__device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned primitive,double x,double q,float4 tex,float2 crack=make_float2(-1.f,0.f),unsigned visibility=~0u) {
   uint3 tri=params.triangles[primitive];
   float3 normal=Unit(Cross(Sub(params.vertices[tri.y],params.vertices[tri.x]),Sub(params.vertices[tri.z],params.vertices[tri.x])));
   if(Dot(normal,view)>0) normal=Mul(normal,-1.f); // double-sided optical lining, inward visible normal
@@ -203,7 +210,17 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
   const unsigned material=params.face_material[primitive];
   bool joint=material!=0;
   float albedo=material==0 ? tex.x : material==1 ? GrooveConcrete(x,q) : material==2 ? Filler(x,q) : params.gap_albedo;
-  if(!joint) {if(coverage>=0)albedo=tex.x+coverage*(.035f-tex.x);else if(Crack(x,q))albedo=.035f;}
+  if(!joint) {
+    // Crack opening: dark but not black (interior ratio of the wall albedo with debris-like
+    // variation); edge band slightly darker. Coverage from the footprint integral, or a point test.
+    float core=crack.x,edge=crack.y;
+    if(core<0) {int c=CrackPoint(x,q);core=c==2;edge=c==1;}
+    if(core>0||edge>0) {
+      float interior=params.crack_interior<0 ? .035f :   // legacy scenes: flat dark opening
+        params.crack_interior*tex.x*(1.f+params.crack_interior_variation*(Detail(x*1.7+.131,q*1.7+.293)-1.f));
+      albedo=tex.x*(1.f-params.crack_edge_darkening*edge)-core*(tex.x-interior);
+    }
+  }
   if(!params.light_enabled) return albedo;
   if(!joint) {
     float3 tangent=Unit(Sub(make_float3(1,0,0),Mul(normal,normal.x)));
@@ -285,53 +302,44 @@ __device__ bool SlotVisibility(const DeviceRow& first,const DeviceRow& last,floa
   }
   *visibility=mask;return true;
 }
-__device__ __noinline__ float CrackFallback(double x,double q,double2 a,double2 b,double2 motion) {
-  unsigned covered=0;
-  #pragma unroll 1
-  for(unsigned t=0;t<8;++t) {
-  #pragma unroll 1
-  for(unsigned v=0;v<16;++v) {
-  #pragma unroll 1
-  for(unsigned u=0;u<16;++u) {
-    double sx=(u+.5)/16-.5,sy=(v+.5)/16-.5,st=(t+.5)/8-.5;
-    covered+=Crack(x+a.x*sx+b.x*sy+motion.x*st,q+a.y*sx+b.y*sy+motion.y*st);
-  }
-  }}
-  return covered/2048.f;
-}
-__device__ float IntegratedCrack(double x,double q,double2 a,double2 b,double2 motion) {
+// Crack coverage over the pixel's space/time footprint. Every nearby segment is treated as a
+// band (exact box/linear-motion integral of its two half-planes, tapered radius) over the part
+// of the footprint within its extent; the union is approximated by the maximum. Consecutive
+// segments of one polyline need no special case, so bends do not fall back to sampling.
+// Returns (opening coverage, edge-band coverage).
+__device__ float2 IntegratedCrack(double x,double q,double2 a,double2 b,double2 motion) {
   q=WrapQ(q);
-  double hx=.5*(fabs(a.x)+fabs(b.x)+fabs(motion.x));
-  double hq=.5*(fabs(a.y)+fabs(b.y)+fabs(motion.y));
+  const float band=params.crack_edge_band;
+  double hx=.5*(fabs(a.x)+fabs(b.x)+fabs(motion.x))+band;
+  double hq=.5*(fabs(a.y)+fabs(b.y)+fabs(motion.y))+band;
   int lo_x=max(0,int(floor((x-hx-params.crack_x0)/params.crack_cell)));
   int hi_x=min(int(params.crack_nx)-1,int(floor((x+hx-params.crack_x0)/params.crack_cell)));
   int lo_q=max(0,int(floor((q-hq-params.crack_q0)/params.crack_cell)));
   int hi_q=min(int(params.crack_nq)-1,int(floor((q+hq-params.crack_q0)/params.crack_cell)));
-  int selected=-1;double fraction=0;
+  float core=0,outer=0;
+  const float ax=a.x,ay=a.y,bx=b.x,by=b.y,mx=motion.x,my=motion.y;
   for(int iq=lo_q;iq<=hi_q;++iq)for(int ix=lo_x;ix<=hi_x;++ix) {
     unsigned cell=iq*params.crack_nx+ix;
     for(unsigned k=params.crack_offsets[cell];k<params.crack_offsets[cell+1];++k) {
-      unsigned id=params.crack_indices[k];if(int(id)==selected)continue;
-      auto s=params.cracks[id];double dx=double(s.x1)-s.x0,dq=double(s.q1)-s.q0;
-      double length=sqrt(dx*dx+dq*dq),lx=dx/length,lq=dq/length;
-      double along=(x-s.x0)*lx+(q-s.q0)*lq,perp=-(x-s.x0)*lq+(q-s.q0)*lx;
-      double pa=-a.x*lq+a.y*lx,pb=-b.x*lq+b.y*lx,pt=-motion.x*lq+motion.y*lx;
-      double aa=a.x*lx+a.y*lq,ab=b.x*lx+b.y*lq,at=motion.x*lx+motion.y*lq;
-      double along_half=.5*(fabs(aa)+fabs(ab)+fabs(at));
-      double radius=fmax(s.r0,s.r1);
-      if(fabs(perp)>radius+.5*(fabs(pa)+fabs(pb)+fabs(pt)) || along+along_half<-radius || along-along_half>length+radius)continue;
-      // Endpoint disks, bends and intersecting branches use sparse local sampling.
-      if(along-along_half<0 || along+along_half>length)return CrackFallback(x,q,a,b,motion);
-      double slope=(double(s.r1)-s.r0)/length,r=s.r0+slope*along;
-      double hit=ssb::BoxHalfPlane(pa-slope*aa,pb-slope*ab,pt-slope*at,perp-r)-
-                 ssb::BoxHalfPlane(pa+slope*aa,pb+slope*ab,pt+slope*at,perp+r);
-      if(hit<=0)continue;
-      if(hit>=1-1e-8)return 1;
-      if(selected>=0)return CrackFallback(x,q,a,b,motion);
-      selected=int(id);fraction=hit;
+      auto s=params.cracks[params.crack_indices[k]];
+      float dx=s.x1-s.x0,dq=s.q1-s.q0,length=sqrtf(dx*dx+dq*dq);if(length<=0)continue;
+      float lx=dx/length,lq=dq/length,px=float(x-s.x0),pq=float(q-s.q0);
+      float along=px*lx+pq*lq,perp=-px*lq+pq*lx;
+      float pa=-ax*lq+ay*lx,pb=-bx*lq+by*lx,pt=-mx*lq+my*lx;
+      float aa=ax*lx+ay*lq,ab=bx*lx+by*lq,at=mx*lx+my*lq;
+      float along_half=.5f*(fabsf(aa)+fabsf(ab)+fabsf(at)),perp_half=.5f*(fabsf(pa)+fabsf(pb)+fabsf(pt));
+      float rmax=fmaxf(s.r0,s.r1);
+      if(fabsf(perp)>rmax+EdgeBand(rmax)+perp_half || along+along_half<0 || along-along_half>length)continue;
+      float slope=(s.r1-s.r0)/length,r=s.r0+slope*fminf(length,fmaxf(0.f,along));
+      float c=ssb::BoxHalfPlaneT<float>(pa-slope*aa,pb-slope*ab,pt-slope*at,perp-r)-
+              ssb::BoxHalfPlaneT<float>(pa+slope*aa,pb+slope*ab,pt+slope*at,perp+r);
+      float e=r+EdgeBand(r);
+      float o=ssb::BoxHalfPlaneT<float>(pa,pb,pt,perp-e)-ssb::BoxHalfPlaneT<float>(pa,pb,pt,perp+e);
+      core=fmaxf(core,c);outer=fmaxf(outer,o);
     }
   }
-  return float(fmin(1.,fmax(0.,fraction)));
+  core=fminf(1.f,fmaxf(0.f,core));
+  return make_float2(core,fmaxf(0.f,fminf(1.f,outer)-core));
 }
 __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,double x,double q,
                                 float3 point,float3 direction,unsigned primitive) {
@@ -357,7 +365,7 @@ __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,do
        !SlotVisibility(params.rows[r*params.row_stride+1],params.rows[r*params.row_stride+3],point,
                        world_a,world_b,Mul(Sub(points[2],points[0]),1.5f),&visibility))return false;
   }
-  float coverage=params.face_material[primitive]?0:IntegratedCrack(x,q,a,b,motion);
+  float2 coverage=params.face_material[primitive]?make_float2(0.f,0.f):IntegratedCrack(x,q,a,b,motion);
   float sum=0;
   const unsigned n=params.texture_footprint_samples;
   #pragma unroll

@@ -50,5 +50,6 @@ struct LaunchParams {
   double filler_pitch, filler_scale;
   float filler_mean, filler_roughness;
   float groove_albedo, groove_detail_contrast, gap_albedo;
+  float crack_interior, crack_interior_variation, crack_edge_band, crack_edge_darkening;
   float lamp_length, footprint_x, footprint_q, lamp_tangential, lamp_radial, lamp_axial, lamp_width;
 };

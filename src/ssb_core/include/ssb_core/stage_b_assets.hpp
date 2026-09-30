@@ -37,6 +37,8 @@ struct StageBAssets {
   std::string filler_hash;
   // Groove walls/floor (material 1) and the dark gasket/void behind the contact gap (3).
   double groove_albedo=.12, groove_detail_contrast=.3, gap_albedo=.02;
+  // Crack appearance: legacy scenes (no crack_optics) keep the flat 0.035 opening, no edge band.
+  double crack_interior=-1, crack_interior_variation=0, crack_edge_band=0, crack_edge_darkening=0;
   std::vector<CrackSegment> segments;
   std::vector<unsigned> offsets, indices;
   double crack_x0=0, crack_q0=0, crack_cell=0;

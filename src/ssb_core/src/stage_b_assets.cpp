@@ -109,6 +109,12 @@ StageBAssets::StageBAssets(const Config& c) {
   Need(!triangles.empty() && max_radius<c.tunnel_radius_m+.1,"empty/invalid optical geometry");
   const bool has_filler_faces=std::find(face_material.begin(),face_material.end(),2u)!=face_material.end();
   Need(std::all_of(face_material.begin(),face_material.end(),[](unsigned m){return m<=3;}),"unknown optical material");
+  if(scene.contains("crack_optics")) {
+    auto k=scene.at("crack_optics");crack_interior=k.at("interior_ratio");crack_interior_variation=k.at("interior_variation");
+    crack_edge_band=k.at("edge_band_m");crack_edge_darkening=k.at("edge_darkening");
+    Need(crack_interior>=0&&crack_interior<1&&crack_interior_variation>=0&&crack_interior_variation<=1&&
+         crack_edge_band>=0&&crack_edge_band<.002&&crack_edge_darkening>=0&&crack_edge_darkening<1,"crack optics parameters");
+  }
   if(scene.contains("joint_concrete")) {
     auto j=scene.at("joint_concrete");groove_albedo=j.at("albedo");groove_detail_contrast=j.at("detail_contrast");
     gap_albedo=j.value("gap_albedo",.02);

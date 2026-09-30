@@ -168,6 +168,85 @@ def prepare(config_path,spec_path,long_path,short_path,output,count=60):
     return result
 
 
+def self_affine(rng, s, lam_min, lam_max, amplitude, lam_ref, hurst, per_octave=3):
+    """Smooth random profile over arc length s: log-spaced sinusoids, a(lam)=amplitude*(lam/lam_ref)^H."""
+    k = max(1, int(round(math.log2(lam_max/lam_min)*per_octave)))
+    lams = np.geomspace(lam_min, lam_max, k)
+    amps = amplitude*(lams/lam_ref)**hurst/math.sqrt(per_octave)
+    phases = rng.uniform(0, 2*math.pi, k)
+    return (amps[:,None]*np.sin(2*math.pi*s[None,:]/lams[:,None]+phases[:,None])).sum(axis=0)
+
+
+def refine_path(path, radius, shared, rng, spec, cracks):
+    """Resample, smooth the source staircase, add self-affine wiggle and width variation.
+    shared: (start, end) endpoint is shared with another path (keep fixed, wiggle fades)."""
+    from scipy.ndimage import gaussian_filter1d
+    f = cracks['refine']; path = np.asarray(path,float); radius = np.asarray(radius,float)
+    arc = np.r_[0,np.cumsum(np.linalg.norm(np.diff(path,axis=0),axis=1))]; L = arc[-1]
+    n = max(2, int(math.ceil(L/f['resample_m']))+1); s = np.linspace(0, L, n)
+    pts = np.column_stack([np.interp(s,arc,path[:,0]),np.interp(s,arc,path[:,1])])
+    ds = s[1]-s[0] if n > 1 else 1.
+    smooth = gaussian_filter1d(pts, f['smooth_m']/ds, axis=0, mode='nearest')
+    # Endpoints stay exactly where the source (and any connected path) has them.
+    fade = lambda d: np.clip(d/(3*f['smooth_m']),0,1)**2
+    for end, w in ((0, 1-fade(s)), (-1, 1-fade(L-s))):
+        smooth += w[:,None]*(pts[end]-smooth[end])
+    tangent = np.gradient(smooth, axis=0); tangent /= np.maximum(np.linalg.norm(tangent,axis=1,keepdims=True),1e-12)
+    normal = np.column_stack([-tangent[:,1], tangent[:,0]])
+    w = f['wiggle']
+    offset = self_affine(rng, s, w['min_wavelength_m'], w['max_wavelength_m'], w['amplitude_m'], w['reference_wavelength_m'], w['hurst'])
+    taper = np.ones(n)
+    if shared[0]: taper = np.minimum(taper, np.clip(s/f['junction_taper_m'],0,1))
+    if shared[1]: taper = np.minimum(taper, np.clip((L-s)/f['junction_taper_m'],0,1))
+    # Free ends also keep their source position (tips stay where the width tapers).
+    taper = np.minimum(taper, np.minimum(np.clip(s/f['junction_taper_m'],0,1), np.clip((L-s)/f['junction_taper_m'],0,1)))
+    refined = smooth+(offset*taper)[:,None]*normal
+    base = np.interp(s, arc, radius)
+    slow, fine = f['width_log_sigma']
+    unit = lambda z: z/max(float(z.std()),1e-12)
+    body = np.exp(slow*unit(self_affine(rng,s,.005,.02,1.,.01,0.))+fine*unit(self_affine(rng,s,.001,.002,1.,.0015,0.)))
+    lo, hi = cracks['width_min_mm']*.0005, cracks['width_max_mm']*.0005
+    # Body radius varies within the width range; the source tip taper (0 at free tips) scales it.
+    peak = max(float(base.max()), 1e-12)
+    r = np.clip(peak*body, lo, hi)*(base/peak)
+    return refined, r
+
+
+def refine(source, output, spec_path):
+    """New defect version: same instances and topology, refined paths/widths (synthetic detail)."""
+    source=Path(source).resolve();output=Path(output).resolve()
+    if output.exists(): raise ValueError('defect output already exists')
+    old=json.loads((source/'defects.json').read_text());spec=load_spec(spec_path);cracks=spec['cracks']
+    config=yaml.safe_load(Path(old['inputs']['config']['file']).read_text());rr=config['tunnel']['radius_m']
+    bounds=[config['tunnel']['x_min_m'],config['tunnel']['x_max_m'],-math.pi*rr,math.pi*rr]
+    items=[]
+    for index,item in enumerate(old['instances']):
+        rng=np.random.default_rng(np.random.SeedSequence([spec['seed'],41,index]))
+        degree={}
+        for p in item['paths_xq_m']:
+            for v in (p[0],p[-1]):key=tuple(np.round(v,9));degree[key]=degree.get(key,0)+1
+        paths,radii=[],[]
+        for p,r in zip(item['paths_xq_m'],item['vertex_radius_m']):
+            shared=(degree[tuple(np.round(p[0],9))]>1,degree[tuple(np.round(p[-1],9))]>1)
+            q,w=refine_path(p,r,shared,rng,spec,cracks);paths.append(q.tolist());radii.append(w.tolist())
+        spine=np.asarray(item['main_path_xq_m'])
+        same=[k for k,p in enumerate(item['paths_xq_m']) if len(p)==len(spine) and np.allclose(p,spine)]
+        main=np.asarray(paths[same[0]]) if same else refine_path(spine,np.full(len(spine),1e-4),(False,False),rng,spec,cracks)[0]
+        items.append(dict(item,paths_xq_m=paths,vertex_radius_m=radii,main_path_xq_m=main.tolist(),
+                          main_length_m=float(np.linalg.norm(np.diff(main,axis=0),axis=1).sum()),
+                          longitudinal_span_m=float(np.ptp(main[:,0])),refined=True))
+    packed,offsets,indices,grid=build_grid(items,bounds)
+    output.mkdir(parents=True)
+    for name,data in (('segments.bin',packed),('offsets.bin',offsets),('indices.bin',indices)): data.tofile(output/name)
+    result=dict(old,instances=items,grid=grid,files={name:dict(file=name,sha256=digest(output/name)) for name in ('segments.bin','offsets.bin','indices.bin')},
+                refined_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),spec_sha256=digest(spec_path),parameters=cracks['refine']),
+                assumption=old['assumption']+' Refined: source staircase below smooth_m replaced by synthetic self-affine wiggle; widths vary along the crack (synthetic).',
+                preparation_peak_rss_bytes=peak_rss_bytes())
+    (output/'defects.json').write_text(json.dumps(result)+'\n')
+    print(json.dumps(dict(grid=grid)))
+    return result
+
+
 def regrid(source,output,cell_m):
     """Same crack instances, new spatial index cell size (renderer lookup cost only)."""
     source=Path(source).resolve();output=Path(output).resolve()
@@ -191,11 +270,13 @@ def regrid(source,output,cell_m):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--regrid',type=Path,help='existing defect layout: rebuild only its crack index')
+    p.add_argument('--refine',type=Path,help='existing defect layout: refine paths/widths (needs --spec)')
     p.add_argument('--cell-m',type=float,default=.01)
     for arg in ('config','spec','long-catalog','short-catalog'): p.add_argument('--'+arg,type=Path)
     p.add_argument('--output',required=True,type=Path);p.add_argument('--count',type=int,default=60)
     a=p.parse_args()
-    if a.regrid: regrid(a.regrid,a.output,a.cell_m)
+    if a.refine: refine(a.refine,a.output,a.spec)
+    elif a.regrid: regrid(a.regrid,a.output,a.cell_m)
     else: prepare(a.config,a.spec,a.long_catalog,a.short_catalog,a.output,a.count)
 
 
