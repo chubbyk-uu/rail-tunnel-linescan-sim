@@ -61,7 +61,10 @@ def make_track(out,config,spec):
     for i in range(math.ceil((x1-x0)/spacing)):
         x=x0+(i+.5)*spacing
         if x+.12>x1:break
-        box(sleepers,f'sleeper_{i}',f'{x} 0 -.276 0 0 0','.24 2.1 .16','0.39 0.38 0.35 1')
+        # Dark weathered concrete; slight per-sleeper tint, no texture allocation.
+        shade=.20+.012*math.sin(i*2.39996323)
+        color=f'{shade*.98:.5f} {shade:.5f} {shade*.96:.5f} 1'
+        box(sleepers,f'sleeper_{i}',f'{x} 0 -.276 0 0 0','.24 2.1 .16',color)
         for sign in [-1,1]:
             y=sign*head_y;tag=f'{i}_{sign}'
             box(sleepers,'rubber_'+tag,f'{x} {y} -.192 0 0 0','.25 .20 .008','0.065 0.065 0.060 1')
