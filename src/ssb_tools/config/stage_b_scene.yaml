@@ -7,9 +7,10 @@ panels:
   angular_step_deg: 0.5       # chord sag <=0.027 mm at R=2.75 m
   # Joint profile (all assumptions unless noted): 45 deg inner-edge chamfer, caulking groove
   # (Tianjin DB/T 29-272: depth 25-55 mm, single-side width 5-10 mm), filler recess below the
-  # chamfer bottom. Outer visible opening = 2*(half width + chamfer) = 25 mm.
-  joint_chamfer_m: 0.005
-  joint_groove_half_width_m: 0.0075
+  # chamfer bottom. Outer visible opening = 2*(half width + chamfer) = 16 mm
+  # (user choice 2026-10-01: 3 mm chamfer, 10 mm groove at the standard's lower bound).
+  joint_chamfer_m: 0.003
+  joint_groove_half_width_m: 0.005
   joint_depth_m: 0.035            # surface to groove floor
   joint_contact_gap_m: 0.002      # segment contact gap in the groove floor (assumption)
   joint_gap_depth_m: 0.02         # visible gap depth before the dark gasket/void (assumption)
