@@ -534,21 +534,39 @@ def test_contact_front_drive_rear_encoders_and_free_guides(tmp_path,inputs):
     assert sum(float(m.text) for m in car.findall('link/inertial/mass'))==pytest.approx(120)
 
 
-def test_work_light_cones_miss_imaging_arc_and_cast_shadows(tmp_path,inputs):
+def test_work_light_cones_cover_rails_and_side_walls_and_cast_shadows(tmp_path,inputs):
     config,spec=inputs
     from ssb_tools.stage_b_robot import make_robot
     car=make_robot(tmp_path,config,spec)
     lamps=car.findall("link[@name='base']/light")
     assert len(lamps)==4
-    lowest_image_z=config['tunnel']['axis_z_m']+config['tunnel']['radius_m']*math.cos(math.radians(120))
     for lamp in lamps:
         d=np.array(list(map(float,lamp.find('direction').text.split())))
-        a=float(lamp.find('spot/outer_angle').text)
-        top_direction=d[2]*math.cos(a)+np.linalg.norm(d[:2])*math.sin(a)
-        # Even the top rim of each cone goes downward. At nominal attitude the
-        # complete beam lies below 0.45 m; imaged wall starts at 0.64 m.
-        assert top_direction<-.3
-        assert float(lamp.find('pose').text.split()[2])+.3 < lowest_image_z-.15
+        half_angle=float(lamp.find('spot/outer_angle').text)/2
+        origin_world=np.array(list(map(float,lamp.find('pose').text.split()[:3])))+np.array([0,0,.3])
+        sx=np.sign(origin_world[0]);sy=np.sign(origin_world[1])
+        assert sx*d[0]>0 and sy*d[1]>0 and -.35<d[2]<-.1
+        # Representative rail ahead/behind and side lining targets must be illuminated.
+        # This lining target is inside the 240-degree wall arc but ahead/behind
+        # the instantaneous camera stripe.
+        for target in [np.array([origin_world[0]+sx*3,sy*.754,0]),
+                       np.array([origin_world[0]+sx*3,sy*config['tunnel']['radius_m'],config['tunnel']['axis_z_m']])]:
+            ray=target-origin_world
+            assert np.linalg.norm(ray)<float(lamp.find('attenuation/range').text)
+            assert np.dot(ray/np.linalg.norm(ray),d)>math.cos(half_angle)
+        # The complete cone points forward for front lights / backward for rear
+        # lights. Its axial support starts beyond the current camera line FOV.
+        min_axial=abs(d[0])*math.cos(half_angle)-math.sqrt(1-d[0]**2)*math.sin(half_angle)
+        assert min_axial>.15
+        assert abs(origin_world[0])-config['camera']['fov_at_nominal_m']/2 > .08
+        # Sample both ends of the instantaneous camera stripe through the full
+        # 240-degree sweep; they must stay outside every work-light cone.
+        for theta in np.linspace(-2*math.pi/3,2*math.pi/3,25):
+            for x in [-config['camera']['fov_at_nominal_m']/2,config['camera']['fov_at_nominal_m']/2]:
+                target=np.array([x,config['tunnel']['radius_m']*math.sin(theta),
+                                 config['tunnel']['axis_z_m']+config['tunnel']['radius_m']*math.cos(theta)])
+                ray=target-origin_world
+                assert np.dot(ray/np.linalg.norm(ray),d)<math.cos(half_angle)
         assert lamp.find('cast_shadows').text=='true'
         base=car.find("link[@name='base']")
         origin=np.array(list(map(float,lamp.find('pose').text.split()[:3])))

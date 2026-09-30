@@ -44,7 +44,7 @@ def add_strip_projector(head, folder, config, spec):
 
 
 def add_work_lights(base, spec):
-    """Four shielded chassis spots; direct cones stay below the imaging arc.
+    """Four wide chassis spots directed diagonally outward and slightly down.
 
     Intensities are Ogre preview settings, not measured photometric quantities.
     Base link origin is 0.3 m above rail top. No collision / texture allocation.
@@ -52,10 +52,18 @@ def add_work_lights(base, spec):
     if not spec.get('preview', {}).get('work_lights_enabled', False):
         return
     from .stage_b_scene import box
+    settings=spec['preview']
+    down=math.radians(settings.get('work_light_down_deg',15.))
+    sideways=math.radians(settings.get('work_light_side_deg',15.))
+    inner=math.radians(settings.get('work_light_inner_deg',80.))
+    outer=math.radians(settings.get('work_light_outer_deg',100.))
+    reach=settings.get('work_light_range_m',8.)
+    if not (0<down<math.pi/4 and 0<sideways<math.pi/2 and 0<inner<outer<math.pi and math.isfinite(reach) and reach>0):
+        raise ValueError('invalid work light pitch, full cone angles or range')
     for sx in (-1, 1):
         for sy in (-1, 1):
             name=f'work_{sx}_{sy}'
-            direction=np.array([sx*.40, sy*.35, -.847])
+            direction=np.array([sx*math.cos(down)*math.cos(sideways), sy*math.cos(down)*math.sin(sideways), -math.sin(down)])
             direction/=np.linalg.norm(direction)
             x,y,z=sx*.51,sy*.59,.15  # world rail-relative height 0.45 m
             # Put the emitter beyond the deck edge; otherwise the electronics lid
@@ -68,15 +76,21 @@ def add_work_lights(base, spec):
                                             ('glass',-.010,'.048 .034 .004','0.82 0.86 0.89 1')]:
                 p=np.array([x,y,z])+direction*depth
                 box(base,name+'_'+label,f'{p[0]} {p[1]} {p[2]} 0 {pitch} {yaw}',size,color)
-                if label=='glass':sub(base.find(f"visual[@name='{name}_glass']"),'cast_shadows','false')
+                if label=='glass':
+                    face=base.find(f"visual[@name='{name}_glass']")
+                    sub(face,'cast_shadows','false')
+                    # A rendering light illuminates receivers; the visible lens needs
+                    # its own emission to appear lit when viewed head-on.
+                    sub(face.find('material'),'emissive','1.0 .96 .90 1')
             light=sub(base,'light',name=name,type='spot')
             sub(light,'pose',f'{x} {y} {z} 0 0 0')
             sub(light,'direction',' '.join(map(str,direction)))
             sub(light,'diffuse','1.0 .96 .90 1');sub(light,'specular','.2 .2 .2 1')
             sub(light,'cast_shadows','true');sub(light,'intensity',2.0);sub(light,'visualize','false')
             attenuation=sub(light,'attenuation')
-            for k,v in [('range',4),('constant',1),('linear',.15),('quadratic',.15)]:sub(attenuation,k,v)
-            spot=sub(light,'spot');sub(spot,'inner_angle',.35);sub(spot,'outer_angle',.65);sub(spot,'falloff',1)
+            for k,v in [('range',reach),('constant',1),('linear',.10),('quadratic',.10)]:sub(attenuation,k,v)
+            # Ogre2/SDF use the FULL cone angle; coverage tests use half this value.
+            spot=sub(light,'spot');sub(spot,'inner_angle',inner);sub(spot,'outer_angle',outer);sub(spot,'falloff',1)
 
 
 def apply_work_light_environment(world, spec):
