@@ -147,6 +147,58 @@ def prepare(downloads, config_path, spec_path, output, brightness=.8, working_se
         (output/'FAILED').write_text(str(e)+'\n');raise
 
 
+def build_macro(item, sources_root, output, period, x0, x1, panels, seed):
+    """Low-frequency albedo modulation map over the whole wall (synthetic arrangement of a real
+    wall's large-scale variation, plus per-segment tone). Returns the recipe entry."""
+    downloads=Path(sources_root)/item['dir']/'downloads.json';source=json.loads(downloads.read_text())
+    entry=source['channels']['diffuse'];path=downloads.parent/entry['file']
+    if digest(path)!=entry['sha256']:raise ValueError('macro source hash mismatch')
+    raw=Path(output)/'decode_macro.raw';decoded=_decode(path,raw)
+    v=decoded.astype(np.float32)/np.iinfo(decoded.dtype).max;decoded._mmap.close();del decoded;raw.unlink()
+    lum=srgb_to_linear(v[:,:,:3])@np.array([.2126,.7152,.0722],np.float32);del v
+    nq=round(period/item['pitch_m']);pitch=period/nq;extent=source['source_width_m']
+    side=round(extent/pitch)
+    low=cv2.resize(lum,(side,side),interpolation=cv2.INTER_AREA)
+    # Keep variations longer than cutoff_m only; wrap: the source is seamless.
+    sigma=item['cutoff_m']/pitch/2
+    pad=side//2;low=cv2.GaussianBlur(np.pad(low,pad,mode='wrap'),(0,0),sigma)[pad:-pad,pad:-pad]
+    field=np.log(low/low.mean())*item.get('strength',1.)
+    nx=math.ceil((x1-x0)/pitch)+1
+    rng=np.random.default_rng(seed);B=side  # one block per source extent
+    acc=np.zeros((nq,nx),np.float64);w2=np.zeros((nq,nx),np.float64)
+    for bq in range(-1,nq//B+2):
+        for bx in range(-1,nx//B+2):
+            k=int(rng.integers(8));f=np.rot90(field,k//2);f=np.fliplr(f) if k%2 else f
+            oy,ox=map(int,rng.integers(0,B,size=2))
+            cy,cx=bq*B+B//2,bx*B+B//2   # block centre (macro pixels)
+            ys=np.arange(cy-B,cy+B);xs=np.arange(cx-B,cx+B)
+            wy=np.clip(1-np.abs(ys-cy)/B,0,None);wx=np.clip(1-np.abs(xs-cx)/B,0,None)
+            val=f[np.ix_((ys+oy)%B,(xs+ox)%B)]
+            yi=ys%nq;keep=(xs>=0)&(xs<nx)
+            w=np.outer(wy,wx[keep]);np.add.at(acc,(yi[:,None],xs[keep][None,:]),w*val[:,keep]);np.add.at(w2,(yi[:,None],xs[keep][None,:]),w*w)
+    field=acc/np.sqrt(np.maximum(w2,1e-12))   # variance-preserving blend of overlapping blocks
+    mod=np.exp(field-field.mean())
+    # Per-segment tone, same ring/segment partition as the panel geometry.
+    tone=item.get('segment_tone_sigma',0.)
+    if tone:
+        xs=x0+(np.arange(nx)+.5)*pitch;qs=-period/2+(np.arange(nq)+.5)*pitch
+        ring=np.floor(xs/panels['ring_width_m']).astype(int)
+        edges=np.cumsum([0]+list(panels['angles_deg']))
+        factors={};srng=np.random.default_rng(seed+1)
+        deg=np.degrees(qs/(period/(2*math.pi)))
+        for r in np.unique(ring):
+            a0=-panels['angles_deg'][0]/2+(r%2)*panels['alternating_stagger_deg']
+            index=np.searchsorted(edges,np.mod(deg-a0,360),side='right')-1
+            f=1+tone*np.clip(srng.standard_normal(len(panels['angles_deg'])),-3,3)
+            mod[:,ring==r]*=f[index][:,None]
+    scale=32768;code=np.uint16(np.clip(np.rint(mod*scale),0,65535))
+    code.tofile(Path(output)/'macro.bin')
+    return dict(file='macro.bin',sha256=digest(Path(output)/'macro.bin'),width=nx,height=nq,origin_xq_m=[x0,-period/2],pitch_m=pitch,scale=scale,
+                source=item['dir'],source_downloads_sha256=digest(downloads),cutoff_m=item['cutoff_m'],strength=item.get('strength',1.),
+                segment_tone_sigma=tone,block_m=B*pitch,std=float(mod.std()),
+                synthetic='arrangement (random orientation/offset per block, variance-preserving blend) and segment tone are synthetic; variation content is a real wall low-pass')
+
+
 def prepare_set(set_path, sources_root, config_path, spec_path, output, working_set=4<<30):
     """Multi-source runtime surface from a material set (non-square sources, usable-region masks).
 
@@ -204,16 +256,18 @@ def prepare_set(set_path, sources_root, config_path, spec_path, output, working_
         weights=None if None in weights else list(np.asarray(weights,float)/sum(weights))
         layout=quilt_layout(guides,extents,[x0-margin,x0+pixel_x*texel_m+margin,q0-margin,q0+period+margin],ms['seed'],output/'quilt',
             patch_m=lay['patch_m'],overlap_m=lay['overlap_m'],guide_texel_m=guide_step,min_repeat_x_m=lay['min_repeat_m'],
-            near_crop_m=lay['near_crop_m'],candidates=lay['candidates'],valid=valid,weights=weights,repeat_metric='wall')
+            near_crop_m=lay['near_crop_m'],candidates=lay['candidates'],valid=valid,weights=weights,repeat_metric='wall',
+            max_same_orientation_overlap=lay.get('max_same_orientation_overlap'))
         if aligned is not None:align_offsets(layout['placements'],[x0,q0],layout['origin_xq_m'],guide_step,texel_m,material=aligned)
         alpha=np.stack([cv2.imread(str(output/'quilt'/p['alpha']),cv2.IMREAD_GRAYSCALE) for p in layout['placements']])
         alpha.tofile(output/'alpha.bin')
         for e in entries:e['sha256']=digest(output/e['file'])
+        macro=build_macro(ms['macro'],sources_root,output,period,x0,x0+pixel_x*texel_m,spec['panels'],ms['seed']) if ms.get('macro') else None
         recipe=dict(schema='ssb.surface_recipe.v1',interpolation='bilinear_fixed32_v1',origin_xq_m=layout['origin_xq_m'],
             guide_texel_m=guide_step,patch_pixels=layout['patch_pixels'],placements=layout['placements'],
             offsets_aligned_to_texel_m=texel_m if aligned is not None else None,aligned_source=ids[aligned] if aligned is not None else None,
             sources=entries,alpha=dict(file='alpha.bin',sha256=digest(output/'alpha.bin')),brightness=brightness,
-            material_set_sha256=digest(set_path))
+            material_set_sha256=digest(set_path),macro=macro)
         (output/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
         mix={i:sum(p['material']==n for p in layout['placements'])/len(layout['placements']) for n,i in enumerate(ids)}
         surface=dict(schema='ssb.surface_runtime.v1',tunnel=config['tunnel'],origin_xq_m=[x0,q0],period_q_m=period,
@@ -246,6 +300,20 @@ class ReferenceRecipe:
         e=self.recipe['alpha'];p=rp.parent/e['file']
         if digest(p)!=e['sha256']:raise ValueError('alpha identity mismatch')
         n=self.recipe['patch_pixels'];self.alpha=np.fromfile(p,np.uint8).reshape(-1,n,n)
+        self.macro=None;m=self.recipe.get('macro')
+        if m:
+            p=rp.parent/m['file']
+            if digest(p)!=m['sha256']:raise ValueError('macro identity mismatch')
+            self.macro=np.fromfile(p,'<u2').reshape(m['height'],m['width'])
+
+    def macro_at(self,xs,qs):
+        m=self.recipe['macro'];X,Q=np.meshgrid(np.asarray(xs,float),np.asarray(qs,float))
+        u=(X-m['origin_xq_m'][0])/m['pitch_m']-.5;v=np.mod((Q-m['origin_xq_m'][1])/m['pitch_m'],m['height'])-.5
+        x0=np.floor(u).astype(int);y0=np.floor(v).astype(int);fx=u-x0;fy=v-y0;out=np.zeros(X.shape)
+        for j in range(2):
+            for i in range(2):
+                out+=self.macro[np.mod(y0+j,m['height']),np.clip(x0+i,0,m['width']-1)]*(fx if i else 1-fx)*(fy if j else 1-fy)
+        return out/m['scale']
 
     @staticmethod
     def interp(image,x,y):
@@ -271,6 +339,7 @@ class ReferenceRecipe:
             value[:,:,2:]=value[:,:,2:]@m
             idx=np.ix_(yi,xi);out[idx]=out[idx]*(1-a[:,:,None])+value*a[:,:,None];filled[idx]=filled[idx]*(1-a)+a
         if (filled<.999).any():raise ValueError('reference unfilled texels')
+        if self.macro is not None:out[:,:,0]*=self.macro_at(xs,qs)
         return pack(out)
 
     def tile(self,index):

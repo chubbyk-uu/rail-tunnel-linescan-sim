@@ -100,7 +100,7 @@ def prepare_sources(sources_path, recipe_path, spec, output, brightness):
 
 def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, overlap_m=.2,
                  guide_texel_m=.02, min_repeat_x_m=5., near_crop_m=.12, candidates=48,
-                 valid=None, weights=None, repeat_metric='x'):
+                 valid=None, weights=None, repeat_metric='x', max_same_orientation_overlap=None):
     """Choose native crops, reject nearby source-region reuse, replay one mask on all channels.
 
     source_widths: per source, the extent (m) along image x, or (x, y) extents for
@@ -109,6 +109,10 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
     per-source selection probabilities. repeat_metric 'x' compares placements whose x
     distance is below min_repeat_x_m (original rule); 'wall' uses the 2D wall distance,
     for small sources that cannot satisfy a long axial exclusion strip.
+    max_same_orientation_overlap: additionally reject a crop whose source region overlaps
+    (area fraction of one patch) more than this with a crop of the same source and the
+    same orientation placed within min_repeat_x_m: such pairs are translation-matchable
+    duplicates that could mislead strip registration.
     """
     x0,x1,q0,q1 = bounds
     patch, overlap = round(patch_m/guide_texel_m),round(overlap_m/guide_texel_m)
@@ -136,7 +140,8 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
         raise ValueError('a source has no fully valid crop at this patch size')
     rng, placements, reused = np.random.default_rng(seed), [], 0
     # Vectorised repeat guard: previous placements' grid position, source and crop centre.
-    history = np.zeros((0,5))
+    # columns: left, top, material, centre x, centre y, orientation, source rect x0, y0, x1, y1
+    history = np.zeros((0,10))
     coverage = np.zeros((2*canvas.shape[0],2*canvas.shape[1]),np.float32)
     # Advance in x first: only the previous 5 m strip participates in the reuse guard.
     for col in range(cols):
@@ -160,7 +165,16 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
                 matrix,offset=inverse_orientation(orientation//2,bool(orientation%2),*extents[material])
                 centre=matrix@((np.array([sx,sy])+patch/2)*guide_texel_m)+offset
                 same=near[near[:,2]==material]
-                if len(same) and np.min(np.hypot(same[:,3]-centre[0],same[:,4]-centre[1]))<near_crop_m:
+                corners=matrix@(np.array([[0,0],[1,0],[0,1],[1,1]]).T*patch*guide_texel_m+np.array([[sx],[sy]])*guide_texel_m)+offset[:,None]
+                rect=np.r_[corners.min(1),corners.max(1)]
+                duplicate=False
+                if max_same_orientation_overlap is not None and len(same):
+                    twin=same[same[:,5]==orientation]
+                    if len(twin):
+                        w=np.clip(np.minimum(twin[:,8],rect[2])-np.maximum(twin[:,6],rect[0]),0,None)
+                        h=np.clip(np.minimum(twin[:,9],rect[3])-np.maximum(twin[:,7],rect[1]),0,None)
+                        duplicate=bool((w*h/(patch*guide_texel_m)**2>max_same_orientation_overlap).any())
+                if duplicate or (len(same) and np.min(np.hypot(same[:,3]-centre[0],same[:,4]-centre[1]))<near_crop_m):
                     reused+=1
                     continue
                 block=guide[sy:sy+patch,sx:sx+patch]
@@ -199,7 +213,8 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
             window[:]=window*(1-af)+block*af
             file=f'alpha_{len(placements):04d}.png'
             if not cv2.imwrite(str(directory/file),alpha): raise OSError('cannot save quilt mask')
-            history=np.vstack([history,[left,top,material,*centre]])
+            corners=matrix@(np.array([[0,0],[1,0],[0,1],[1,1]]).T*patch*guide_texel_m+np.array([[sx],[sy]])*guide_texel_m)+offset[:,None]
+            history=np.vstack([history,[left,top,material,*centre,orientation,*corners.min(1),*corners.max(1)]])
             placements.append(dict(top=top,left=left,material=material,orientation=orientation,
                                    source_centre_m=centre.tolist(),source_matrix=matrix.tolist(),
                                    source_offset_m=(offset+matrix@(np.array([sx,sy])*guide_texel_m)).tolist(),
@@ -207,7 +222,7 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
     if coverage[1:-1,1:-1].min()<.999: raise ValueError('quilt coverage incomplete between patches')
     layout=dict(schema='ssb.quilt_layout.v1',seed=seed,bounds_xq_m=bounds,origin_xq_m=[x0,q0],
                 guide_texel_m=guide_texel_m,patch_pixels=patch,overlap_pixels=overlap,guide_size=list(canvas.shape),
-                min_repeat_distance_x_m=min_repeat_x_m,near_source_crop_centre_m=near_crop_m,repeat_metric=repeat_metric,
+                min_repeat_distance_x_m=min_repeat_x_m,near_source_crop_centre_m=near_crop_m,repeat_metric=repeat_metric,max_same_orientation_overlap=max_same_orientation_overlap,
                 repeat_guard='same source region regardless of rotation/mirror; canonical crop centres within threshold',
                 repeat_guard_limit='Not a global perceptual similarity or feature-level uniqueness guarantee.',
                 rejected_near_reuse_candidates=reused,placements=placements)

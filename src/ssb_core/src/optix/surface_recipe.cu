@@ -23,8 +23,16 @@ __device__ float Alpha(const unsigned char* mask,int side,double x,double y){
   for(int j=0;j<2;++j)for(int i=0;i<2;++i)sum+=mask[max(0,min(side-1,y0+j))*side+max(0,min(side-1,x0+i))]*(i?fx:32-fx)*(j?fy:32-fy);
   return sum/(1024.f*255.f);
 }
+__device__ float Macro(const RecipeMacro& m,double x,double q){
+  if(!m.data)return 1.f;
+  double u=(x-m.x0)/m.pitch-.5,v=fmod((q-m.q0)/m.pitch,double(m.height));if(v<0)v+=m.height;v-=.5;
+  int x0=int(floor(u)),y0=int(floor(v));double fx=u-x0,fy=v-y0,sum=0;
+  for(int j=0;j<2;++j)for(int i=0;i<2;++i){int xi=max(0,min(m.width-1,x0+i)),yi=((y0+j)%m.height+m.height)%m.height;
+    sum+=m.data[size_t(yi)*m.width+xi]*(i?fx:1-fx)*(j?fy:1-fy);}
+  return float(sum/m.scale);
+}
 __global__ void GenerateTile(RecipeGrid g,unsigned tile,const RecipeSource* sources,const RecipePatch* patches,
- const unsigned char* alpha,const int* ids,int count,SurfaceTexel* out,unsigned* invalid){
+ const unsigned char* alpha,const int* ids,int count,RecipeMacro macro,SurfaceTexel* out,unsigned* invalid){
   int col=blockIdx.x*blockDim.x+threadIdx.x,row=blockIdx.y*blockDim.y+threadIdx.y,side=g.core+2*g.gutter;
   if(col>=side||row>=side)return;
   double xp=fmax(.5,fmin(g.pixel_x-.5,double(tile%g.nx*g.core)+col-g.gutter+.5));
@@ -41,6 +49,7 @@ __global__ void GenerateTile(RecipeGrid g,unsigned tile,const RecipeSource* sour
   }
   if(filled<.999f){atomicExch(invalid,1u);return;}
   float norm=fmaxf(1.f,hypotf(value.z,value.w)/.999f);
+  value.x*=Macro(macro,g.guide_x0+gx*g.guide_step,g.guide_q0+gy*g.guide_step);
   out[size_t(row)*side+col]={static_cast<uint16_t>(fminf(65535.f,fmaxf(0.f,value.x*65535+.5f))),
     static_cast<uint8_t>(fminf(255.f,fmaxf(0.f,value.y*255+.5f))),0,
     static_cast<int16_t>(fminf(32767.f,fmaxf(-32767.f,value.z/norm*32767.f))),
@@ -50,6 +59,7 @@ __global__ void GenerateTile(RecipeGrid g,unsigned tile,const RecipeSource* sour
 struct CudaSurfaceRecipe::Impl {
   const SurfaceRecipe& recipe;std::vector<void*> allocations;
   RecipeSource* sources=nullptr;RecipePatch* patches=nullptr;unsigned char* alpha=nullptr;int* ids=nullptr;unsigned* invalid=nullptr;
+  RecipeMacro macro;
   size_t bytes=0;
   explicit Impl(const SurfaceRecipe& r):recipe(r){}
   void* Alloc(size_t n,const void* data=nullptr){void* p=nullptr;Check(cudaMalloc(&p,n));allocations.push_back(p);bytes+=n;
@@ -62,7 +72,8 @@ CudaSurfaceRecipe::CudaSurfaceRecipe(const SurfaceRecipe& r):impl_(std::make_uni
   s.sources=static_cast<RecipeSource*>(s.Alloc(sources.size()*sizeof(RecipeSource),sources.data()));
   s.patches=static_cast<RecipePatch*>(s.Alloc(r.patches.size()*sizeof(RecipePatch),r.patches.data()));
   s.alpha=static_cast<unsigned char*>(s.Alloc(r.alpha_bytes,r.alpha));
-  s.ids=static_cast<int*>(s.Alloc(r.patches.size()*sizeof(int)));s.invalid=static_cast<unsigned*>(s.Alloc(sizeof(unsigned)));
+  s.ids=static_cast<int*>(s.Alloc(r.patches.size()*sizeof(int)));
+  s.macro=r.macro;if(r.macro.data)s.macro.data=static_cast<const uint16_t*>(s.Alloc(size_t(r.macro.width)*r.macro.height*2,r.macro.data));s.invalid=static_cast<unsigned*>(s.Alloc(sizeof(unsigned)));
 }
 CudaSurfaceRecipe::~CudaSurfaceRecipe()=default;
 size_t CudaSurfaceRecipe::Bytes()const{return impl_->bytes;}
@@ -70,7 +81,7 @@ void CudaSurfaceRecipe::Generate(unsigned tile,SurfaceTexel* output,void* handle
   auto& s=*impl_;auto stream=static_cast<cudaStream_t>(handle);auto selected=s.recipe.Select(tile);
   Check(cudaMemcpyAsync(s.ids,selected.data(),selected.size()*sizeof(int),cudaMemcpyHostToDevice,stream));
   Check(cudaMemsetAsync(s.invalid,0,sizeof(unsigned),stream));int side=s.recipe.grid.core+2*s.recipe.grid.gutter;
-  GenerateTile<<<dim3((side+15)/16,(side+15)/16),dim3(16,16),0,stream>>>(s.recipe.grid,tile,s.sources,s.patches,s.alpha,s.ids,selected.size(),output,s.invalid);
+  GenerateTile<<<dim3((side+15)/16,(side+15)/16),dim3(16,16),0,stream>>>(s.recipe.grid,tile,s.sources,s.patches,s.alpha,s.ids,selected.size(),s.macro,output,s.invalid);
   Check(cudaGetLastError());unsigned invalid=0;Check(cudaMemcpyAsync(&invalid,s.invalid,sizeof(unsigned),cudaMemcpyDeviceToHost,stream));Check(cudaStreamSynchronize(stream));
   if(invalid)throw std::runtime_error("CUDA surface recipe: unfilled texels");
 }

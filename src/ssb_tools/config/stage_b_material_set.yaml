@@ -12,8 +12,14 @@ layout:
   guide_texel_m: 0.01      # seam guide; feather ~6.5 mm
   patch_m: 0.3             # Concrete034 is only 0.55 m tall
   overlap_m: 0.08
-  min_repeat_m: 0.5        # 2D wall distance within which the same source region is not reused
+  # Within min_repeat_m (2D wall distance): no crop centre reuse closer than near_crop_m, and
+  # same-orientation crops may share at most max_same_orientation_overlap of their source area
+  # (translation-matchable duplicates would mislead strip registration).
+  # 1.0 and 0.8 m are infeasible with one 0.57 m2 source; 0.6 m covers the +/-0.3 m repetition
+  # search plus window (docs/STAGE_B_TEXTURE_AUDIT.md).
+  min_repeat_m: 0.6
   near_crop_m: 0.03
+  max_same_orientation_overlap: 0.25
   candidates: 96
 sources:
   - id: concrete034
@@ -30,3 +36,11 @@ sources:
       - [0.565, 0.283, 0.050]
       - [0.525, 0.382, 0.060]
       - [1.070, 0.105, 0.060]
+# Low-frequency albedo modulation (>= cutoff_m) from a real wall; arrangement and per-segment
+# tone are synthetic. Fine detail still comes only from the sources above.
+macro:
+  dir: painted_plaster_wall   # Poly Haven, 2.0 x 2.0 m, CC0; 4K diffuse is ample for >= 20 mm
+  pitch_m: 0.005
+  cutoff_m: 0.02
+  strength: 1.0
+  segment_tone_sigma: 0.03    # per ring segment, like separate casting batches (assumption)

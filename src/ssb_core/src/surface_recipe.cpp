@@ -12,6 +12,14 @@ namespace ssb {
 namespace {
 void Need(bool b,const char* message){if(!b)throw std::runtime_error(std::string("surface recipe: ")+message);}
 double Clamp(double x,double lo,double hi){return std::max(lo,std::min(hi,x));}
+double MacroAt(const RecipeMacro& m,double x,double q){
+  if(!m.data)return 1;
+  double u=(x-m.x0)/m.pitch-.5,v=std::fmod((q-m.q0)/m.pitch,double(m.height));if(v<0)v+=m.height;v-=.5;
+  int x0=int(std::floor(u)),y0=int(std::floor(v));double fx=u-x0,fy=v-y0,sum=0;
+  for(int j=0;j<2;++j)for(int i=0;i<2;++i){int xi=std::clamp(x0+i,0,m.width-1),yi=((y0+j)%m.height+m.height)%m.height;
+    sum+=m.data[size_t(yi)*m.width+xi]*(i?fx:1-fx)*(j?fy:1-fy);}
+  return sum/m.scale;
+}
 void Coordinates(const RecipeGrid& g,unsigned tile,int col,int row,double& gx,double& gq){
   double xp=Clamp(double(tile%g.nx*g.core)+col-g.gutter+.5,.5,g.pixel_x-.5);
   double qp=std::fmod(double(tile/g.nx*g.core)+row-g.gutter+.5,g.pixel_q);
@@ -77,6 +85,13 @@ SurfaceRecipe::SurfaceRecipe(const std::filesystem::path& path,const nlohmann::j
   auto e=r.at("alpha");alpha_bytes=patches.size()*size_t(grid.patch_side)*grid.patch_side;
   maps_.push_back(std::make_unique<Mapping>(resolve(e,rp.parent_path()),alpha_bytes,e.at("sha256")));
   alpha=static_cast<const unsigned char*>(maps_.back()->data);
+  if(r.contains("macro")&&!r.at("macro").is_null()){
+    auto m=r.at("macro");macro={nullptr,m.at("width"),m.at("height"),m.at("origin_xq_m")[0],m.at("origin_xq_m")[1],m.at("pitch_m"),m.at("scale")};
+    Need(macro.width>1&&macro.height>1&&macro.width<=65536&&macro.height<=65536&&macro.pitch>0&&macro.scale>0&&
+         std::abs(macro.height*macro.pitch-grid.period)<1e-6,"macro dimensions");
+    maps_.push_back(std::make_unique<Mapping>(resolve(m,rp.parent_path()),size_t(macro.width)*macro.height*2,m.at("sha256")));
+    macro.data=static_cast<const uint16_t*>(maps_.back()->data);
+  }
 }
 std::vector<int> SurfaceRecipe::Select(unsigned tile) const {
   const auto& g=grid;int side=g.core+2*g.gutter;
@@ -104,6 +119,7 @@ std::vector<SurfaceTexel> SurfaceRecipe::Generate(unsigned tile) const {
       filled=filled*(1-a)+a;
     }
     Need(filled>=.999,"unfilled texel");double norm=std::max(1.,std::hypot(value[2],value[3])/.999);
+    value[0]*=MacroAt(macro,g.guide_x0+gx*g.guide_step,g.guide_q0+gq*g.guide_step);
     out[size_t(row)*side+col]={uint16_t(Clamp(value[0]*65535+.5,0,65535)),uint8_t(Clamp(value[1]*255+.5,0,255)),0,int16_t(Clamp(value[2]/norm*32767,-32767,32767)),int16_t(Clamp(value[3]/norm*32767,-32767,32767))};
   }return out;
 }

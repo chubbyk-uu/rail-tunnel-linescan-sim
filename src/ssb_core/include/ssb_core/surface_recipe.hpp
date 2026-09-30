@@ -13,6 +13,8 @@ struct RecipePatch {
   double ox, oq;
 };
 struct RecipeSource { const SurfaceTexel* data; int width, height; double native; };
+// Optional low-frequency albedo modulation over the wall (value = code/scale), x clamped, q periodic.
+struct RecipeMacro { const uint16_t* data=nullptr; int width=0, height=0; double x0=0, q0=0, pitch=0, scale=1; };
 struct RecipeGrid {
   unsigned core, gutter, nx, pixel_x, pixel_q;
   double x0,q0,dx,dq,period,guide_x0,guide_q0,guide_step;
@@ -29,6 +31,7 @@ class SurfaceRecipe {
   RecipeGrid grid{};
   std::vector<RecipeSource> sources;
   std::vector<RecipePatch> patches;
+  RecipeMacro macro;
   const unsigned char* alpha=nullptr;
   size_t alpha_bytes=0,source_bytes=0;
  private:

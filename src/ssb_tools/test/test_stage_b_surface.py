@@ -275,3 +275,22 @@ def test_seam_feather_never_reaches_the_overlap_edge(tmp_path):
         v=ReferenceRecipe.interp(a,np.where(inside,px,0)-.5,np.where(inside,py,0)-.5)/255
         filled=np.where(inside,filled*(1-v)+v,filled)
     assert filled.min()>=.999
+
+
+def test_same_orientation_duplicates_are_kept_apart(tmp_path):
+    rng=np.random.default_rng(12)
+    guide=rng.uniform(.2,.6,(60,110)).astype(np.float32)   # 1.1 x 0.6 m at 10 mm
+    R,limit,patch=.6,.25,.3
+    layout=quilt_layout([guide],[(1.1,.6)],[0,2.4,0,2.0],8,tmp_path/'q',patch_m=patch,overlap_m=.08,guide_texel_m=.01,
+                        min_repeat_x_m=R,near_crop_m=.01,candidates=24,repeat_metric='wall',max_same_orientation_overlap=limit)
+    P=layout['placements'];g=layout['guide_texel_m']
+    def rect(p):
+        m=np.asarray(p['source_matrix']);o=np.asarray(p['source_offset_m'])
+        c=m@(np.array([[0,0],[1,0],[0,1],[1,1]]).T*patch)+o[:,None];return c.min(1),c.max(1)
+    pairs=0
+    for i,a in enumerate(P):
+        for b in P[:i]:
+            if a['orientation']!=b['orientation'] or np.hypot(a['left']-b['left'],a['top']-b['top'])*g>=R:continue
+            (a0,a1),(b0,b1)=rect(a),rect(b);w,h=np.clip(np.minimum(a1,b1)-np.maximum(a0,b0),0,None)
+            assert w*h/patch**2<=limit+1e-9;pairs+=1
+    assert pairs>0   # the check exercised real same-orientation neighbours
