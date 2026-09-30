@@ -27,6 +27,7 @@ target_compile_options(ssb_gazebo_scan PRIVATE -Wall -Wextra)
 target_link_libraries(ssb_gazebo_scan ssb_core::ssb_core gz-sim8::gz-sim8 gz-plugin2::register)
 install(TARGETS ssb_gazebo_scan DESTINATION lib)
 add_library(SsbLightGlare SHARED gui/SsbLightGlare.cpp gui/SsbLightGlare.qrc)
+set_target_properties(SsbLightGlare PROPERTIES AUTOMOC ON)
 target_compile_options(SsbLightGlare PRIVATE -Wall -Wextra)
 target_link_libraries(SsbLightGlare PRIVATE gz-gui8::gz-gui8
   gz-rendering8::gz-rendering8 gz-plugin2::register Qt5::Quick)

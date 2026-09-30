@@ -56,7 +56,8 @@ The scanner preview uses 17 overlapping narrow shadow-casting spots to form the 
 so the cradle receives light and blocks the beam. This approximates the custom lens;
 OptiX acquisition retains its separate illumination model.
 The work lamp faces and scanning COB lens emit warm white in the preview. A GUI-only
-lens flare follows the strongest visible source, with direction and occlusion checks;
+lens flare can be enabled with the top-left switch (off at startup) and follows the
+strongest visible source, with direction and occlusion checks;
 it does not change OptiX illumination or raw images.
 
 Open the prepared 3 m contact demo with `tools/run_gz_gui.sh` (paused initially).

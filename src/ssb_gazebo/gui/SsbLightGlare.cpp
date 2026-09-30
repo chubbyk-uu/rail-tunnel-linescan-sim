@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -24,6 +25,16 @@ namespace ssb {
 // Display only: one GPU post-process for the strongest visible emitter. It does
 // not attach to sensors, change scene illumination, or touch OptiX acquisition.
 class SsbLightGlare : public gz::gui::Plugin {
+ Q_OBJECT
+ Q_PROPERTY(bool glareEnabled READ GlareEnabled WRITE SetGlareEnabled NOTIFY GlareEnabledChanged)
+ public: bool GlareEnabled() const { return enabled_.load(); }
+ public: Q_INVOKABLE void SetGlareEnabled(bool value) {
+   if (enabled_.exchange(value) != value) {
+     gzmsg << "SsbLightGlare: " << (value ? "enabled" : "disabled") << "\n";
+     emit GlareEnabledChanged();
+   }
+ }
+ signals: void GlareEnabledChanged();
  public: void LoadConfig(const tinyxml2::XMLElement *) override {
    if (auto *window = gz::gui::App()->findChild<gz::gui::MainWindow *>())
      window->installEventFilter(this);
@@ -75,6 +86,10 @@ class SsbLightGlare : public gz::gui::Plugin {
  }
 
  private: void Update() {
+   if (!enabled_.load()) {
+     if (pass_) pass_->SetEnabled(false);
+     return;
+   }
    if (!pass_ && !Initialize()) return;
    const auto now = std::chrono::steady_clock::now();
    if (now - lastVisibility_ >= std::chrono::milliseconds(200)) {
@@ -151,6 +166,7 @@ class SsbLightGlare : public gz::gui::Plugin {
  private: gz::rendering::RayQueryPtr query_;
  private: std::chrono::steady_clock::time_point lastVisibility_{};
  private: bool reportedVisible_ = false;
+ private: std::atomic<bool> enabled_{false};
  private: std::array<Source, 5> sources_{{
    {"scan_car::base::work_-1_-1_glass", .004, nullptr},
    {"scan_car::base::work_-1_1_glass", .004, nullptr},
@@ -160,3 +176,4 @@ class SsbLightGlare : public gz::gui::Plugin {
 };
 }  // namespace ssb
 GZ_ADD_PLUGIN(ssb::SsbLightGlare, gz::gui::Plugin)
+#include "SsbLightGlare.moc"
