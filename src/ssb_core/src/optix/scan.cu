@@ -215,7 +215,19 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
   if(Dot(normal,view)>0) normal=Mul(normal,-1.f); // double-sided optical lining, inward visible normal
   // Materials: 0 lining panel and chamfers (texture, normal map, cracks); 1 groove walls/floor
   // (dusty concrete, face normal); 2 joint filler (mortar); 3 gasket/void behind the contact gap.
-  const unsigned material=params.face_material[primitive];
+  // Calibration replaces the target's material, not the illumination/ray path.
+  // Covered sensor is ideal zero DN (this model has no dark-current/noise source yet).
+  if(params.calibration_target==3)return 0;
+  if(params.calibration_target) {
+    float albedo=params.target_albedo;
+    if(params.calibration_target==2) {
+      double dx=x-params.target_origin;
+      dx-=floor(dx/params.target_pitch+.5)*params.target_pitch;
+      if(fabs(dx)<params.target_width*.5)albedo*=.08f;
+    }
+    tex=make_float4(albedo,.9f,0,0);crack=make_float3(0,0,-1);
+  }
+  const unsigned material=params.calibration_target?0:params.face_material[primitive];
   bool joint=material!=0;
   float albedo=material==0 ? tex.x : material==1 ? GrooveConcrete(x,q) : material==2 ? Filler(x,q) : params.gap_albedo;
   if(!joint) {
@@ -299,14 +311,14 @@ __device__ double2 MetricDelta(float3 delta,float3 point) {
   double y=point.y,z=double(point.z)-params.axis_z;
   return make_double2(delta.x,params.radius*(z*delta.y-y*delta.z)/(y*y+z*z));
 }
-__device__ float3 PixelWorldDelta(const DeviceRow& row,float3 point,float tangent,unsigned primitive,bool across) {
+__device__ float3 PixelWorldDelta(const DeviceRow& row,float3 point,float tangent,unsigned primitive,bool across,float step) {
   uint3 tri=params.triangles[primitive];
   float3 normal=Unit(Cross(Sub(params.vertices[tri.y],params.vertices[tri.x]),Sub(params.vertices[tri.z],params.vertices[tri.x])));
   float3 raw=make_float3(row.optical[0]+tangent*row.line[0],row.optical[1]+tangent*row.line[1],row.optical[2]+tangent*row.line[2]);
   float3 axis=across?make_float3(row.line[0],row.line[1],row.line[2]):make_float3(row.scan[0],row.scan[1],row.scan[2]);
   float3 origin=make_float3(float(row.origin_x),row.origin_y,row.origin_z);
   float travel=Dot(Sub(point,origin),normal)/Dot(raw,normal);
-  return Mul(Sub(axis,Mul(raw,Dot(axis,normal)/Dot(raw,normal))),travel*params.pixel_step);
+  return Mul(Sub(axis,Mul(raw,Dot(axis,normal)/Dot(raw,normal))),travel*step);
 }
 // On a single slot face, test the corners of the complete space/time footprint.
 // This guard is specific to the generated convex lining and wide rectangular
@@ -383,8 +395,8 @@ __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,do
   // Return false at real material/geometry boundaries: retain the full-ray path.
   // Coplanar diagonals and smooth cylindrical facets do not force oversampling.
   if(params.light_enabled && params.shadows && !params.convex_panel_visibility)return false;
-  float3 world_a=PixelWorldDelta(centre,point,params.tangents[u],primitive,true);
-  float3 world_b=PixelWorldDelta(centre,point,params.tangents[u],primitive,false);
+  float3 world_a=PixelWorldDelta(centre,point,params.tangents[u],primitive,true,params.pixel_steps[u].x);
+  float3 world_b=PixelWorldDelta(centre,point,params.tangents[u],primitive,false,params.pixel_steps[u].y);
   double2 a=MetricDelta(world_a,point),b=MetricDelta(world_b,point);
   if(CriticalMargin(point,primitive)<.0006f)return false;
   float3 points[3],dirs[3];double xs[3],qs[3];unsigned ids[3];
@@ -474,8 +486,8 @@ __device__ void StageBScan(unsigned u,unsigned r) {
         const float T=params.time_samples;
         fx=(k+(t+.5f)/T)/area;fy=(k*rooks%area+(T-1-t+.5f)/T)/area;
       } else {fx=(k%area+.5f)/area;fy=(k/area+.5f)/area;}
-      float tangent=params.tangents[u]+(fx-.5f)*params.pixel_step;
-      float scan=(fy-.5f)*params.pixel_step;
+      float tangent=params.tangents[u]+(fx-.5f)*params.pixel_steps[u].x;
+      float scan=(fy-.5f)*params.pixel_steps[u].y;
       double hx,hq;float3 hp,hd;unsigned tri;float4 tex;
       bool ok=Hit(row,tangent,scan,&hx,&hq,&hp,&hd,&tri);
       unsigned reason=ok?0:1;

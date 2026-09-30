@@ -19,6 +19,8 @@ struct StageBAssets {
   double tunnel_radius=0, tunnel_axis_z=0;   // cached from the surface manifest (Footprint hot path)
   unsigned area_samples=2, time_samples=2, light_samples=3;
   bool light_enabled=true, shadows=true;
+  unsigned calibration_target=0; // 1 uniform, 2 metric bars, 3 covered sensor
+  double target_origin=0, target_pitch=.02, target_width=.003, target_albedo=.5;
   bool convex_panel_visibility=false, adaptive_area=false;
   // Full-ray area pattern: 0 = area_samples x area_samples grid per exposure sample; otherwise
   // the rank-1 lattice generator of an area_samples-point N-rooks pattern (see scan.cu).

@@ -34,6 +34,7 @@ motion:
     - [110.0, 0.0]
     - [110.3, 0.0]
 truth:
+  lens_k1: 0.006  # Assumed +0.6% pincushion at ideal half sensor width.
   wheel_diameter_m: 0.2
   scan_encoder_zero_deg: 0.0
   gate_start_offset_deg: 0.0

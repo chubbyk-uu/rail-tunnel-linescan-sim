@@ -192,3 +192,20 @@ TEST(Render, FullBodyPoseRotatesCameraMountAboutBase) {
   p.body_valid=0;h=TrueHeadPose(c,p);
   EXPECT_NEAR(h.origin[0],4.2,1e-12);EXPECT_NEAR(h.origin[1],0,1e-12);
 }
+
+TEST(Render, PincushionRaysMatchIndependentInverseAndCpuGeometry) {
+  auto c=BaseConfig(); c.truth.lens_k1=.006; c.Validate();
+  EXPECT_FALSE(c.ObservableJson().dump().find("lens_k1")!=std::string::npos);
+  EXPECT_DOUBLE_EQ(c.TruthJson().at("lens_k1").get<double>(),.006);
+  for(int u: {0,1024,2048,4095}) {
+    double qd=(u-.5*(c.width-1))/(.5*c.width),lo=-1.,hi=1.;
+    for(int i=0;i<60;++i) {double q=(lo+hi)/2;
+      if(q*(1+.006*q*q)<qd)lo=q;else hi=q;}
+    double expected=(lo+hi)/2*(.5*c.width)*c.pixel_pitch_m/c.FocalLength();
+    EXPECT_NEAR(c.PixelTangent(u),expected,1e-14);
+    EXPECT_NEAR(c.PixelTangentStep(u,true),c.PixelTangent(u+.5)-c.PixelTangent(u-.5),1e-12);
+  }
+  OptixRenderer r(c,DefaultPtxPath(),16);
+  EXPECT_TRUE(r.SelfCheck().at("passed").get<bool>());
+  c.truth.lens_k1=-.1; EXPECT_THROW(c.Validate(),std::exception);
+}

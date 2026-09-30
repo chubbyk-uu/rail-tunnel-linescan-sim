@@ -75,6 +75,15 @@ StageBAssets::StageBAssets(const Config& c) {
   }
   tile_bytes=size_t(side)*side*sizeof(SurfaceTexel);cache_slots=gpu_budget/tile_bytes;
   Need(cache_slots>0 && cache_slots<=1024 && cpu_budget>=tile_bytes,"tile cache budget");
+  if(scene.contains("calibration_target")) {
+    const auto& t=scene.at("calibration_target");
+    calibration_target=t.at("kind"); target_origin=t.at("origin_x_m");
+    target_pitch=t.at("pitch_m"); target_width=t.at("bar_width_m"); target_albedo=t.at("albedo");
+    Need(calibration_target>=1&&calibration_target<=3&&std::isfinite(target_origin)&&
+      std::isfinite(target_pitch)&&std::isfinite(target_width)&&std::isfinite(target_albedo)&&
+      target_pitch>0&&target_width>0&&target_width<target_pitch&&target_albedo>0&&target_albedo<1,
+      "invalid calibration target");
+  }
   auto sampling=scene.at("sampling");area_samples=sampling.at("area_axis_samples");time_samples=sampling.at("time_samples");
   adaptive_area=sampling.value("adaptive_area",false);
   const auto pattern=sampling.value("area_pattern",std::string("grid"));
@@ -102,6 +111,7 @@ StageBAssets::StageBAssets(const Config& c) {
   convex_panel_visibility=scene.value("convex_panel_visibility",false);
   light_samples=scene.at("lamp").at("samples");
   Need(area_samples>=1&&area_samples<=16 && time_samples>=1&&time_samples<=16 && light_samples>=1&&light_samples<=9,"sample limits");
+  Need(!calibration_target || (!integrated_cracks && !adaptive_area), "target requires full ray sampling");
   Need(!integrated_cracks || time_samples==3,"integrated cracks require three exposure frames");
   indirect_fill=scene.value("indirect_fill_relative",0.);
   Need(std::isfinite(indirect_fill)&&indirect_fill>=0&&indirect_fill<=.01,"weak indirect fill must be in [0,0.01]");

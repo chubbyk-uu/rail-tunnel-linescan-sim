@@ -91,7 +91,7 @@ def cpu_geometry(session,scene,scene_path,ray_count=64):
     rng=np.random.default_rng(20260929)
     rows=rng.integers(0,len(row_truth),size=ray_count);slots=rng.integers(0,len(columns),size=ray_count)
     origin,optical,line=ref_geometry.head_pose(row_truth['theta'][rows],row_truth['x'][rows],session.truth(),row_truth[rows])
-    tangents=ref_geometry.pixel_tangents(session.config()['camera'],np.array(columns)[slots])
+    tangents=ref_geometry.evaluation_pixel_tangents(session.config()['camera'],session.truth(),np.array(columns)[slots])
     radius=session.truth()['tunnel']['radius_m'];zc=session.truth()['tunnel']['axis_z_m']
     worst=0.;misses=0
     for i,(row,slot) in enumerate(zip(rows,slots)):

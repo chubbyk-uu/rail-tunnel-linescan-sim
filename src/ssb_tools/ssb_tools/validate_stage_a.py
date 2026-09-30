@@ -187,7 +187,7 @@ def gpu_vs_cpu(s, cfg, truth, row_truth):
     if not columns:
         return [check('gpu_hits_match_cpu', UNMEASURABLE, reason='no debug columns archived')], None
     origin, optical, line = ref_geometry.head_pose(row_truth['theta'], row_truth['x'], truth)
-    x, q = ref_geometry.wall_hits(origin, optical, line, ref_geometry.pixel_tangents(cfg['camera'], columns), truth)
+    x, q = ref_geometry.wall_hits(origin, optical, line, ref_geometry.evaluation_pixel_tangents(cfg['camera'], truth, columns), truth)
     err = np.maximum(np.abs(hits['hits'][..., 0] - x), np.abs(hits['hits'][..., 1] - q))
     worst = float(np.nanmax(err))
     finite = bool(np.isfinite(hits['hits']).all())
@@ -198,7 +198,7 @@ def gpu_vs_cpu(s, cfg, truth, row_truth):
 def pixel_spot_check(s, cfg, truth, row_truth, stride=97):
     seq = np.arange(0, len(row_truth), stride)
     origin, optical, line = ref_geometry.head_pose(row_truth['theta'][seq], row_truth['x'][seq], truth)
-    x, q = ref_geometry.wall_hits(origin, optical, line, ref_geometry.pixel_tangents(cfg['camera']), truth)
+    x, q = ref_geometry.wall_hits(origin, optical, line, ref_geometry.evaluation_pixel_tangents(cfg['camera'], truth), truth)
     expect = ref_geometry.albedo_code(ref_geometry.wall_albedo(x, q))
     got = s.raw_rows(row_truth['sequence'][seq])
     frac = float((got != expect).mean())

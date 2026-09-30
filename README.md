@@ -73,3 +73,7 @@ A separate 20 m contact-only run passed stability checks; full 20 m reconstructi
 is still subsequent work. See [the acceptance record](docs/STAGE_B.md).
 
 This uses the existing private Mesa launcher from the adjacent 4WIDS_agv workspace.
+
+
+镜头畸变与离线校正：Stage B新模板采用假设的+0.6%枕形畸变，使用OptiX标靶影像估计平场和几何映射。
+操作命令、标定结果和输出格式见[Stage B光学校正](docs/STAGE_B.md)。原始Mono8始终保留，校正结果另存。

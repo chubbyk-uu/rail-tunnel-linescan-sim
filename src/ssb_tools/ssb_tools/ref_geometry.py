@@ -94,3 +94,19 @@ def wall_albedo(x, q):
 
 def albedo_code(albedo):
     return np.clip(np.rint(albedo * 255.0), 0, 255).astype(np.uint8)
+
+
+def evaluation_pixel_tangents(camera, truth, columns=None):
+    """Truth-side lens reference, independent bisection; never a reconstruction input."""
+    width = camera['width']
+    u = np.arange(width, dtype=float) if columns is None else np.asarray(columns, float)
+    qd = (u-.5*(width-1))/(width/2)
+    k = truth.get('lens_k1', 0.)
+    if k == 0:
+        return pixel_tangents(camera, columns)
+    lo, hi = np.full_like(qd, -1.), np.full_like(qd, 1.)
+    for _ in range(55):
+        q = (lo+hi)/2
+        smaller = q*(1+k*q*q) < qd
+        lo = np.where(smaller, q, lo); hi = np.where(smaller, hi, q)
+    return (lo+hi)/2*(width/2)*camera['pixel_pitch_m']/focal_length(camera)

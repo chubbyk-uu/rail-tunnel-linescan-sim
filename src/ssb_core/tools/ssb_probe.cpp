@@ -45,6 +45,7 @@ int main(int argc,char** argv) {
     size_t peak=0;std::ifstream status("/proc/self/status");std::string line;
     while(std::getline(status,line)) if(line.rfind("VmHWM:",0)==0) peak=std::stoull(line.substr(6))*1024;
     nlohmann::json result={{"schema","ssb.optical_probe.v1"},{"purpose","optical inspection; not encoder capture"},
+      {"optical_signature",c.OpticalSignature()},
       {"rows",rows},{"wall_seconds",seconds},{"rows_per_second",rows/seconds},{"nominal_imaging_rtf",rows/rate/seconds},
       {"peak_rss_bytes",peak},{"checksum",checksum},{"min_code",min_code},{"max_code",max_code},
       {"x_mid_m",x},{"theta_mid_rad",theta},{"omega_rad_s",omega},{"speed_m_s",speed},{"row_rate_hz",rate},

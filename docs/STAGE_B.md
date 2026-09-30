@@ -501,10 +501,47 @@ GUI左上角增加“光晕”开关，每次启动默认关闭。关闭时跳�
 另有0.002弱反射补光近似，未追踪实际多次反射、透镜折射，也未标定绝对lux。
 GUI的17束窄光束不参与OptiX成像，不应把两个实现视为同一个光度模型。
 
-当前镜头仍为理想投影；新增畸变与离线暗场/平场要求及90 mm镜头资料核查见DESIGN末节。
+镜头畸变与离线暗场/平场现已接入，结果见下节；90 mm镜头资料核查见DESIGN末节。
 参考4w `agv_linescan/calibration.py`、`docs/OFFLINE_PROCESSING.md` 和
 `docs/archive/stage2/STAGE2_CONCRETE_CORRECTION.md`：保留原图，从独立标定影像
-估计系数，先平场后横向重采样，再拼接。尚未实现这部分，不作完成声明。
+估计系数，先平场后横向重采样，再交给后续拼接阶段。
 
 光晕开关验证：Gazebo插件构建通过；实际QML组件经Qt事件测试确认启动关闭、点击开启、再次点击关闭。
 Gazebo中已验证开启后创建光晕通道；WSL的xdotool重复点击未可靠命中控件，不将其记作实机双向点击通过。
+
+
+### 0.6%畸变及采后校正（2026-10-01）
+
+Stage B默认k1=0.006，正向定义为
+q_d=q_u*(1+0.006*q_u²)，逆映射用于OptiX射线。单行传感器不把旋转行号当作第二像面坐标。
+已有缓存capture.yaml不会自动改变；本机GUI新默认配置为`local_data/stage_b/gui_optics_v11/capture.yaml`，
+场景仍复用v10模型。旧会话保留理想镜头，不能套用新标定。
+
+标靶流程（配置必须包含OptiX场景路径；输出目录不得已存在）：
+
+```bash
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_bench --config CONFIG --output BENCH --render
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration fit --bench BENCH/bench.json --output CALIBRATION.json
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply --session SESSION --calibration CALIBRATION.json --output CORRECTED
+```
+
+标定只从暗场、均匀亮场和尺寸已知的条纹标靶图像估计，不读取渲染射线或hits.bin。
+独立验证使用错开7 mm的条纹，以及不同反射率/角度的均匀亮场，均经过OptiX采样和照明路径。
+`local_data/stage_b/optical_bench_v2/calibration_v2.json`：独立标靶最大残差0.01958 px；
+亮场列变异系数6.0455%→0.3033%；有效输出列98.584%，边缘不外推。
+这验证的是当前理想无噪声相机及固定标定距离，不代表真机精度，也不能消除壁面材料/姿态变化。
+校正输出保留float32线性DN、逐像素有效掩码与来源哈希，每256行处理；完整隧道拼接尚未实现。
+
+`tools/run_gz_gui.sh`在关闭GUI并确认采集完整后，自动执行上述离线校正，输出到会话的
+`processed/optical/`；默认使用上述标定，可用`SSB_OPTICAL_CALIBRATION`指定另一套。
+光学身份不匹配时拒绝套用；标定缺失/不匹配不会损坏已经保存的raw。
+
+
+本轮全链路验收：`sessions/contact_optics_v11`实际前进2.9999995 m，采集284445行，
+GUI开启、光晕默认关闭时成像进度RTF=0.99412，动力学RTF=0.99968；整卡显存采样峰值7014 MiB。
+使用333行批次重放与原始采集逐字节一致，Stage B检查全部通过（含来源、CPU射线、资源预算）。
+离线校正到`sessions/contact_optics_v11_corrected`，70个块，21.09秒、峰值RSS约152 MiB；
+此离线耗时不计入上述采集实时率。固定显示曲线对照图：
+`local_data/stage_b/gui_optics_v11/correction_comparison.png`，两侧均为原像素裁切，无锐化/自动对比度。
+
+回归验证：37项C++/CUDA测试、61项Python测试通过；GUI启动脚本通过bash语法检查。

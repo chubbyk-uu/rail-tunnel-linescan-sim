@@ -195,6 +195,9 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   s.params.integrated_cracks=s.assets && s.assets->integrated_cracks;
   if(s.assets) {
     const auto& a=*s.assets;
+    s.params.calibration_target=a.calibration_target;
+    s.params.target_origin=a.target_origin;s.params.target_pitch=a.target_pitch;
+    s.params.target_width=a.target_width;s.params.target_albedo=a.target_albedo;
     s.params.area_samples=a.area_samples;s.params.time_samples=a.time_samples;s.params.light_samples=a.light_samples;
     s.params.light_enabled=a.light_enabled;s.params.shadows=a.shadows;
     s.params.adaptive_area=a.adaptive_area;s.params.area_rooks=a.area_rooks;
@@ -274,7 +277,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   // the shader; per-row poses, cache addresses and row counts remain unbound.
   std::vector<OptixModuleCompileBoundValueEntry> bound;
 #define SSB_BOUND(field) bound.push_back({offsetof(LaunchParams,field),sizeof(s.params.field),&s.params.field,#field})
-  SSB_BOUND(stage_b);SSB_BOUND(row_stride);SSB_BOUND(area_samples);SSB_BOUND(time_samples);SSB_BOUND(light_samples);
+  SSB_BOUND(calibration_target);SSB_BOUND(stage_b);SSB_BOUND(row_stride);SSB_BOUND(area_samples);SSB_BOUND(time_samples);SSB_BOUND(light_samples);
   SSB_BOUND(light_enabled);SSB_BOUND(shadows);SSB_BOUND(adaptive_area);SSB_BOUND(area_rooks);SSB_BOUND(crack_area_samples);SSB_BOUND(crack_area_rooks);SSB_BOUND(convex_panel_visibility);SSB_BOUND(integrated_cracks);
   SSB_BOUND(texture_footprint_samples);SSB_BOUND(texture_prefilter);
 #undef SSB_BOUND
@@ -320,6 +323,9 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   s.sbt.hitgroupRecordCount = 1;
   s.sbt.hitgroupRecordStrideInBytes = sizeof(Record);
 
+  std::vector<float2> pixel_steps(config.width);
+  for(int u=0;u<config.width;++u) pixel_steps[u]=make_float2(
+      config.PixelTangentStep(u,true),config.PixelTangentStep(u,false));
   std::vector<float> tangents(config.width);
   for (int u = 0; u < config.width; ++u) tangents[u] = static_cast<float>(config.PixelTangent(u));
   std::vector<int> slot(config.width, -1);
@@ -330,6 +336,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   s.params.x_min = config.tunnel_x_min_m;
   s.params.x_max = config.tunnel_x_max_m;
   s.params.tangents = s.Alloc<float>(tangents.size(), tangents.data());
+  s.params.pixel_steps = s.Alloc<float2>(pixel_steps.size(), pixel_steps.data());
   s.params.debug_slot = s.Alloc<int>(slot.size(), slot.data());
   s.params.debug_count = static_cast<unsigned>(s.debug_columns.size());
   s.params.rows = s.Alloc<DeviceRow>(capacity*s.params.row_stride);
@@ -360,6 +367,9 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
       s.params.filler_width=a.filler_width;s.params.filler_height=a.filler_height;s.params.filler_pitch=a.filler_pitch;
       s.params.filler_scale=a.filler_scale;s.params.filler_mean=a.filler_mean;s.params.filler_roughness=a.filler_roughness;
     }
+    s.params.calibration_target=a.calibration_target;
+    s.params.target_origin=a.target_origin;s.params.target_pitch=a.target_pitch;
+    s.params.target_width=a.target_width;s.params.target_albedo=a.target_albedo;
     s.params.area_samples=a.area_samples;s.params.time_samples=a.time_samples;s.params.light_samples=a.light_samples;
     s.params.pixel_step=config.pixel_pitch_m/config.FocalLength();s.params.response_gain=a.response_gain;s.params.indirect_fill=a.indirect_fill;
     s.params.light_enabled=a.light_enabled;s.params.shadows=a.shadows;s.params.lamp_length=a.lamp_length;
@@ -522,7 +532,7 @@ nlohmann::json OptixRenderer::SelfCheck() {
       worst=std::max({worst,std::abs(hits[2*i]-x),std::abs(hits[2*i+1]-q)});
     }
     auto range=std::minmax_element(pixels.begin(),pixels.end());
-    bool ok=worst<5e-6 && *range.second>0;
+    bool ok=worst<5e-6 && (s.assets->calibration_target==3 ? *range.second==0 : *range.second>0);
     nlohmann::json result={{"passed",ok},{"max_debug_hit_error_m",worst},{"min_code",*range.first},
                            {"max_code",*range.second},{"geometry_reference","independent double triangle intersections"},
                            {"radiometry_reference","not covered by this self-check; separate optical tests required"}};

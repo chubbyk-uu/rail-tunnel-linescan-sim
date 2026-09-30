@@ -3,7 +3,7 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 session=$(realpath -m "${1:-$repo/sessions/gui_$(date +%Y%m%d_%H%M%S)}")
-config=$(realpath "${2:-$repo/local_data/stage_b/gui_strip_shadow_final_v10/capture.yaml}")
+config=$(realpath "${2:-$repo/local_data/stage_b/gui_optics_v11/capture.yaml}")
 world=$(realpath "${3:-$repo/local_data/stage_b/gui_strip_shadow_final_v10/world/world.sdf}")
 [[ ! -e "$session" ]] || { echo "Session already exists: $session" >&2; exit 2; }
 mesa_wrapper=${SSB_MESA_WRAPPER:-$repo/../4WIDS_agv/tools/with_mesa_runtime.py}
@@ -24,4 +24,8 @@ python3 "$mesa_wrapper" bash "$repo/tools/with_optix_runtime.sh" bash -c '
 ' _ "$repo" > "$log_dir/gazebo.log" 2>&1
 if [[ -d "$session" ]]; then
   python3 "$repo/tools/check_session.py" "$session"
+  calibration=${SSB_OPTICAL_CALIBRATION:-$repo/local_data/stage_b/optical_bench_v2/calibration_v2.json}
+  echo "Applying measured optical calibration: $calibration"
+  PYTHONPATH="$repo/src/ssb_tools${PYTHONPATH:+:$PYTHONPATH}" python3 -m ssb_tools.optical_calibration apply \
+    --session "$session" --calibration "$calibration" --output "$session/processed/optical"
 fi

@@ -105,6 +105,7 @@ Config Config::Parse(const std::string& text) {
   }
 
   const auto truth = Require(root, "truth", "");
+  c.truth.lens_k1 = truth["lens_k1"] ? truth["lens_k1"].as<double>() : 0;
   c.truth.wheel_diameter_m = Get<double>(truth, "wheel_diameter_m", "truth.");
   c.truth.scan_encoder_zero_rad = Deg(Get<double>(truth, "scan_encoder_zero_deg", "truth."));
   c.truth.gate_start_offset_rad = Deg(Get<double>(truth, "gate_start_offset_deg", "truth."));
@@ -146,6 +147,8 @@ Config Config::Parse(const std::string& text) {
 }
 
 void Config::Validate() const {
+  Check(std::isfinite(truth.lens_k1) && truth.lens_k1>=0 && truth.lens_k1<=.05,
+        "lens_k1 must be finite and in [0, 0.05] (pincushion model)");
   Check(Finite({tunnel_radius_m, tunnel_axis_z_m, tunnel_x_min_m, tunnel_x_max_m, rescale_max_period_s,
                 pixel_pitch_m, fov_at_nominal_m, nominal_distance_m, exposure_s, trigger_delay_s,
                 max_line_rate_hz, gate_start_rad, gate_end_rad, odo_gear_ratio, line_rate_hz,
@@ -182,7 +185,32 @@ void Config::Validate() const {
   Check(block_rows > 0 && write_queue_bytes >= size_t(width) * block_rows, "write queue smaller than a block");
 }
 
+double Config::PixelTangent(double u) const {
+  const double qd=(u-.5*(width-1))/(.5*width);
+  double qu=qd;
+  for(int i=0;i<6;++i)
+    qu-=(qu*(1+truth.lens_k1*qu*qu)-qd)/(1+3*truth.lens_k1*qu*qu);
+  return qu*(.5*width)*pixel_pitch_m/FocalLength();
+}
+double Config::PixelTangentStep(double u, bool across) const {
+  const double qu=PixelTangent(u)*FocalLength()/(.5*width*pixel_pitch_m);
+  return pixel_pitch_m/FocalLength()/(1+(across?3:1)*truth.lens_k1*qu*qu);
+}
+
 double Config::NominalOmega() const { return 2 * kPi * line_rate_hz / RowsPerRev(); }
+
+std::string Config::OpticalSignature() const {
+  const auto& m=truth.mount;
+  nlohmann::json key={{"model","ssb.optics.v1"},{"width",width},{"pitch",pixel_pitch_m},
+    {"fov",fov_at_nominal_m},{"distance",nominal_distance_m},{"exposure",exposure_s},
+    {"lens",truth.lens_k1},{"mount",{m.e_m,m.tangential_m,m.dy_m,m.dz_m,m.tilt_y_rad,m.tilt_z_rad,m.twist_rad}}};
+  if(!optical_scene.empty()) {
+    std::ifstream in(optical_scene);nlohmann::json scene;in>>scene;
+    key["lamp"]=scene.at("lamp");key["response_gain"]=scene.at("response_gain");
+    key["indirect_fill"]=scene.value("indirect_fill_relative",0.);
+  }
+  const auto bytes=key.dump();return Sha256Hex(bytes.data(),bytes.size());
+}
 
 nlohmann::json Config::ObservableJson() const {
   nlohmann::json j;
@@ -194,7 +222,7 @@ nlohmann::json Config::ObservableJson() const {
   j["camera"] = {{"width", width}, {"pixel_pitch_m", pixel_pitch_m}, {"fov_at_nominal_m", fov_at_nominal_m},
                  {"nominal_distance_m", nominal_distance_m}, {"exposure_s", exposure_s},
                  {"trigger_delay_s", trigger_delay_s}, {"max_line_rate_hz", max_line_rate_hz},
-                 {"focal_length_m", FocalLength()}};
+                 {"focal_length_m", FocalLength()}, {"optical_signature", OpticalSignature()}};
   j["gate"] = {{"start_rad", gate_start_rad}, {"end_rad", gate_end_rad}};
   j["odometer"] = {{"ppr", odo_ppr}, {"edges_per_cycle", odo_edges_per_cycle}, {"gear_ratio", odo_gear_ratio}};
   j["motion"] = {{"line_rate_hz", line_rate_hz}, {"advance_per_rev_m", advance_per_rev_m},
@@ -216,6 +244,7 @@ nlohmann::json Config::TruthJson() const {
           {"tunnel", {{"radius_m", tunnel_radius_m}, {"axis_z_m", tunnel_axis_z_m}}},
           {"start_theta_rad", start_theta_rad},
           {"wheel_diameter_m", truth.wheel_diameter_m},
+          {"lens_k1", truth.lens_k1},
           {"scan_encoder_zero_rad", truth.scan_encoder_zero_rad},
           {"gate_start_offset_rad", truth.gate_start_offset_rad},
           {"gate_end_offset_rad", truth.gate_end_offset_rad},

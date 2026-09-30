@@ -19,6 +19,7 @@ struct LaunchParams {
   OptixTraversableHandle handle;
   const DeviceRow* rows;
   const float* tangents;
+  const float2* pixel_steps; // inverse lens Jacobian (line, perpendicular)
   unsigned width, row_count;
   double radius, axis_z, x_min, x_max;
   unsigned char* pixels;
@@ -30,6 +31,9 @@ struct LaunchParams {
   double* debug_hits;            // [row][slot][x, q]
   unsigned stage_b, row_stride, area_samples, time_samples, light_samples;
   float pixel_step, response_gain, indirect_fill;
+  unsigned calibration_target;
+  double target_origin, target_pitch, target_width;
+  float target_albedo;
   const ssb::SurfaceTexel* const* tiles;
   unsigned tile_core, tile_gutter, tile_side, tiles_x, tiles_q, pixels_x, pixels_q;
   double tex_x0, tex_q0, tex_dx, tex_dq, tex_period;
