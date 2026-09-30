@@ -14,7 +14,7 @@ __device__ float4 Source(const RecipeSource& s,double x,double y){
   int u=int(floor(x*32+.5)),v=int(floor(y*32+.5)),x0=int(floor(double(u)/32)),y0=int(floor(double(v)/32));
   int fx=u-x0*32,fy=v-y0*32;int a=0,b=0,c=0,d=0;
   for(int j=0;j<2;++j)for(int i=0;i<2;++i){
-    auto t=s.data[size_t(max(0,min(s.side-1,y0+j)))*s.side+max(0,min(s.side-1,x0+i))];
+    auto t=s.data[size_t(max(0,min(s.height-1,y0+j)))*s.width+max(0,min(s.width-1,x0+i))];
     int w=(i?fx:32-fx)*(j?fy:32-fy);a+=int(t.albedo)*w;b+=int(t.roughness)*w;c+=int(t.nx)*w;d+=int(t.nq)*w;
   }return make_float4(a/(1024.f*65535.f),b/(1024.f*255.f),c/(1024.f*32767.f),d/(1024.f*32767.f));
 }
@@ -58,7 +58,7 @@ struct CudaSurfaceRecipe::Impl {
 };
 CudaSurfaceRecipe::CudaSurfaceRecipe(const SurfaceRecipe& r):impl_(std::make_unique<Impl>(r)){
   auto& s=*impl_;std::vector<RecipeSource> sources=r.sources;
-  for(auto& source:sources)source.data=static_cast<const SurfaceTexel*>(s.Alloc(size_t(source.side)*source.side*sizeof(SurfaceTexel),source.data));
+  for(auto& source:sources)source.data=static_cast<const SurfaceTexel*>(s.Alloc(size_t(source.width)*source.height*sizeof(SurfaceTexel),source.data));
   s.sources=static_cast<RecipeSource*>(s.Alloc(sources.size()*sizeof(RecipeSource),sources.data()));
   s.patches=static_cast<RecipePatch*>(s.Alloc(r.patches.size()*sizeof(RecipePatch),r.patches.data()));
   s.alpha=static_cast<unsigned char*>(s.Alloc(r.alpha_bytes,r.alpha));

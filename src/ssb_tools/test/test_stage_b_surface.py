@@ -223,3 +223,55 @@ def test_aligned_offsets_make_generated_texels_exact_source_copies():
             assert np.abs(u-np.round(u)).max()<1e-6 and np.abs(v-np.round(v)).max()<1e-6
             u,v=u-u.min(),v-v.min() # exercise interpolation on the in-range test source
             np.testing.assert_array_equal(ReferenceRecipe.interp(source,u,v),source[np.round(v).astype(int),np.round(u).astype(int)])
+
+
+def test_orientation_maps_non_square_sources():
+    # Independent rot90/fliplr oracle on a 7x11 (rows x cols) image, metres = pixels here.
+    h,w=7,11
+    yy,xx=np.mgrid[:h,:w];image=xx+100*yy
+    for k in range(4):
+        for flip in (False,True):
+            actual=np.rot90(image,k)
+            if flip: actual=np.fliplr(actual)
+            matrix,offset=inverse_orientation(k,flip,w,h)
+            dy,dx=np.mgrid[:actual.shape[0],:actual.shape[1]]
+            source=np.stack([dx+.5,dy+.5],axis=-1)@matrix.T+offset
+            idx=np.floor(source).astype(int)
+            np.testing.assert_array_equal(actual,image[idx[:,:,1],idx[:,:,0]])
+
+
+def test_quilt_uses_only_fully_valid_crops_of_non_square_sources(tmp_path):
+    rng=np.random.default_rng(3)
+    wide=rng.uniform(.2,.6,(30,60)).astype(np.float32)   # 0.6 x 0.3 m at 10 mm
+    square=rng.uniform(.2,.6,(50,50)).astype(np.float32)
+    valid=np.ones(square.shape,bool);valid[20:30,:]=False  # an excluded band
+    layout=quilt_layout([wide,square],[(.6,.3),(.5,.5)],[0,1.5,0,1.2],5,tmp_path/'q',patch_m=.2,overlap_m=.08,
+                        guide_texel_m=.01,min_repeat_x_m=.3,near_crop_m=.02,candidates=16,
+                        valid=[np.ones(wide.shape,bool),valid],weights=[.5,.5],repeat_metric='wall')
+    assert {p['material'] for p in layout['placements']}=={0,1}
+    for p in layout['placements']:
+        m=np.asarray(p['source_matrix']);o=np.asarray(p['source_offset_m'])
+        corners=np.array([[0,0],[.2,0],[0,.2],[.2,.2]])@m.T+o   # crop extent in source metres
+        lo,hi=corners.min(0),corners.max(0)
+        extent=(.6,.3) if p['material']==0 else (.5,.5)
+        assert lo.min()>=-1e-9 and hi[0]<=extent[0]+1e-9 and hi[1]<=extent[1]+1e-9
+        if p['material']==1:
+            assert hi[1]<=.2+1e-9 or lo[1]>=.3-1e-9   # never overlaps rows 20..29 (0.2..0.3 m)
+
+
+def test_seam_feather_never_reaches_the_overlap_edge(tmp_path):
+    # Regression: overlap 8 guide px left partial alpha where the previous patch ends.
+    rng=np.random.default_rng(9)
+    guide=rng.uniform(.1,.6,(60,60)).astype(np.float32)
+    layout=quilt_layout([guide],[.6],[0,1.2,0,1.2],4,tmp_path/'q',patch_m=.3,overlap_m=.08,guide_texel_m=.01,
+                        min_repeat_x_m=.2,near_crop_m=.01,candidates=8,repeat_metric='wall')
+    # Independent composite at off-centre positions (the generators' bilinear alpha).
+    from ssb_tools.stage_b_runtime_surface import ReferenceRecipe
+    side=layout['patch_pixels'];g=layout['guide_size']
+    ys,xs=np.meshgrid(np.arange(1,g[0]-1,.37),np.arange(1,g[1]-1,.37),indexing='ij');filled=np.zeros(ys.shape)
+    for p in layout['placements']:
+        a=cv2.imread(str(tmp_path/'q'/p['alpha']),cv2.IMREAD_GRAYSCALE)
+        px,py=xs-p['left'],ys-p['top'];inside=(px>=0)&(py>=0)&(px<side)&(py<side)
+        v=ReferenceRecipe.interp(a,np.where(inside,px,0)-.5,np.where(inside,py,0)-.5)/255
+        filled=np.where(inside,filled*(1-v)+v,filled)
+    assert filled.min()>=.999

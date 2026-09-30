@@ -19,13 +19,13 @@ void Coordinates(const RecipeGrid& g,unsigned tile,int col,int row,double& gx,do
   gx=(g.x0+xp*g.dx-g.guide_x0)/g.guide_step;
   gq=(g.q0+qp*g.dq-g.guide_q0)/g.guide_step;
 }
-template<class F> double Bilinear(double x,double y,int side,F get){
+template<class F> double Bilinear(double x,double y,int width,int height,F get){
   // Fixed 1/32 interpolation grid agrees with the archived OpenCV quilt convention.
   long u=long(std::floor(x*32+.5)),v=long(std::floor(y*32+.5));
   int x0=int(std::floor(double(u)/32)),y0=int(std::floor(double(v)/32));
   int fx=int(u-x0*32),fy=int(v-y0*32);double sum=0;
   for(int j=0;j<2;++j)for(int i=0;i<2;++i)
-    sum+=get(std::clamp(x0+i,0,side-1),std::clamp(y0+j,0,side-1))*(i?fx:32-fx)*(j?fy:32-fy);
+    sum+=get(std::clamp(x0+i,0,width-1),std::clamp(y0+j,0,height-1))*(i?fx:32-fx)*(j?fy:32-fy);
   return sum/1024;
 }
 }
@@ -56,12 +56,15 @@ SurfaceRecipe::SurfaceRecipe(const std::filesystem::path& path,const nlohmann::j
        std::isfinite(grid.dx)&&std::isfinite(grid.dq)&&grid.dx>0&&grid.dq>0,"grid dimensions");
   Need(std::isfinite(grid.guide_x0)&&std::isfinite(grid.guide_q0)&&std::isfinite(grid.guide_step)&&grid.guide_step>0&&grid.patch_side>=2&&grid.patch_side<=1024,"guide dimensions");
   for(const auto& e:r.at("sources")){
-    int side=e.at("side");double width=e.at("source_width_m");
-    Need(side>1&&side<=16384&&std::isfinite(width)&&width>0,"source dimensions");
-    size_t n=size_t(side)*side*sizeof(SurfaceTexel);
+    // Square legacy recipes carry "side"; multi-source recipes carry width/height.
+    int w=e.contains("width")?e.at("width").get<int>():e.at("side").get<int>();
+    int h=e.contains("height")?e.at("height").get<int>():e.at("side").get<int>();
+    double width=e.at("source_width_m");
+    Need(w>1&&w<=16384&&h>1&&h<=16384&&std::isfinite(width)&&width>0,"source dimensions");
+    size_t n=size_t(w)*h*sizeof(SurfaceTexel);
     Need(source_bytes+n<=s.at("resources").value("gpu_source_budget_bytes",size_t(4ull<<30)),"source budget exceeded");
     maps_.push_back(std::make_unique<Mapping>(resolve(e,rp.parent_path()),n,e.at("sha256")));
-    sources.push_back({static_cast<const SurfaceTexel*>(maps_.back()->data),side,width/side});source_bytes+=n;
+    sources.push_back({static_cast<const SurfaceTexel*>(maps_.back()->data),w,h,width/w});source_bytes+=n;
   }
   Need(!sources.empty()&&sources.size()<=8,"source count");
   for(const auto& p:r.at("placements")){
@@ -92,10 +95,10 @@ std::vector<SurfaceTexel> SurfaceRecipe::Generate(unsigned tile) const {
     for(auto id:ids){auto p=patches[id];double px=gx-p.left,py=gq-p.top;
       if(px<0||py<0||px>=g.patch_side||py>=g.patch_side)continue;
       auto mask=alpha+size_t(id)*g.patch_side*g.patch_side;
-      double a=Bilinear(px-.5,py-.5,g.patch_side,[&](int x,int y){return double(mask[y*g.patch_side+x]);})/255;
+      double a=Bilinear(px-.5,py-.5,g.patch_side,g.patch_side,[&](int x,int y){return double(mask[y*g.patch_side+x]);})/255;
       auto src=sources[p.source];double u=(p.m00*px*g.guide_step+p.m01*py*g.guide_step+p.ox)/src.native-.5;
       double v=(p.m10*px*g.guide_step+p.m11*py*g.guide_step+p.oq)/src.native-.5;
-      double raw[4];for(int c=0;c<4;++c)raw[c]=Bilinear(u,v,src.side,[&](int x,int y){auto t=src.data[size_t(y)*src.side+x];return c==0?double(t.albedo)/65535:c==1?double(t.roughness)/255:c==2?double(t.nx)/32767:double(t.nq)/32767;});
+      double raw[4];for(int c=0;c<4;++c)raw[c]=Bilinear(u,v,src.width,src.height,[&](int x,int y){auto t=src.data[size_t(y)*src.width+x];return c==0?double(t.albedo)/65535:c==1?double(t.roughness)/255:c==2?double(t.nx)/32767:double(t.nq)/32767;});
       double z=raw[2];raw[2]=z*p.m00+raw[3]*p.m10;raw[3]=z*p.m01+raw[3]*p.m11;
       for(int c=0;c<4;++c)value[c]=value[c]*(1-a)+raw[c]*a;
       filled=filled*(1-a)+a;

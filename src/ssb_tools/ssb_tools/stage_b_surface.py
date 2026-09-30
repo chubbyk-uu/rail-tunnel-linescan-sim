@@ -39,13 +39,15 @@ def minimum_cut(error):
     return seam
 
 
-def inverse_orientation(k, mirror, size):
+def inverse_orientation(k, mirror, size, height=None):
     # Map transformed image coordinates back to source coordinates (metres).
+    # size is the source extent along image x, height along image y (default square).
+    w = size; h = size if height is None else height
     matrices = [np.eye(2),np.array([[0,-1],[1,0]]),-np.eye(2),np.array([[0,1],[-1,0]])]
-    offsets = [np.zeros(2),np.array([size,0]),np.array([size,size]),np.array([0,size])]
+    offsets = [np.zeros(2),np.array([w,0]),np.array([w,h]),np.array([0,h])]
     matrix, offset = matrices[k].astype(float), offsets[k].astype(float)
     if mirror:
-        offset += matrix[:,0]*size
+        offset += matrix[:,0]*(w if k%2==0 else h)
         matrix[:,0] *= -1
     return matrix, offset
 
@@ -97,12 +99,29 @@ def prepare_sources(sources_path, recipe_path, spec, output, brightness):
 
 
 def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, overlap_m=.2,
-                 guide_texel_m=.02, min_repeat_x_m=5., near_crop_m=.12, candidates=48):
-    """Choose native crops, reject nearby source-region reuse, replay one mask on all channels."""
+                 guide_texel_m=.02, min_repeat_x_m=5., near_crop_m=.12, candidates=48,
+                 valid=None, weights=None, repeat_metric='x'):
+    """Choose native crops, reject nearby source-region reuse, replay one mask on all channels.
+
+    source_widths: per source, the extent (m) along image x, or (x, y) extents for
+    non-square sources. valid: optional per-source boolean masks at guide resolution;
+    a crop is used only if it lies entirely inside the valid region. weights: optional
+    per-source selection probabilities. repeat_metric 'x' compares placements whose x
+    distance is below min_repeat_x_m (original rule); 'wall' uses the 2D wall distance,
+    for small sources that cannot satisfy a long axial exclusion strip.
+    """
     x0,x1,q0,q1 = bounds
     patch, overlap = round(patch_m/guide_texel_m),round(overlap_m/guide_texel_m)
-    if not 2<=overlap<patch or any(min(g.shape)<patch for g in guides):
+    extents = [tuple(w) if np.ndim(w) else (w,w) for w in source_widths]
+    if valid is None: valid = [np.ones(g.shape,bool) for g in guides]
+    if not 2<=overlap<patch or any(min(g.shape)<patch for g in guides) or any(v.shape!=g.shape for v,g in zip(valid,guides)):
         raise ValueError('invalid patch geometry')
+    if weights is None: weights = [.45,.4,.15] if len(guides)==3 else None
+    # Crop origins whose whole patch is valid, per source and orientation (summed-area table).
+    def usable(mask):
+        table = np.pad(mask.astype(np.int64),((1,0),(1,0))).cumsum(0).cumsum(1)
+        full = table[patch:,patch:]-table[:-patch,patch:]-table[patch:,:-patch]+table[:-patch,:-patch]
+        return np.argwhere(full==patch*patch)
     step = patch-overlap
     cols = math.ceil(((x1-x0)/guide_texel_m-overlap)/step)
     rows = math.ceil(((q1-q0)/guide_texel_m-overlap)/step)
@@ -110,8 +129,15 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
         raise ValueError('guide canvas exceeds bounded preparation size')
     directory.mkdir()
     canvas = np.zeros((rows*step+overlap,cols*step+overlap),np.float32)
-    oriented = [[np.fliplr(np.rot90(g,k)) if flip else np.rot90(g,k) for k in range(4) for flip in (False,True)] for g in guides]
+    orient = lambda a,k,flip: np.fliplr(np.rot90(a,k)) if flip else np.rot90(a,k)
+    oriented = [[orient(g,k,flip) for k in range(4) for flip in (False,True)] for g in guides]
+    origins = [[usable(orient(v,k,flip)) for k in range(4) for flip in (False,True)] for v in valid]
+    if any(not len(o) for per in origins for o in per):
+        raise ValueError('a source has no fully valid crop at this patch size')
     rng, placements, reused = np.random.default_rng(seed), [], 0
+    # Vectorised repeat guard: previous placements' grid position, source and crop centre.
+    history = np.zeros((0,5))
+    coverage = np.zeros((2*canvas.shape[0],2*canvas.shape[1]),np.float32)
     # Advance in x first: only the previous 5 m strip participates in the reuse guard.
     for col in range(cols):
         for row in range(rows):
@@ -121,15 +147,20 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
             if col: occupied[:,:overlap]=True
             if row: occupied[:overlap,:]=True
             pool=[]
+            if repeat_metric=='wall':
+                near=history[np.hypot(history[:,0]-left,history[:,1]-top)*guide_texel_m<min_repeat_x_m]
+            else:
+                near=history[np.abs(history[:,0]-left)*guide_texel_m<min_repeat_x_m]
             for attempt in range(candidates*16):
-                material=int(rng.choice(len(guides),p=[.45,.4,.15] if len(guides)==3 else None))
+                material=int(rng.choice(len(guides),p=weights))
                 orientation=int(rng.integers(8))
                 guide=oriented[material][orientation]
-                sx,sy=map(int,rng.integers(0,guide.shape[0]-patch+1,size=2))
-                matrix,offset=inverse_orientation(orientation//2,bool(orientation%2),source_widths[material])
+                candidates_xy=origins[material][orientation]
+                sy,sx=map(int,candidates_xy[int(rng.integers(len(candidates_xy)))])
+                matrix,offset=inverse_orientation(orientation//2,bool(orientation%2),*extents[material])
                 centre=matrix@((np.array([sx,sy])+patch/2)*guide_texel_m)+offset
-                if any(p['material']==material and abs((left-p['left'])*guide_texel_m)<min_repeat_x_m
-                       and np.linalg.norm(centre-p['source_centre_m'])<near_crop_m for p in placements):
+                same=near[near[:,2]==material]
+                if len(same) and np.min(np.hypot(same[:,3]-centre[0],same[:,4]-centre[1]))<near_crop_m:
                     reused+=1
                     continue
                 block=guide[sy:sy+patch,sx:sx+patch]
@@ -143,7 +174,11 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
             options=[p for p in pool if p[0]<=best*1.1+1e-12]
             cost,material,orientation,sx,sy,matrix,offset,centre,block=options[int(rng.integers(len(options)))]
             mask=np.ones((patch,patch),np.uint8)
-            guard=max(1,overlap//5)
+            # Keep the cut >= 3 guide px from the overlap edges: the sigma 0.65 px feather must
+            # not leak below full opacity into the last overlap row/column, where the previous
+            # patch's coverage ends.
+            guard=max(3,overlap//5)
+            if overlap<2*guard+2: raise ValueError('overlap too small for the seam guard')
             if col:
                 error=(block[:,:overlap]-window[:,:overlap])**2
                 error[:,:guard]=np.inf;error[:,-guard:]=np.inf
@@ -158,16 +193,21 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
             alpha[~occupied]=1
             alpha=np.uint8(np.clip(alpha*255+.5,0,255))
             af=alpha.astype(np.float32)/255
+            # Coverage between guide pixel centres as well (2x, bilinear like the generators).
+            a2=cv2.resize(af,(2*patch,2*patch),interpolation=cv2.INTER_LINEAR)
+            c2=coverage[2*top:2*top+2*patch,2*left:2*left+2*patch];c2[:]=c2*(1-a2)+a2
             window[:]=window*(1-af)+block*af
             file=f'alpha_{len(placements):04d}.png'
             if not cv2.imwrite(str(directory/file),alpha): raise OSError('cannot save quilt mask')
+            history=np.vstack([history,[left,top,material,*centre]])
             placements.append(dict(top=top,left=left,material=material,orientation=orientation,
                                    source_centre_m=centre.tolist(),source_matrix=matrix.tolist(),
                                    source_offset_m=(offset+matrix@(np.array([sx,sy])*guide_texel_m)).tolist(),
                                    alpha=file,alpha_sha256=digest(directory/file)))
+    if coverage[1:-1,1:-1].min()<.999: raise ValueError('quilt coverage incomplete between patches')
     layout=dict(schema='ssb.quilt_layout.v1',seed=seed,bounds_xq_m=bounds,origin_xq_m=[x0,q0],
                 guide_texel_m=guide_texel_m,patch_pixels=patch,overlap_pixels=overlap,guide_size=list(canvas.shape),
-                min_repeat_distance_x_m=min_repeat_x_m,near_source_crop_centre_m=near_crop_m,
+                min_repeat_distance_x_m=min_repeat_x_m,near_source_crop_centre_m=near_crop_m,repeat_metric=repeat_metric,
                 repeat_guard='same source region regardless of rotation/mirror; canonical crop centres within threshold',
                 repeat_guard_limit='Not a global perceptual similarity or feature-level uniqueness guarantee.',
                 rejected_near_reuse_candidates=reused,placements=placements)

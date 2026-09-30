@@ -12,7 +12,7 @@ struct RecipePatch {
   int m00, m01, m10, m11;
   double ox, oq;
 };
-struct RecipeSource { const SurfaceTexel* data; int side; double native; };
+struct RecipeSource { const SurfaceTexel* data; int width, height; double native; };
 struct RecipeGrid {
   unsigned core, gutter, nx, pixel_x, pixel_q;
   double x0,q0,dx,dq,period,guide_x0,guide_q0,guide_step;

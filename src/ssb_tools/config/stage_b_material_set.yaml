@@ -1,0 +1,29 @@
+# Stage B wall background material set (DESIGN.md §6, docs/STAGE_B_TEXTURE_AUDIT.md "选材决定").
+# Sources live under a local sources root (not in git): <root>/<dir>/downloads.json + PNG channels.
+schema: ssb.material_set.v1
+seed: 20260930
+brightness: 0.8
+# Generated grid: align to a source's native pitch (exact texel copies), or give pitch_m.
+grid: {align_to: concrete034}
+layout:
+  guide_texel_m: 0.01      # seam guide; feather ~6.5 mm
+  patch_m: 0.3             # Concrete034 is only 0.55 m tall
+  overlap_m: 0.08
+  min_repeat_m: 0.5        # 2D wall distance within which the same source region is not reused
+  near_crop_m: 0.03
+  candidates: 96
+sources:
+  - id: concrete034
+    dir: concrete034
+    # ambientCG Concrete034, 1.10 x 0.55 m, 16384 x 8192 (0.067 mm/texel), CC0.
+    # Gain brings its linear mean albedo (0.48) to the Wall 04 baseline (0.206 incl. brightness),
+    # so lamp and exposure settings stay unchanged. Not an absolute reflectance calibration.
+    albedo_gain: 0.533
+    weight: 1
+    # Grout-plug rings, shallow ring pits with hairline cracks, and a spalled edge.
+    exclude_circles_m:
+      - [0.012, 0.008, 0.040]
+      - [0.365, 0.040, 0.055]
+      - [0.565, 0.283, 0.050]
+      - [0.525, 0.382, 0.060]
+      - [1.070, 0.105, 0.060]

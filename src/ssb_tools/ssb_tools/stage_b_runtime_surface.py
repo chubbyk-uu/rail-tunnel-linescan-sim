@@ -42,15 +42,44 @@ def fetch(output, resolution='16k'):
 def _decode(path,raw):
     header=subprocess.check_output(['vipsheader','-a',str(path)],text=True)
     fields={l.split(':',1)[0]:l.split(':',1)[1].strip() for l in header.splitlines()[1:] if ':' in l}
-    side=int(fields['width'])
-    if side!=int(fields['height']) or fields['format'] not in ['uchar','ushort']:
-        raise ValueError('square native uchar/ushort sources required')
+    width,height=int(fields['width']),int(fields['height'])
+    if fields['format'] not in ['uchar','ushort']:
+        raise ValueError('native uchar/ushort sources required')
     dtype=np.dtype('u1' if fields['format']=='uchar' else '<u2');bands=int(fields['bands'])
     # Input requests sequential access; libvips cache is separately bounded.
     env=dict(os.environ,VIPS_CONCURRENCY='2',VIPS_DISC_THRESHOLD='64m')
     subprocess.run(['vips','rawsave',str(path)+'[access=sequential]',str(raw),'--vips-cache-max-memory=67108864'],env=env,check=True)
-    if raw.stat().st_size!=side*side*bands*dtype.itemsize: raise ValueError('decoded dimensions mismatch')
-    return np.memmap(raw,dtype=dtype,mode='r',shape=(side,side,bands))
+    if raw.stat().st_size!=width*height*bands*dtype.itemsize: raise ValueError('decoded dimensions mismatch')
+    return np.memmap(raw,dtype=dtype,mode='r',shape=(height,width,bands))
+
+
+def _pack_channels(source, root, target, scratch, albedo_scale):
+    """Decode diffuse/normal/roughness in bounded strips into one packed texel file.
+    Albedo is linear luminance times albedo_scale. Returns (channel records, (width, height))."""
+    packed=None;shape=None;channels={}
+    for name in ['diffuse','normal_gl','roughness']:
+        entry=source['channels'][name];path=Path(root)/entry['file']
+        if digest(path)!=entry['sha256']:raise ValueError('source hash mismatch')
+        raw=Path(scratch)/('decode_'+name+'.raw');decoded=_decode(path,raw)
+        if shape is None:
+            shape=decoded.shape[:2];packed=np.memmap(target,dtype=TEXEL,mode='w+',shape=shape)
+        if decoded.shape[:2]!=shape:raise ValueError('PBR channels not co-registered')
+        if name in ['diffuse','normal_gl'] and decoded.shape[2]<3:raise ValueError('RGB source required')
+        maxcode=np.iinfo(decoded.dtype).max
+        for row in range(0,shape[0],128):
+            section=np.s_[row:row+128,:];value=decoded[section].astype(np.float32)/maxcode
+            if name=='diffuse':
+                mono=srgb_to_linear(value[:,:,:3])@np.array([.2126,.7152,.0722],np.float32)
+                packed['albedo'][section]=np.uint16(np.clip(mono*albedo_scale*65535+.5,0,65535));packed['reserved'][section]=0
+            elif name=='normal_gl':
+                n=value[:,:,:3]*2-1;n/=np.maximum(np.linalg.norm(n,axis=2,keepdims=True),1e-6)
+                packed['nx'][section]=np.int16(np.clip(n[:,:,0]*32767,-32767,32767))
+                packed['nq'][section]=np.int16(np.clip(-n[:,:,1]*32767,-32767,32767))
+            else:packed['roughness'][section]=np.uint8(np.clip(value[:,:,0]*255+.5,0,255))
+            packed.flush();decoded._mmap.madvise(mmap.MADV_DONTNEED);packed._mmap.madvise(mmap.MADV_DONTNEED)
+        channels[name]=dict(**entry,native_size=[shape[1],shape[0]],native_bits=decoded.dtype.itemsize*8)
+        decoded._mmap.close();del decoded;raw.unlink() # owned, disposable decoder scratch only
+    packed._mmap.close();return channels,(shape[1],shape[0])
 
 
 def native_grid(period, native):
@@ -59,12 +88,13 @@ def native_grid(period, native):
     return period/pixel_q,pixel_q
 
 
-def align_offsets(placements, grid_origin, guide_origin, guide_step, texel):
+def align_offsets(placements, grid_origin, guide_origin, guide_step, texel, material=None):
     """Snap source offsets to whole texels (<= half a texel shift), so every generated texel
     centre lands on a source texel centre: single-patch texels are exact copies and the
     camera sample is the only interpolation. Orientations are orthogonal, so this holds
     for all eight of them."""
     for p in placements:
+        if material is not None and p['material']!=material:continue
         m=np.asarray(p['source_matrix'],float)
         base=m@(np.subtract(grid_origin,guide_origin)-np.array([p['left'],p['top']])*guide_step)
         p['source_offset_m']=(texel*np.round((base+np.asarray(p['source_offset_m']))/texel)-base).tolist()
@@ -78,29 +108,8 @@ def prepare(downloads, config_path, spec_path, output, brightness=.8, working_se
     if not 0<brightness<=1 or working_set<512<<20:raise ValueError('invalid preparation parameters')
     output.mkdir(parents=True)
     try:
-        packed=None;side=None;input_channels={}
-        for name in ['diffuse','normal_gl','roughness']:
-            entry=source['channels'][name];path=downloads.parent/entry['file']
-            if digest(path)!=entry['sha256']:raise ValueError('source hash mismatch')
-            raw=output/('decode_'+name+'.raw');decoded=_decode(path,raw)
-            if side is None:
-                side=decoded.shape[0];packed=np.memmap(output/'source.bin',dtype=TEXEL,mode='w+',shape=(side,side))
-            if decoded.shape[0]!=side:raise ValueError('PBR channels not co-registered')
-            if name in ['diffuse','normal_gl'] and decoded.shape[2]<3:raise ValueError('RGB source required')
-            maxcode=np.iinfo(decoded.dtype).max
-            for row in range(0,side,128):
-                section=np.s_[row:row+128,:];value=decoded[section].astype(np.float32)/maxcode
-                if name=='diffuse':
-                    mono=srgb_to_linear(value[:,:,:3])@np.array([.2126,.7152,.0722],np.float32)
-                    packed['albedo'][section]=np.uint16(np.clip(mono*brightness*65535+.5,0,65535));packed['reserved'][section]=0
-                elif name=='normal_gl':
-                    n=value[:,:,:3]*2-1;n/=np.maximum(np.linalg.norm(n,axis=2,keepdims=True),1e-6)
-                    packed['nx'][section]=np.int16(np.clip(n[:,:,0]*32767,-32767,32767))
-                    packed['nq'][section]=np.int16(np.clip(-n[:,:,1]*32767,-32767,32767))
-                else:packed['roughness'][section]=np.uint8(np.clip(value[:,:,0]*255+.5,0,255))
-                packed.flush();decoded._mmap.madvise(mmap.MADV_DONTNEED);packed._mmap.madvise(mmap.MADV_DONTNEED)
-            input_channels[name]=dict(**entry,native_side=side,native_bits=decoded.dtype.itemsize*8)
-            decoded._mmap.close();del decoded;raw.unlink() # owned, disposable decoder scratch only
+        input_channels,(side,_)=_pack_channels(source,downloads.parent,output/'source.bin',output,brightness)
+        packed=np.memmap(output/'source.bin',dtype=TEXEL,mode='r+',shape=(side,side))
         guide_step=.02;gs=round(3.2/guide_step)
         centres=np.minimum(side-1,((np.arange(gs)+.5)*side/gs).astype(int))
         guide=packed['albedo'][centres[:,None],centres[None,:]].astype(np.float32)/65535
@@ -138,6 +147,91 @@ def prepare(downloads, config_path, spec_path, output, brightness=.8, working_se
         (output/'FAILED').write_text(str(e)+'\n');raise
 
 
+def prepare_set(set_path, sources_root, config_path, spec_path, output, working_set=4<<30):
+    """Multi-source runtime surface from a material set (non-square sources, usable-region masks).
+
+    The generated grid either aligns to one source (grid.align_to; that source's scale is
+    adjusted by a few ppm so the q period holds whole texels) or uses grid.pitch_m.
+    """
+    start=time.monotonic();sources_root=Path(sources_root).resolve();output=Path(output).resolve()
+    ms=yaml.safe_load(Path(set_path).read_text());spec=load_spec(spec_path);config=yaml.safe_load(Path(config_path).read_text())
+    if ms.get('schema')!='ssb.material_set.v1':raise ValueError('material set schema')
+    if output.exists():raise ValueError('runtime surface output exists; do not overwrite')
+    brightness=ms['brightness'];lay=ms['layout'];grid=ms['grid']
+    if not 0<brightness<=1 or working_set<512<<20 or not 1<=len(ms['sources'])<=8:raise ValueError('invalid preparation parameters')
+    output.mkdir(parents=True)
+    try:
+        r=config['tunnel']['radius_m'];period=2*math.pi*r;q0=-math.pi*r;x0,x1=[config['tunnel'][k] for k in ['x_min_m','x_max_m']]
+        guide_step=lay['guide_texel_m'];entries=[];guides=[];valid=[];extents=[]
+        for item in ms['sources']:
+            downloads=sources_root/item['dir']/'downloads.json';source=json.loads(downloads.read_text())
+            gain=float(item.get('albedo_gain',1.))
+            if not 0<gain*brightness<=1.5:raise ValueError('invalid albedo gain')
+            channels,(w,h)=_pack_channels(source,downloads.parent,output/(item['id']+'.bin'),output,brightness*gain)
+            if abs(source['source_width_m']/w-source['source_height_m']/h)>1e-3*source['source_width_m']/w:
+                raise ValueError('non-square texels')
+            native=source['source_width_m']/w
+            packed=np.memmap(output/(item['id']+'.bin'),dtype=TEXEL,mode='r',shape=(h,w))
+            gw,gh=round(w*native/guide_step),round(h*native/guide_step)
+            guides.append(cv2.resize(np.asarray(packed['albedo']),(gw,gh),interpolation=cv2.INTER_AREA).astype(np.float32)/65535)
+            del packed
+            if item.get('mask'):
+                m=cv2.imread(str(sources_root/item['mask']),cv2.IMREAD_GRAYSCALE)
+                if m is None or m.shape[1]*h!=m.shape[0]*w:raise ValueError('mask missing or aspect mismatch')
+                # A guide cell is usable only if every mask pixel inside it is usable.
+                valid.append(cv2.resize((m>=128).astype(np.float32),(gw,gh),interpolation=cv2.INTER_AREA)>=.999)
+            else:valid.append(np.ones((gh,gw),bool))
+            # Authored exclusions (source metres, image x right / y down): a guide cell is
+            # invalid if any part of it lies within a circle.
+            for cx,cy,rad in item.get('exclude_circles_m',[]):
+                gy,gx=np.mgrid[:gh,:gw]
+                dx=np.maximum(np.abs((gx+.5)*guide_step-cx)-guide_step/2,0);dy=np.maximum(np.abs((gy+.5)*guide_step-cy)-guide_step/2,0)
+                valid[-1]&=np.hypot(dx,dy)>rad
+            extents.append((w*native,h*native))
+            entries.append(dict(id=item['id'],file=item['id']+'.bin',width=w,height=h,source_width_m=w*native,nominal_width_m=source['source_width_m'],
+                native_texel_m=native,albedo_gain=gain,weight=item.get('weight'),mask=item.get('mask'),exclude_circles_m=item.get('exclude_circles_m',[]),
+                mask_sha256=digest(sources_root/item['mask']) if item.get('mask') else None,
+                downloads_sha256=digest(downloads),input_channels=channels))
+        ids=[e['id'] for e in entries]
+        if 'align_to' in grid:
+            aligned=ids.index(grid['align_to']);texel_m,pixel_q=native_grid(period,entries[aligned]['native_texel_m'])
+            e=entries[aligned];e['source_scale_ppm']=(texel_m/e['native_texel_m']-1)*1e6;e['native_texel_m']=texel_m;e['source_width_m']=texel_m*e['width']
+        else:
+            aligned=None;texel_m,pixel_q=native_grid(period,grid['pitch_m'])
+        pixel_x=math.ceil((x1-x0)/texel_m-1e-9)
+        core=spec['materials']['tile_core_pixels'];gutter=spec['materials']['tile_gutter_pixels'];margin=(gutter+1)*texel_m
+        weights=[item.get('weight') for item in ms['sources']]
+        weights=None if None in weights else list(np.asarray(weights,float)/sum(weights))
+        layout=quilt_layout(guides,extents,[x0-margin,x0+pixel_x*texel_m+margin,q0-margin,q0+period+margin],ms['seed'],output/'quilt',
+            patch_m=lay['patch_m'],overlap_m=lay['overlap_m'],guide_texel_m=guide_step,min_repeat_x_m=lay['min_repeat_m'],
+            near_crop_m=lay['near_crop_m'],candidates=lay['candidates'],valid=valid,weights=weights,repeat_metric='wall')
+        if aligned is not None:align_offsets(layout['placements'],[x0,q0],layout['origin_xq_m'],guide_step,texel_m,material=aligned)
+        alpha=np.stack([cv2.imread(str(output/'quilt'/p['alpha']),cv2.IMREAD_GRAYSCALE) for p in layout['placements']])
+        alpha.tofile(output/'alpha.bin')
+        for e in entries:e['sha256']=digest(output/e['file'])
+        recipe=dict(schema='ssb.surface_recipe.v1',interpolation='bilinear_fixed32_v1',origin_xq_m=layout['origin_xq_m'],
+            guide_texel_m=guide_step,patch_pixels=layout['patch_pixels'],placements=layout['placements'],
+            offsets_aligned_to_texel_m=texel_m if aligned is not None else None,aligned_source=ids[aligned] if aligned is not None else None,
+            sources=entries,alpha=dict(file='alpha.bin',sha256=digest(output/'alpha.bin')),brightness=brightness,
+            material_set_sha256=digest(set_path))
+        (output/'recipe.json').write_text(json.dumps(recipe,indent=2)+'\n')
+        mix={i:sum(p['material']==n for p in layout['placements'])/len(layout['placements']) for n,i in enumerate(ids)}
+        surface=dict(schema='ssb.surface_runtime.v1',tunnel=config['tunnel'],origin_xq_m=[x0,q0],period_q_m=period,
+            texel_xq_m=[texel_m,texel_m],pixels_xq=[pixel_x,pixel_q],tiles_xq=[math.ceil(pixel_x/core),math.ceil(pixel_q/core)],
+            core_pixels=core,gutter_pixels=gutter,texel_format='mono16_rough8_reserved8_nx16_nq16_le',texel_bytes=8,
+            recipe=dict(file='recipe.json',sha256=digest(output/'recipe.json')),resources={**spec['resources'],'asset_working_set_bytes':working_set,'gpu_source_budget_bytes':4<<30},
+            layout_sha256=digest(output/'quilt/layout.json'),brightness=brightness,native_detail_m=min(e['native_texel_m'] for e in entries),
+            placement_fraction=mix,preparation_seconds=time.monotonic()-start,preparation_peak_rss_bytes=peak_rss_bytes(),
+            source_disk_bytes=sum((output/e['file']).stat().st_size for e in entries),generated_tile_disk_bytes=0,
+            assumptions='Source scales from publisher metadata; aligned source adjusted by source_scale_ppm. Usable-region masks exclude authored defects. Repeat guard is 2D wall distance, not perceptual uniqueness.',
+            inputs={k:dict(file=str(Path(v).resolve()),sha256=digest(v)) for k,v in dict(config=config_path,spec=spec_path,material_set=set_path).items()})
+        if surface['preparation_peak_rss_bytes']>working_set:raise ValueError('preparation exceeded working-set budget')
+        (output/'surface.json').write_text(json.dumps(surface,indent=2)+'\n')
+        return surface
+    except Exception as e:
+        (output/'FAILED').write_text(str(e)+'\n');raise
+
+
 class ReferenceRecipe:
     """Float64 NumPy reference, independently samples the packed native sources."""
     def __init__(self,surface_path):
@@ -148,7 +242,7 @@ class ReferenceRecipe:
         for e in self.recipe['sources']:
             p=rp.parent/e['file']
             if digest(p)!=e['sha256']:raise ValueError('source identity mismatch')
-            self.sources.append(np.memmap(p,TEXEL,mode='r',shape=(e['side'],e['side'])))
+            self.sources.append(np.memmap(p,TEXEL,mode='r',shape=(e.get('height',e.get('side')),e.get('width',e.get('side')))))
         e=self.recipe['alpha'];p=rp.parent/e['file']
         if digest(p)!=e['sha256']:raise ValueError('alpha identity mismatch')
         n=self.recipe['patch_pixels'];self.alpha=np.fromfile(p,np.uint8).reshape(-1,n,n)
@@ -170,7 +264,7 @@ class ReferenceRecipe:
             xi=np.flatnonzero((gx>=p['left'])&(gx<p['left']+side));yi=np.flatnonzero((gy>=p['top'])&(gy<p['top']+side))
             if not len(xi) or not len(yi):continue
             px,py=np.meshgrid(gx[xi]-p['left'],gy[yi]-p['top']);a=self.interp(self.alpha[id],px-.5,py-.5)/255
-            m=np.array(p['source_matrix']);o=p['source_offset_m'];e=r['sources'][p['material']];src=self.sources[p['material']];native=e['source_width_m']/e['side']
+            m=np.array(p['source_matrix']);o=p['source_offset_m'];e=r['sources'][p['material']];src=self.sources[p['material']];native=e['source_width_m']/e.get('width',e.get('side'))
             u=(m[0,0]*px*r['guide_texel_m']+m[0,1]*py*r['guide_texel_m']+o[0])/native-.5
             v=(m[1,0]*px*r['guide_texel_m']+m[1,1]*py*r['guide_texel_m']+o[1])/native-.5
             value=np.stack([self.interp(src[c],u,v)/scale for c,scale in [('albedo',65535),('roughness',255),('nx',32767),('nq',32767)]],axis=-1)
@@ -192,9 +286,12 @@ def main():
     a=sub.add_parser('prepare')
     for k in ['downloads','config','spec','output']:a.add_argument('--'+k,required=True)
     a.add_argument('--brightness',type=float,default=.8)
+    m=sub.add_parser('prepare-set')
+    for k in ['set','sources','config','spec','output']:m.add_argument('--'+k,required=True)
     args=p.parse_args();kw=vars(args);command=kw.pop('command')
-    if command=='prepare':kw['config_path']=kw.pop('config');kw['spec_path']=kw.pop('spec')
-    result=(fetch if command=='fetch' else prepare)(**kw)
+    if command in ['prepare','prepare-set']:kw['config_path']=kw.pop('config');kw['spec_path']=kw.pop('spec')
+    if command=='prepare-set':kw['set_path']=kw.pop('set');kw['sources_root']=kw.pop('sources')
+    result=dict(fetch=fetch,prepare=prepare)[command](**kw) if command!='prepare-set' else prepare_set(**kw)
     print(json.dumps({k:v for k,v in result.items() if k not in ['channels','inputs']}))
 
 
