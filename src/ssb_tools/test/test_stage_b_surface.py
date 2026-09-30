@@ -294,3 +294,14 @@ def test_same_orientation_duplicates_are_kept_apart(tmp_path):
             (a0,a1),(b0,b1)=rect(a),rect(b);w,h=np.clip(np.minimum(a1,b1)-np.maximum(a0,b0),0,None)
             assert w*h/patch**2<=limit+1e-9;pairs+=1
     assert pairs>0   # the check exercised real same-orientation neighbours
+
+
+def test_orientation_subset_is_respected(tmp_path):
+    rng=np.random.default_rng(2)
+    guide=rng.uniform(.2,.6,(50,50)).astype(np.float32)
+    layout=quilt_layout([guide],[.5],[0,1.2,0,1.2],3,tmp_path/'q',patch_m=.2,overlap_m=.08,guide_texel_m=.01,
+                        min_repeat_x_m=.2,near_crop_m=.01,candidates=8,repeat_metric='wall',orientations=[[0,1,4,5]])
+    used={p['orientation'] for p in layout['placements']}
+    assert used<={0,1,4,5} and len(used)>1
+    for p in layout['placements']:   # image x stays along wall x: no quarter turns
+        m=np.asarray(p['source_matrix']);assert m[0,1]==0 and m[1,0]==0

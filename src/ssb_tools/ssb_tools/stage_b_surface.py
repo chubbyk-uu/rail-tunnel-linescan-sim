@@ -100,7 +100,7 @@ def prepare_sources(sources_path, recipe_path, spec, output, brightness):
 
 def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, overlap_m=.2,
                  guide_texel_m=.02, min_repeat_x_m=5., near_crop_m=.12, candidates=48,
-                 valid=None, weights=None, repeat_metric='x', max_same_orientation_overlap=None):
+                 valid=None, weights=None, repeat_metric='x', max_same_orientation_overlap=None, orientations=None):
     """Choose native crops, reject nearby source-region reuse, replay one mask on all channels.
 
     source_widths: per source, the extent (m) along image x, or (x, y) extents for
@@ -113,6 +113,9 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
     (area fraction of one patch) more than this with a crop of the same source and the
     same orientation placed within min_repeat_x_m: such pairs are translation-matchable
     duplicates that could mislead strip registration.
+    orientations: optional per-source allowed orientation indices (2*k + mirror, k quarter
+    turns of np.rot90 then np.fliplr); e.g. [0,1,4,5] keeps the image-x direction of
+    directional marks.
     """
     x0,x1,q0,q1 = bounds
     patch, overlap = round(patch_m/guide_texel_m),round(overlap_m/guide_texel_m)
@@ -121,6 +124,8 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
     if not 2<=overlap<patch or any(min(g.shape)<patch for g in guides) or any(v.shape!=g.shape for v,g in zip(valid,guides)):
         raise ValueError('invalid patch geometry')
     if weights is None: weights = [.45,.4,.15] if len(guides)==3 else None
+    if orientations is None: orientations = [list(range(8))]*len(guides)
+    if any(not o or not set(o)<=set(range(8)) for o in orientations): raise ValueError('invalid orientation set')
     # Crop origins whose whole patch is valid, per source and orientation (summed-area table).
     def usable(mask):
         table = np.pad(mask.astype(np.int64),((1,0),(1,0))).cumsum(0).cumsum(1)
@@ -158,7 +163,7 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
                 near=history[np.abs(history[:,0]-left)*guide_texel_m<min_repeat_x_m]
             for attempt in range(candidates*16):
                 material=int(rng.choice(len(guides),p=weights))
-                orientation=int(rng.integers(8))
+                allowed=orientations[material];orientation=int(allowed[int(rng.integers(len(allowed)))])
                 guide=oriented[material][orientation]
                 candidates_xy=origins[material][orientation]
                 sy,sx=map(int,candidates_xy[int(rng.integers(len(candidates_xy)))])
@@ -222,7 +227,7 @@ def quilt_layout(guides, source_widths, bounds, seed, directory, patch_m=.8, ove
     if coverage[1:-1,1:-1].min()<.999: raise ValueError('quilt coverage incomplete between patches')
     layout=dict(schema='ssb.quilt_layout.v1',seed=seed,bounds_xq_m=bounds,origin_xq_m=[x0,q0],
                 guide_texel_m=guide_texel_m,patch_pixels=patch,overlap_pixels=overlap,guide_size=list(canvas.shape),
-                min_repeat_distance_x_m=min_repeat_x_m,near_source_crop_centre_m=near_crop_m,repeat_metric=repeat_metric,max_same_orientation_overlap=max_same_orientation_overlap,
+                min_repeat_distance_x_m=min_repeat_x_m,near_source_crop_centre_m=near_crop_m,repeat_metric=repeat_metric,max_same_orientation_overlap=max_same_orientation_overlap,orientations=orientations,
                 repeat_guard='same source region regardless of rotation/mirror; canonical crop centres within threshold',
                 repeat_guard_limit='Not a global perceptual similarity or feature-level uniqueness guarantee.',
                 rejected_near_reuse_candidates=reused,placements=placements)

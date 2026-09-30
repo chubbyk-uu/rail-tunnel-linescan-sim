@@ -257,7 +257,8 @@ def prepare_set(set_path, sources_root, config_path, spec_path, output, working_
         layout=quilt_layout(guides,extents,[x0-margin,x0+pixel_x*texel_m+margin,q0-margin,q0+period+margin],ms['seed'],output/'quilt',
             patch_m=lay['patch_m'],overlap_m=lay['overlap_m'],guide_texel_m=guide_step,min_repeat_x_m=lay['min_repeat_m'],
             near_crop_m=lay['near_crop_m'],candidates=lay['candidates'],valid=valid,weights=weights,repeat_metric='wall',
-            max_same_orientation_overlap=lay.get('max_same_orientation_overlap'))
+            max_same_orientation_overlap=lay.get('max_same_orientation_overlap'),
+            orientations=[item.get('orientations',list(range(8))) for item in ms['sources']])
         if aligned is not None:align_offsets(layout['placements'],[x0,q0],layout['origin_xq_m'],guide_step,texel_m,material=aligned)
         alpha=np.stack([cv2.imread(str(output/'quilt'/p['alpha']),cv2.IMREAD_GRAYSCALE) for p in layout['placements']])
         alpha.tofile(output/'alpha.bin')

@@ -15,9 +15,9 @@ layout:
   # Within min_repeat_m (2D wall distance): no crop centre reuse closer than near_crop_m, and
   # same-orientation crops may share at most max_same_orientation_overlap of their source area
   # (translation-matchable duplicates would mislead strip registration).
-  # 1.0 and 0.8 m are infeasible with one 0.57 m2 source; 0.6 m covers the +/-0.3 m repetition
-  # search plus window (docs/STAGE_B_TEXTURE_AUDIT.md).
-  min_repeat_m: 0.6
+  # With 4 streak-preserving orientations, >= 0.5 m is infeasible for one 0.57 m2 source;
+  # 0.45 m still exceeds the +/-0.3 m repetition search (docs/STAGE_B_TEXTURE_AUDIT.md).
+  min_repeat_m: 0.45
   near_crop_m: 0.03
   max_same_orientation_overlap: 0.25
   candidates: 96
@@ -29,6 +29,9 @@ sources:
     # so lamp and exposure settings stay unchanged. Not an absolute reflectance calibration.
     albedo_gain: 0.533
     weight: 1
+    # Keep the horizontal trowel marks horizontal: identity, mirror, 180 deg, 180 deg + mirror.
+    # Quarter turns crossed the marks into an unnatural woven pattern.
+    orientations: [0, 1, 4, 5]
     # Grout-plug rings, shallow ring pits with hairline cracks, and a spalled edge.
     exclude_circles_m:
       - [0.012, 0.008, 0.040]
