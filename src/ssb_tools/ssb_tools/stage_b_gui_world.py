@@ -23,6 +23,9 @@ def prepare(world,config,spec,output,mode):
     (output/'inputs/spec.yaml').write_bytes(spec.read_bytes())
     if mode=='lighting':
         w.find('scene/ambient').text=' '.join(map(str,[*rgb,1]))
+    elif mode=='track':
+        from .stage_b_track import make_track
+        w.remove(w.find("model[@name='track']"));w.append(make_track(output,c,s))
     elif mode=='robot':
         from .stage_b_robot import make_robot
         old=w.find("model[@name='scan_car']")
@@ -42,7 +45,7 @@ def prepare(world,config,spec,output,mode):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for k in ('world','config','spec','output'):p.add_argument('--'+k,required=True,type=Path)
-    p.add_argument('--mode',choices=('lighting','robot'),required=True)
+    p.add_argument('--mode',choices=('lighting','robot','track'),required=True)
     a=p.parse_args();prepare(a.world,a.config,a.spec,a.output,a.mode)
 
 

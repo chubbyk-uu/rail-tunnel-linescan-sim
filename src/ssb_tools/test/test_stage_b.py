@@ -488,3 +488,24 @@ def test_patent_guides_touch_inner_rail_and_wheels_rest_on_top(tmp_path,inputs):
     assert carriage.get('type')=='prismatic' and carriage.findtext('axis/xyz')=='1 0 0'
     assert len(car.findall('.//collision'))==2
     assert sum(float(v.text) for v in car.findall('link/inertial/mass'))==120
+
+
+def test_track_sleepers_and_contact_planes(tmp_path,inputs):
+    from ssb_tools.stage_b_track import make_track
+    config,spec=inputs;track=make_track(tmp_path,config,spec)
+    rails=track.find("link[@name='rails']")
+    for sign,side in [(1,'left'),(-1,'right')]:
+        c=rails.find(f"collision[@name='{side}_head']")
+        x,y,z,*_=map(float,c.findtext('pose').split())
+        length,width,height=map(float,c.findtext('geometry/box/size').split())
+        assert z+height/2==pytest.approx(0)
+        assert sign*y-width/2==pytest.approx(spec['track']['gauge_m']/2)
+    sleepers=track.find("link[@name='sleepers']")
+    positions=[float(v.findtext('pose').split()[0]) for v in sleepers.findall('visual') if v.get('name').startswith('sleeper_')]
+    assert len(positions)>30 and np.diff(positions)==pytest.approx(.6)
+    # Rail render geometry has actual head, web and foot sections, no hidden solid beam.
+    vertices=[]
+    for file in (tmp_path/'track').glob('*.obj'):
+        vertices.extend([list(map(float,l.split()[1:])) for l in file.read_text().splitlines() if l.startswith('v ')])
+    assert min(v[2] for v in vertices)==pytest.approx(-.176)
+    assert max(v[2] for v in vertices)==pytest.approx(0)

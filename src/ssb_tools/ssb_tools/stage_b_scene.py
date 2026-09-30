@@ -594,23 +594,8 @@ def make_world(out, config, spec, previews=None):
             sub(metal,'albedo_map',str((out/texture).resolve()))
             sub(metal,'roughness',.9)
             sub(metal,'metalness',0)
-    track = sub(world, 'model', name='track')
-    sub(track, 'static', 'true')
-    rails = sub(track, 'link', name='rails')
-    t = spec['track']
-    lo, hi = config['tunnel']['x_min_m'], config['tunnel']['x_max_m']
-    length, centre = hi-lo, (hi+lo)/2
-    head_y = (t['gauge_m']+t['head_width_m'])/2
-    for side, y in (('left',head_y), ('right',-head_y)):
-        # Rail top is z=0; 38/121.5/16.5 mm simplified rail sections total 176 mm.
-        for part, width, height, z in (('head',t['head_width_m'],.038,-.019),
-                                      ('web',t['web_width_m'],.1215,-.09875),
-                                      ('foot',t['foot_width_m'],.0165,-.16775)):
-            box(rails, side+'_'+part, f'{centre} {y} {z} 0 0 0', f'{length} {width} {height}', '0.32 0.34 0.36 1', collision=part=='head')
-    for side, y in (('left',head_y), ('right',-head_y)):
-        box(rails, side+'_support', f'{centre} {y} -0.2075 0 0 0', f'{length} 0.25 0.063', '0.25 0.25 0.25 1')
-    box(rails, 'bed', f'{centre} 0 -0.339 0 0 0', f'{length} {t["bed_width_m"]} 0.200', '0.3 0.3 0.3 1', collision=True)
-    box(rails, 'foundation', f'{centre} 0 -0.587 0 0 0', f'{length} {t["bed_width_m"]} 0.296', '0.35 0.35 0.35 1')
+    from .stage_b_track import make_track
+    world.append(make_track(out,config,spec))
     from .stage_b_robot import make_robot
     world.append(make_robot(out,config,spec))
     ET.indent(root)
