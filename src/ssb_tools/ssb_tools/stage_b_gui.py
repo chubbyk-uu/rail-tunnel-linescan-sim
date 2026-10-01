@@ -157,7 +157,12 @@ def prepare(scene_path, world_path, output, budget=1280<<20):
     for name,cols in [('segments.bin',6),('depths.bin',2)]:
         entry=defects['files'][name]; p=defects_path.parent/entry['file']
         if digest(p)!=entry['sha256']: raise ValueError('crack data identity mismatch')
-        arrays.append(np.fromfile(p,'<f4').reshape(-1,cols))
+        if name=='segments.bin':
+            from .stage_b_defects import read_segments
+            packed=read_segments(p,defects)
+            arrays.append(np.column_stack([packed[field] for field in packed.dtype.names]))
+        else:
+            arrays.append(np.fromfile(p,'<f4').reshape(-1,cols))
     segments,depths=arrays
     root=ET.parse(world_path); lining=root.find(".//model[@name='tunnel']/link[@name='lining']")
     # Retain original joint/filler/gap meshes; replace only concrete previews.

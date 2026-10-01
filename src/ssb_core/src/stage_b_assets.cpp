@@ -176,7 +176,7 @@ StageBAssets::StageBAssets(const Config& c) {
   if(integrated_cracks) {
     // OBJ quads duplicate vertices. Match geometric edges, including periodic
     // boundaries; internal diagonals and <=1 degree wall facets are smooth.
-    using Point=std::array<float,3>;using Edge=std::array<Point,2>;
+    using Point=std::array<double,3>;using Edge=std::array<Point,2>;
     std::map<Edge,std::vector<std::pair<unsigned,unsigned>>> edges;
     std::vector<Vec3> normals;
     for(unsigned i=0;i<triangles.size();++i) {
@@ -213,7 +213,14 @@ StageBAssets::StageBAssets(const Config& c) {
     const auto entry=defects.at("files").at(name);using T=decltype(tag);
     return ReadBinary<T>(Resolve(defect_path.parent_path(),entry.at("file")),bytes,entry.at("sha256"));
   };
-  segments=file("segments.bin",segment_count*sizeof(CrackSegment),CrackSegment{});
+  const auto segment_format=grid.value("segment_format",std::string("xq32_radius32_le"));
+  Need(segment_format=="xq32_radius32_le" || segment_format=="xq64_radius32_le","unknown crack segment format");
+  if(segment_format=="xq64_radius32_le") {
+    segments=file("segments.bin",segment_count*sizeof(CrackSegment),CrackSegment{});
+  } else {
+    const auto old=file("segments.bin",segment_count*sizeof(LegacyCrackSegment),LegacyCrackSegment{});
+    for(auto s:old) segments.push_back({s.x0,s.q0,s.x1,s.q1,s.r0,s.r1});
+  }
   offsets=file("offsets.bin",(size_t(crack_nx)*crack_nq+1)*4,unsigned{});
   indices=file("indices.bin",index_count*4,unsigned{});
   Need(offsets.front()==0&&offsets.back()==indices.size()&&std::is_sorted(offsets.begin(),offsets.end()),"invalid crack offsets");

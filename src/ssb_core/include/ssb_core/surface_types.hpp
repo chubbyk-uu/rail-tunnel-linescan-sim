@@ -9,6 +9,8 @@ struct SurfaceTexel {
   int16_t nx, nq;
 };
 static_assert(sizeof(SurfaceTexel) == 8);
-struct CrackSegment { float x0, q0, x1, q1, r0, r1; };
-static_assert(sizeof(CrackSegment) == 24);
+struct LegacyCrackSegment { float x0, q0, x1, q1, r0, r1; };
+struct CrackSegment { double x0, q0, x1, q1; float r0, r1; };
+static_assert(sizeof(LegacyCrackSegment) == 24);
+static_assert(sizeof(CrackSegment) == 40);
 }

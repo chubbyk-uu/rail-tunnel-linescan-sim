@@ -6,7 +6,7 @@
 #include "ssb_core/surface_recipe.hpp"
 
 namespace ssb {
-struct OpticalVertex { float x, y, z; };
+struct OpticalVertex { double x, y, z; }; // preserve source precision until chunk localization
 struct OpticalTriangle { unsigned a, b, c; };
 struct StageBAssets {
   explicit StageBAssets(const Config& config);

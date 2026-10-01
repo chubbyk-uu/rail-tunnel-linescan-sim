@@ -10,7 +10,15 @@ import yaml
 from .stage_b_cracks import calibrate_long, sample_widths
 from .stage_b_scene import digest, load_spec, peak_rss_bytes
 
-SEGMENT=np.dtype([('x0','<f4'),('q0','<f4'),('x1','<f4'),('q1','<f4'),('r0','<f4'),('r1','<f4')])
+LEGACY_SEGMENT=np.dtype([('x0','<f4'),('q0','<f4'),('x1','<f4'),('q1','<f4'),('r0','<f4'),('r1','<f4')])
+SEGMENT=np.dtype([('x0','<f8'),('q0','<f8'),('x1','<f8'),('q1','<f8'),('r0','<f4'),('r1','<f4')])
+
+
+def read_segments(path, defects):
+    fmt=defects.get('grid',{}).get('segment_format','xq32_radius32_le')
+    if fmt not in ('xq32_radius32_le','xq64_radius32_le'):
+        raise ValueError('unknown crack segment format')
+    return np.fromfile(path,dtype=SEGMENT if fmt=='xq64_radius32_le' else LEGACY_SEGMENT)
 # Optional parallel array (depths.bin): effective visible depth at both segment ends, metres.
 DEPTH=np.dtype([('d0','<f4'),('d1','<f4')])
 
@@ -141,7 +149,7 @@ def build_grid(instances,bounds,cell_m=.01,max_index_bytes=32<<20,with_depths=Fa
     extra=np.array(depths,dtype=DEPTH) if with_depths else None
     total=packed.nbytes+offsets.nbytes+indices.nbytes+(extra.nbytes if with_depths else 0)
     if total>max_index_bytes: raise ValueError('crack index exceeds budget')
-    meta=dict(origin_xq_m=[x0,q0],bounds_xq_m=list(bounds),cell_m=cell_m,cells_xq=[nx,nq],segments=len(packed),index_entries=len(indices),
+    meta=dict(segment_format='xq64_radius32_le',origin_xq_m=[x0,q0],bounds_xq_m=list(bounds),cell_m=cell_m,cells_xq=[nx,nq],segments=len(packed),index_entries=len(indices),
               bytes=total,max_cell_segments=max((len(v) for v in grid.values()),default=0))
     return (packed,offsets,indices,meta,extra) if with_depths else (packed,offsets,indices,meta)
 

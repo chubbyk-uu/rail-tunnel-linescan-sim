@@ -9,6 +9,7 @@
 #include "ssb_core/stage_b_assets.hpp"
 #include "ssb_core/sha256.hpp"
 #include "ssb_core/crack_integral.hpp"
+#include "ssb_core/local_geometry.hpp"
 
 namespace {
 using namespace ssb;
@@ -62,7 +63,7 @@ struct SurfaceFixture : ::testing::Test {
     for(unsigned i=0;i<offsets.size();++i) offsets[i]=i;
     Binary("offsets.bin",offsets);Binary("indices.bin",indices);
     Json("defects.json",{{"schema","ssb.defect_layout.v1"},
-      {"grid",{{"origin_xq_m",{-1.5,-pi*2.75}},{"cell_m",.5},{"cells_xq",{cx,cq}},{"segments",1},{"index_entries",indices.size()}}},
+      {"grid",{{"segment_format","xq64_radius32_le"},{"origin_xq_m",{-1.5,-pi*2.75}},{"cell_m",.5},{"cells_xq",{cx,cq}},{"segments",1},{"index_entries",indices.size()}}},
       {"files",{{"segments.bin",Entry("segments.bin")},{"offsets.bin",Entry("offsets.bin")},{"indices.bin",Entry("indices.bin")}}}});
     nlohmann::json surface;std::ifstream(root/"surface.json")>>surface;
     surface["adaptive_crack_guard_m"]=.003;surface["adaptive_defects_sha256"]=Sha256File(root/"defects.json");
@@ -443,4 +444,66 @@ TEST_F(SurfaceFixture, WeakReflectedFillIsBoundedAndDoesNotMoveHits) {
   ASSERT_EQ(a.size(),b.size());EXPECT_EQ(ha,hb);
   for(size_t i=0;i<a.size();++i){EXPECT_GE(b[i],a[i]);EXPECT_LE(int(b[i])-int(a[i]),1);}
   scene["indirect_fill_relative"]=-.1;SaveScene();EXPECT_THROW(StageBAssets invalid(c),std::runtime_error);
+}
+
+
+TEST_F(SurfaceFixture, LongDistanceLocalFramesMatchSourceMeshAndReplayAcrossBoundaries) {
+  scene["sampling"]["integrated_cracks"]=true;
+  scene["sampling"]["time_samples"]=3;
+  scene["sampling"]["texture_footprint_samples"]=2;
+  SaveScene();
+  const auto base_config=c;
+  std::string original_mesh;
+  {std::ifstream in(root/"wall.obj");original_mesh.assign(std::istreambuf_iterator<char>(in),{});}
+  nlohmann::json original_surface,original_defects;
+  std::ifstream(root/"surface.json")>>original_surface;
+  std::ifstream(root/"defects.json")>>original_defects;
+  std::vector<uint8_t> baseline;
+  for(double shift:{0.,100.,150.}) {
+    c=base_config;c.tunnel_x_min_m+=shift;c.tunnel_x_max_m+=shift;c.start_x_m+=shift;
+    std::istringstream input(original_mesh);std::ofstream mesh(root/"wall.obj");mesh.precision(17);
+    std::string line;
+    while(std::getline(input,line)) {
+      if(line.rfind("v ",0)==0) {
+        std::istringstream row(line.substr(2));double x,y,z;row>>x>>y>>z;
+        mesh<<"v "<<x+shift<<" "<<y<<" "<<z<<"\n";
+      } else mesh<<line<<"\n";
+    }
+    mesh.close();
+    auto surface=original_surface,defects=original_defects;
+    surface["tunnel"]["x_min_m"]=c.tunnel_x_min_m;surface["tunnel"]["x_max_m"]=c.tunnel_x_max_m;
+    surface["origin_xq_m"][0]=c.tunnel_x_min_m;
+    defects["grid"]["origin_xq_m"][0]=c.tunnel_x_min_m;
+    Binary("segments.bin",std::vector<CrackSegment>{{3+shift,.5,13+shift,.5,.0002,.0002}});
+    defects["files"]["segments.bin"]=Entry("segments.bin");Json("defects.json",defects);
+    surface["adaptive_defects_sha256"]=Sha256File(root/"defects.json");Json("surface.json",surface);
+    scene["meshes"][0]=Entry("wall.obj");scene["meshes"][0]["material"]=0;
+    scene["surface"]=Entry("surface.json");scene["defects"]=Entry("defects.json");SaveScene();
+    StageBAssets oracle(c);
+    auto localized=LocalizeGeometry(oracle);
+    for(auto v:localized.vertices) EXPECT_LE(std::abs(v.x),1.f);
+    EXPECT_GT(localized.chunks.size(),1u);
+    std::vector<RowJob> jobs(17);
+    for(size_t i=0;i<jobs.size();++i) {
+      auto& p=jobs[i].pose;p.x=shift+5.99981+i*.000025;p.theta=.5/2.75;
+      p.v=.2;p.omega=c.NominalOmega();
+    }
+    OptixRenderer renderer(c,DefaultPtxPath(),jobs.size());
+    std::vector<uint8_t> pixels,replayed;std::vector<double> hits,again;
+    renderer.Render(jobs,pixels,hits);
+    for(size_t first=0;first<jobs.size();first+=3) {
+      std::vector<uint8_t> part;std::vector<double> part_hits;
+      renderer.Render({jobs.begin()+first,jobs.begin()+std::min(first+3,jobs.size())},part,part_hits);
+      replayed.insert(replayed.end(),part.begin(),part.end());again.insert(again.end(),part_hits.begin(),part_hits.end());
+    }
+    EXPECT_EQ(pixels,replayed);EXPECT_EQ(hits,again);
+    if(shift==0) baseline=pixels;else EXPECT_EQ(pixels,baseline);
+    const auto columns=DebugColumns(c);
+    for(size_t i=0;i<jobs.size();++i) for(size_t j=0;j<columns.size();++j) {
+      double x,q;
+      ASSERT_TRUE(oracle.CpuHit(TrueHeadPose(c,jobs[i].pose),c.PixelTangent(columns[j]),0,&x,&q));
+      EXPECT_NEAR(hits[(i*columns.size()+j)*2],x,5e-6);
+      EXPECT_NEAR(hits[(i*columns.size()+j)*2+1],q,5e-6);
+    }
+  }
 }

@@ -79,7 +79,7 @@ extern "C" __global__ void __raygen__scan() {
 extern "C" __global__ void __closesthit__wall() {
   const double t=optixGetRayTmax();
   optixSetPayload_0(Lo(t));optixSetPayload_1(Hi(t));optixSetPayload_2(1u);
-  optixSetPayload_3(optixGetPrimitiveIndex());
+  optixSetPayload_3(optixGetPrimitiveIndex()+optixGetInstanceId());
 }
 namespace {
 __device__ float3 Add(float3 a,float3 b) { return make_float3(a.x+b.x,a.y+b.y,a.z+b.z); }
@@ -141,6 +141,7 @@ __device__ float3 CrackPoint(double x,double q) {
   return make_float3(core,core>0?0.f:edge,aspect);
 }
 __device__ float TriangleMargin(float3 point,unsigned primitive) {
+  point.x-=float(params.primitive_origin_x[primitive]-params.frame_x);
   uint3 tri=params.triangles[primitive];float3 a=params.vertices[tri.x],b=params.vertices[tri.y],c=params.vertices[tri.z];
   float3 n=Unit(Cross(Sub(b,a),Sub(c,a)));
   float m0=fabsf(Dot(Cross(Sub(b,a),Sub(point,a)),n))/sqrtf(Dot(Sub(b,a),Sub(b,a)));
@@ -149,6 +150,7 @@ __device__ float TriangleMargin(float3 point,unsigned primitive) {
   return fminf(m0,fminf(m1,m2));
 }
 __device__ float CriticalMargin(float3 point,unsigned primitive) {
+  point.x-=float(params.primitive_origin_x[primitive]-params.frame_x);
   unsigned mask=params.critical_edges[primitive];if(!mask)return 1e10f;
   uint3 tri=params.triangles[primitive];float3 v[3]={params.vertices[tri.x],params.vertices[tri.y],params.vertices[tri.z]};
   float3 n=Unit(Cross(Sub(v[1],v[0]),Sub(v[2],v[0])));float margin=1e10f;
@@ -164,16 +166,16 @@ __device__ bool Hit(const DeviceRow& row,float tangent,float scan_tangent,double
                          row.optical[1]+tangent*row.line[1]+scan_tangent*row.scan[1],
                          row.optical[2]+tangent*row.line[2]+scan_tangent*row.scan[2]));
   unsigned lo=0,hi=0,hit=0,tri=0;
-  float3 origin=make_float3(float(row.origin_x),row.origin_y,row.origin_z);
+  float3 origin=make_float3(float(row.origin_x-params.frame_x),row.origin_y,row.origin_z);
   optixTrace(params.handle,origin,*direction,0.f,1e3f,0.f,255,OPTIX_RAY_FLAG_DISABLE_ANYHIT,0,1,0,lo,hi,hit,tri);
   if(!hit) return false;
   double t=Join(lo,hi);
   // Use the actual float ray origin in a triangle scene; mixing in its unrounded
   // double origin would falsely claim hit accuracy absent from the traced ray.
-  *x=double(origin.x)+t*direction->x;
+  *x=params.frame_x+double(origin.x)+t*direction->x;
   double y=origin.y+t*direction->y,z=origin.z+t*direction->z;
   *q=params.radius*atan2(y,z-params.axis_z);
-  *point=make_float3(float(*x),float(y),float(z));*primitive=tri;
+  *point=make_float3(float(double(origin.x)+t*direction->x),float(y),float(z));*primitive=tri;
   return *x>=params.x_min&&*x<=params.x_max;
 }
 // Same finite-source sample positions for shading and the slot visibility guard.
@@ -188,8 +190,8 @@ __device__ float3 LampSample(const DeviceRow& row,unsigned i) {
     s=(i&1?1.f:-1.f)*.288675134595f*params.lamp_length;
     w=(i&2?1.f:-1.f)*.288675134595f*params.lamp_width;
   }
-  float3 centre=row.body_pose ? Add(make_float3(float(row.origin_x),row.origin_y,row.origin_z),Mul(axis,params.lamp_axial)) :
-    make_float3(float(row.origin_x)+params.lamp_axial,row.origin_y,row.origin_z);
+  float3 centre=row.body_pose ? Add(make_float3(float(row.origin_x-params.frame_x),row.origin_y,row.origin_z),Mul(axis,params.lamp_axial)) :
+    make_float3(float(row.origin_x-params.frame_x)+params.lamp_axial,row.origin_y,row.origin_z);
   return Add(centre,Add(Mul(optical,params.lamp_radial),
                        Add(Mul(scan,params.lamp_tangential+w),Mul(axis,s))));
 }
@@ -266,7 +268,7 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
     const float3 optical=make_float3(row.optical[0],row.optical[1],row.optical[2]);
     const float3 scan=make_float3(row.scan[0],row.scan[1],row.scan[2]);
     const float3 axis=Unit(Cross(scan,optical));
-    const float3 centre=Add(make_float3(float(row.origin_x),row.origin_y,row.origin_z),
+    const float3 centre=Add(make_float3(float(row.origin_x-params.frame_x),row.origin_y,row.origin_z),
       Add(Mul(axis,params.lamp_axial),Add(Mul(scan,params.lamp_tangential),Mul(optical,params.lamp_radial))));
     const float3 delta=Sub(point,centre);
     const float forward=fmaxf(1e-6f,Dot(delta,optical));
@@ -316,7 +318,7 @@ __device__ float3 PixelWorldDelta(const DeviceRow& row,float3 point,float tangen
   float3 normal=Unit(Cross(Sub(params.vertices[tri.y],params.vertices[tri.x]),Sub(params.vertices[tri.z],params.vertices[tri.x])));
   float3 raw=make_float3(row.optical[0]+tangent*row.line[0],row.optical[1]+tangent*row.line[1],row.optical[2]+tangent*row.line[2]);
   float3 axis=across?make_float3(row.line[0],row.line[1],row.line[2]):make_float3(row.scan[0],row.scan[1],row.scan[2]);
-  float3 origin=make_float3(float(row.origin_x),row.origin_y,row.origin_z);
+  float3 origin=make_float3(float(row.origin_x-params.frame_x),row.origin_y,row.origin_z);
   float travel=Dot(Sub(point,origin),normal)/Dot(raw,normal);
   return Mul(Sub(axis,Mul(raw,Dot(axis,normal)/Dot(raw,normal))),travel*step);
 }

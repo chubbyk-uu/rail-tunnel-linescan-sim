@@ -43,3 +43,15 @@ def test_changed_base_frame_matches_sdf_and_independent_reference(tmp_path):
     truth=dict(c['truth'],tunnel=c['tunnel'],robot=c['robot'])
     origin,_,_=head_pose(np.zeros(1),np.zeros(1),truth,body)
     np.testing.assert_allclose(origin[0],[0,-(head_z-base_z),base_z],atol=1e-12)
+
+
+def test_crack_coordinates_keep_submicrometer_precision_at_150m(tmp_path):
+    from ssb_tools.stage_b_defects import SEGMENT, LEGACY_SEGMENT, read_segments
+    x=150.000123456789
+    path=tmp_path/'segments.bin'
+    np.array([(x,.2,x+.002,.201,.0002,.0002)],SEGMENT).tofile(path)
+    precise=read_segments(path,{'grid':{'segment_format':'xq64_radius32_le'}})
+    assert abs(precise['x0'][0]-x)<1e-10
+    np.array([(3.,.2,3.002,.201,.0002,.0002)],LEGACY_SEGMENT).tofile(path)
+    legacy=read_segments(path,{})
+    assert legacy.dtype==LEGACY_SEGMENT and len(legacy)==1

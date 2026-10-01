@@ -365,8 +365,8 @@ def tag_cracks(surface_path,defects_path,output,guard_m=.003):
     if not .002<=guard_m<=.01: raise ValueError('invalid adaptive guard')
     entry=defects['files']['segments.bin'];path=defects_path.parent/entry['file']
     if digest(path)!=entry['sha256']: raise ValueError('defect segment identity mismatch')
-    from .stage_b_defects import SEGMENT
-    segments=np.fromfile(path,dtype=SEGMENT)
+    from .stage_b_defects import read_segments
+    segments=read_segments(path,defects)
     xlo=np.minimum(segments['x0'],segments['x1'])-guard_m-.00031
     xhi=np.maximum(segments['x0'],segments['x1'])+guard_m+.00031
     qlo=np.minimum(segments['q0'],segments['q1'])-guard_m-.00031

@@ -2,9 +2,8 @@
 #include <optix.h>
 #include "ssb_core/surface_types.hpp"
 
-// Row frame: world translated so the row's optical centre has x = 0. The tunnel is
-// x-invariant, so float ray origins keep sub-micrometre precision at any track position;
-// absolute x is restored in double from origin_x.
+// Stage A traces with x=0 per row. Stage B traces in a fixed 2 m chunk frame;
+// origin_x stays global double, and frame_x is subtracted BEFORE conversion to float.
 struct DeviceRow {
   double origin_x;
   float origin_y, origin_z;
@@ -22,6 +21,8 @@ struct LaunchParams {
   const float2* pixel_steps; // inverse lens Jacobian (line, perpendicular)
   unsigned width, row_count;
   double radius, axis_z, x_min, x_max;
+  double frame_x;
+  const double* primitive_origin_x;
   unsigned char* pixels;
   unsigned* invalid;             // per row: rays that missed the wall or left its x range
   unsigned* invalid_flags;

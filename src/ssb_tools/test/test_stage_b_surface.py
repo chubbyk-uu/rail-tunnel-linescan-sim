@@ -189,7 +189,7 @@ def test_post_bake_guard_does_not_change_pbr_values_or_claim_crack_opacity(tmp_p
     (source/'surface.json').write_text(json.dumps(data))
     defects=tmp_path/'defects';defects.mkdir()
     segments=np.array([(.001,.008,.015,.008,.0001,.0001)],SEGMENT);segments.tofile(defects/'segments.bin')
-    (defects/'defects.json').write_text(json.dumps(dict(files={'segments.bin':dict(file='segments.bin',sha256=digest(defects/'segments.bin'))})))
+    (defects/'defects.json').write_text(json.dumps(dict(grid={'segment_format':'xq64_radius32_le'},files={'segments.bin':dict(file='segments.bin',sha256=digest(defects/'segments.bin'))})))
     manifest=tag_cracks(source/'surface.json',defects/'defects.json',tmp_path/'tagged')
     tagged=np.fromfile(tmp_path/'tagged/tiles/a.bin',TEXEL).reshape(24,24)
     for field in ('albedo','roughness','nx','nq'): np.testing.assert_array_equal(tagged[field],packed[field])

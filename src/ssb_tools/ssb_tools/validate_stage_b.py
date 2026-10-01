@@ -86,8 +86,9 @@ def cpu_geometry(session,scene,scene_path,ray_count=64):
             for line in stream:
                 if line.startswith('v '): vertices.append([float(v) for v in line.split()[1:]])
                 if line.startswith('f '): triangles.append([base+int(v.split('/')[0])-1 for v in line.split()[1:]])
-    # OptiX receives float32 vertices; do the reference arithmetic in float64.
-    vertices=np.array(vertices,dtype=np.float32).astype(np.float64);triangles=np.array(triangles)
+    # Source geometry remains float64. Validate accuracy against the intended mesh,
+    # including localization/quantization, instead of copying GPU float rounding.
+    vertices=np.array(vertices,dtype=np.float64);triangles=np.array(triangles)
     a=vertices[triangles[:,0]];e1=vertices[triangles[:,1]]-a;e2=vertices[triangles[:,2]]-a
     row_truth=session.evaluation('row_truth');hits=session.evaluation('debug_hits')['hits']
     columns=read_json(session.root/'evaluation/manifest.json')['debug_hits']['columns']

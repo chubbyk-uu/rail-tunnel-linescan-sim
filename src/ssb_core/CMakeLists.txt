@@ -14,7 +14,7 @@ find_package(OpenSSL REQUIRED)
 
 # Timing, geometry and storage: no GPU dependency, so it is testable anywhere.
 add_library(ssb_timing STATIC
-  src/crossing.cpp src/config.cpp src/sha256.cpp src/timing.cpp src/kinematic.cpp src/camera_model.cpp src/stage_b_assets.cpp src/surface_recipe.cpp)
+  src/crossing.cpp src/config.cpp src/sha256.cpp src/timing.cpp src/kinematic.cpp src/camera_model.cpp src/stage_b_assets.cpp src/local_geometry.cpp src/surface_recipe.cpp)
 set_target_properties(ssb_timing PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(ssb_timing PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)

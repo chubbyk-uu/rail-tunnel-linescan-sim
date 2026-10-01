@@ -16,6 +16,7 @@
 #include <limits>
 #include <chrono>
 #include "ssb_core/stage_b_assets.hpp"
+#include "ssb_core/local_geometry.hpp"
 #include <stdexcept>
 
 #include "launch_params.h"
@@ -92,6 +93,13 @@ struct OptixRenderer::Impl {
   LaunchParams params = {};
   std::unique_ptr<StageBAssets> assets;
   std::unique_ptr<CudaSurfaceRecipe> recipe;
+  LocalGeometry local_geometry;
+  std::vector<OptixInstance> instances;
+  OptixInstance* device_instances=nullptr;
+  unsigned char* ias_temp=nullptr;
+  unsigned char* ias_output=nullptr;
+  OptixAccelBufferSizes ias_sizes{};
+  bool ias_built=false;
   std::vector<const SurfaceTexel*> tile_table;
   struct Slot { SurfaceTexel* data=nullptr; int tile=-1; uint64_t used=0; };
   std::vector<Slot> tile_slots;
@@ -165,6 +173,69 @@ struct OptixRenderer::Impl {
     return static_cast<T*>(p);
   }
 
+  void SetFrame(double origin) {
+    if(ias_built && params.frame_x==origin) return;
+    params.frame_x=origin;
+    for(size_t i=0;i<instances.size();++i)
+      instances[i].transform[3]=float(local_geometry.chunks[i].origin_x-origin);
+    SSB_CUDA(cudaMemcpyAsync(device_instances,instances.data(),instances.size()*sizeof(OptixInstance),
+                             cudaMemcpyHostToDevice,stream));
+    OptixBuildInput input{};input.type=OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    input.instanceArray.instances=reinterpret_cast<CUdeviceptr>(device_instances);
+    input.instanceArray.numInstances=instances.size();
+    OptixAccelBuildOptions options{};options.buildFlags=OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+    options.operation=ias_built?OPTIX_BUILD_OPERATION_UPDATE:OPTIX_BUILD_OPERATION_BUILD;
+    SSB_OPTIX(optixAccelBuild(context,stream,&options,&input,1,reinterpret_cast<CUdeviceptr>(ias_temp),
+      ias_built?ias_sizes.tempUpdateSizeInBytes:ias_sizes.tempSizeInBytes,
+      reinterpret_cast<CUdeviceptr>(ias_output),ias_sizes.outputSizeInBytes,&params.handle,nullptr,0));
+    ias_built=true;
+  }
+
+  void BuildLocalGeometry() {
+    local_geometry=LocalizeGeometry(*assets);
+    const auto& g=local_geometry;
+    static_assert(sizeof(LocalOpticalVertex)==sizeof(float3));
+    params.vertices=Alloc<float3>(g.vertices.size(),g.vertices.data());
+    params.triangles=Alloc<uint3>(g.triangles.size(),g.triangles.data());
+    params.face_material=Alloc<unsigned>(g.material.size(),g.material.data());
+    params.critical_edges=Alloc<unsigned>(g.critical_edges.size(),g.critical_edges.data());
+    params.primitive_origin_x=Alloc<double>(g.primitive_origin_x.size(),g.primitive_origin_x.data());
+    const CUdeviceptr vertices=reinterpret_cast<CUdeviceptr>(params.vertices);
+    const unsigned flags=OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
+    std::vector<OptixBuildInput> inputs(g.chunks.size());
+    std::vector<OptixAccelBufferSizes> sizes(g.chunks.size());
+    OptixAccelBuildOptions options{};options.operation=OPTIX_BUILD_OPERATION_BUILD;
+    size_t scratch_bytes=0;
+    for(size_t i=0;i<g.chunks.size();++i) {
+      auto& input=inputs[i];input.type=OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+      auto& t=input.triangleArray;t.vertexBuffers=&vertices;t.numVertices=g.vertices.size();
+      t.vertexFormat=OPTIX_VERTEX_FORMAT_FLOAT3;t.vertexStrideInBytes=sizeof(float3);
+      t.indexBuffer=reinterpret_cast<CUdeviceptr>(params.triangles)+g.chunks[i].first_triangle*sizeof(uint3);
+      t.numIndexTriplets=g.chunks[i].triangle_count;t.indexFormat=OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+      t.indexStrideInBytes=sizeof(uint3);t.flags=&flags;t.numSbtRecords=1;
+      SSB_OPTIX(optixAccelComputeMemoryUsage(context,&options,&input,1,&sizes[i]));
+      scratch_bytes=std::max(scratch_bytes,sizes[i].tempSizeInBytes);
+    }
+    auto* scratch=Alloc<unsigned char>(scratch_bytes);
+    for(size_t i=0;i<g.chunks.size();++i) {
+      auto* output=Alloc<unsigned char>(sizes[i].outputSizeInBytes);
+      OptixTraversableHandle gas;
+      SSB_OPTIX(optixAccelBuild(context,stream,&options,&inputs[i],1,reinterpret_cast<CUdeviceptr>(scratch),
+        sizes[i].tempSizeInBytes,reinterpret_cast<CUdeviceptr>(output),sizes[i].outputSizeInBytes,&gas,nullptr,0));
+      OptixInstance instance{};instance.transform[0]=instance.transform[5]=instance.transform[10]=1;
+      instance.instanceId=g.chunks[i].first_triangle;instance.visibilityMask=255;instance.traversableHandle=gas;
+      instances.push_back(instance);
+    }
+    device_instances=Alloc<OptixInstance>(instances.size());
+    OptixBuildInput input{};input.type=OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    input.instanceArray.instances=reinterpret_cast<CUdeviceptr>(device_instances);input.instanceArray.numInstances=instances.size();
+    options.buildFlags=OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+    SSB_OPTIX(optixAccelComputeMemoryUsage(context,&options,&input,1,&ias_sizes));
+    ias_temp=Alloc<unsigned char>(std::max(ias_sizes.tempSizeInBytes,ias_sizes.tempUpdateSizeInBytes));
+    ias_output=Alloc<unsigned char>(ias_sizes.outputSizeInBytes);
+    SetFrame(OpticalFrame(config.start_x_m));
+  }
+
   ~Impl() {
     if (stream) cudaStreamSynchronize(stream);
     if (pipeline) optixPipelineDestroy(pipeline);
@@ -228,23 +299,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   OptixBuildInput input = {};
   CUdeviceptr d_geometry = 0;
   if(s.assets) {
-    const auto& a=*s.assets;
-    static_assert(sizeof(OpticalVertex)==sizeof(float3));
-    static_assert(sizeof(OpticalTriangle)==sizeof(uint3));
-    s.params.vertices=s.Alloc<float3>(a.vertices.size(),a.vertices.data());
-    s.params.triangles=s.Alloc<uint3>(a.triangles.size(),a.triangles.data());
-    s.params.face_material=s.Alloc<unsigned>(a.face_material.size(),a.face_material.data());
-    d_geometry=reinterpret_cast<CUdeviceptr>(s.params.vertices);
-    input.type=OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-    input.triangleArray.vertexBuffers=&d_geometry;
-    input.triangleArray.numVertices=a.vertices.size();
-    input.triangleArray.vertexFormat=OPTIX_VERTEX_FORMAT_FLOAT3;
-    input.triangleArray.vertexStrideInBytes=sizeof(float3);
-    input.triangleArray.indexBuffer=reinterpret_cast<CUdeviceptr>(s.params.triangles);
-    input.triangleArray.numIndexTriplets=a.triangles.size();
-    input.triangleArray.indexFormat=OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-    input.triangleArray.indexStrideInBytes=sizeof(uint3);
-    input.triangleArray.flags=&flags;input.triangleArray.numSbtRecords=1;
+    s.BuildLocalGeometry();
   } else {
     // The analytic Stage A cylinder retains its translated row frame.
     OptixAabb box = {-1e4f, float(-R - 1), float(zc - R - 1), 1e4f, float(R + 1), float(zc + R + 1)};
@@ -253,6 +308,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
     input.customPrimitiveArray.aabbBuffers=&d_geometry;input.customPrimitiveArray.numPrimitives=1;
     input.customPrimitiveArray.flags=&flags;input.customPrimitiveArray.numSbtRecords=1;
   }
+  if(!s.assets) {
   OptixAccelBuildOptions accel = {};
   accel.buildFlags = OPTIX_BUILD_FLAG_NONE;
   accel.operation = OPTIX_BUILD_OPERATION_BUILD;
@@ -263,10 +319,12 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   SSB_OPTIX(optixAccelBuild(s.context, s.stream, &accel, &input, 1, reinterpret_cast<CUdeviceptr>(temp),
                             sizes.tempSizeInBytes, reinterpret_cast<CUdeviceptr>(gas), sizes.outputSizeInBytes,
                             &s.params.handle, nullptr, 0));
+  }
   SSB_CUDA(cudaStreamSynchronize(s.stream));
 
   OptixPipelineCompileOptions pc = {};
-  pc.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+  pc.traversableGraphFlags = s.assets ? OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING :
+                            OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
   pc.numPayloadValues = 4;
   pc.numAttributeValues = 2;
   pc.pipelineLaunchParamsVariableName = "params";
@@ -310,7 +368,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   for (auto g : s.groups) SSB_OPTIX(optixUtilAccumulateStackSizes(g, &stack, s.pipeline));
   unsigned a, b, c;
   SSB_OPTIX(optixUtilComputeStackSizes(&stack, 1, 0, 0, &a, &b, &c));
-  SSB_OPTIX(optixPipelineSetStackSize(s.pipeline, a, b, c, 1));
+  SSB_OPTIX(optixPipelineSetStackSize(s.pipeline, a, b, c, s.assets?2:1));
   Record records[3] = {};
   for (int i = 0; i < 3; ++i) SSB_OPTIX(optixSbtRecordPackHeader(s.groups[i], records + i));
   auto* d_records = s.Alloc<Record>(3, records);
@@ -377,7 +435,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
     s.params.adaptive_area=a.adaptive_area;s.params.area_rooks=a.area_rooks;
     s.params.crack_area_samples=a.crack_area_samples;s.params.crack_area_rooks=a.crack_area_rooks;
     s.params.integrated_cracks=a.integrated_cracks;
-    if(a.integrated_cracks)s.params.critical_edges=s.Alloc<unsigned>(a.critical_edges.size(),a.critical_edges.data());
+
     s.params.convex_panel_visibility=a.convex_panel_visibility;
     s.params.footprint_x=a.footprint_x;s.params.footprint_q=a.footprint_q;
     s.params.lamp_tangential=a.lamp_tangential;s.params.lamp_radial=a.lamp_radial;
@@ -427,6 +485,8 @@ void OptixRenderer::Render(const std::vector<RowJob>& jobs, std::vector<uint8_t>
     size_t end=first;std::set<unsigned> required;
     while(end<n) {
       if(s.assets) {
+        if(OpticalFrame(rows[end*s.params.row_stride].origin_x)!=
+           OpticalFrame(rows[first*s.params.row_stride].origin_x)) break;
         auto combined=required;combined.insert(footprints[end].begin(),footprints[end].end());
         if(combined.size()>s.assets->cache_slots) break;
         required=std::move(combined);
@@ -434,6 +494,7 @@ void OptixRenderer::Render(const std::vector<RowJob>& jobs, std::vector<uint8_t>
       ++end;
     }
     if(end==first) throw std::runtime_error("Stage B row footprint exceeds texture budget");
+    if(s.assets) s.SetFrame(OpticalFrame(rows[first*s.params.row_stride].origin_x));
     s.LoadTiles(required);
     const size_t count=end-first, hit_values=count*s.debug_columns.size()*2;
     s.params.row_count=count;
@@ -469,6 +530,8 @@ nlohmann::json OptixRenderer::Describe() const {
   const char* runtime = std::getenv("SSB_OPTIX_RUNTIME");
   return {{"backend", "optix"},
           {"scene", s.assets ? "textured_triangle_tunnel.stage_b" : "analytic_cylinder.stage_a"},
+          {"geometry_frame", s.assets?"fixed_2m_chunk_ias":"per_row_analytic"},
+          {"geometry_chunks",s.local_geometry.chunks.size()},
           {"optical_scene_sha256", s.assets?s.assets->scene_hash:""},
           {"surface_sha256", s.assets?s.assets->surface_hash:""},
           {"defects_sha256", s.assets?s.assets->defect_hash:""},
