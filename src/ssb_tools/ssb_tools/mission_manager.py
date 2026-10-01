@@ -87,7 +87,7 @@ class MissionManager(Node):
             raise RuntimeError('Gazebo status subscription failed')
         self.closing = threading.Event()
         self.worker = threading.Thread(target=self.work, daemon=False); self.worker.start()
-        self.timer = self.create_timer(.1, self.tick)
+        self.timer = self.create_timer(1/30, self.tick)   # TF and status at the RViz frame rate
 
     def receive(self, message):
         try:

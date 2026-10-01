@@ -319,6 +319,21 @@ def make_robot(out,config,spec):
     if measuring:
         add_measuring_wheels(car,base,base_z,config,robot,rail_y,measuring)
 
+    # Under-body battery/drive compartment between the crossbars and the drive boxes, closing the
+    # open space below the electronics bays. Visual only: its contents are already part of the
+    # base mass, and it collides with nothing (bottom ~30 mm above the rail top, 200 mm above the bed).
+    # Envelope is an estimate, not a measured enclosure.
+    bay_bottom=.285;belly_x=half-.0325;belly_y=rail_y-.07-.0375-.0265;belly_z=.04
+    base_box('belly_case',0,0,(belly_z+bay_bottom)/2,f'{2*belly_x:.6g} {2*belly_y:.6g} {bay_bottom-belly_z:.6g}',WHITE)
+    base_box('belly_skid_plate',0,0,belly_z-.006,f'{2*belly_x-.03:.6g} {2*belly_y-.03:.6g} .012',ORANGE)
+    for label,sign in (('front',1),('rear',-1)):
+        for k,y in enumerate((-.3,.3)):
+            base_box(f'belly_{label}_vent_{k}',sign*(belly_x+.002),y,.15,'.004 .42 .09',DARK)
+    for side,sign in (('left',1),('right',-1)):
+        base_box(side+'_belly_access_lid',0,sign*(belly_y+.0015),.165,f'{2*belly_x-.16:.6g} .003 .17',METAL)
+        for k,x in enumerate((-.16,.16)):
+            base_box(f'{side}_belly_latch_{k}',x,sign*(belly_y+.005),.235,'.04 .006 .02',DARK)
+
     head=sub(car,'link',name='head');sub(head,'pose',pose(z=zc))
     inertial(head,15,(.25,.20,.20))
     # Ideal thin-lens/pinhole baseline: the projection centre, NOT the front

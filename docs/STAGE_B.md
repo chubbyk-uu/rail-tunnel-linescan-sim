@@ -82,7 +82,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
 | 扫描光源 | 20×20 mm COB，2×2 高斯点；轴向 −0.115 m；光斑半高宽 1.2×0.12 m；弱反射补光 0.002 | `scene.json` 的 `lamp` |
 | 相机 | 4096 像素、7.04 μm，90 mm 镜头对焦 2.75 m，视场 0.852 m；8 μs 曝光；k1=0.006 枕形畸变 | `capture.yaml` |
 | 采样档位 | 背景走解析路径，3 个曝光时刻，2×2 纹理足迹积分；临界几何每时刻 16 条 N 车射线；复杂裂缝每时刻 64 条（可选 32 性能档）；自适应关闭 | `stage_b_optics --integrated --area-samples 16 --area-pattern rooks --time-samples 3` |
-| 机器人 | 120 kg；前驱、后轮从动，两个测量轮（80 mm，竖直滑轨，预压 30 N）带编码器，四个导向轴承；底座 0.3 m、轴高 1.715 m | `capture.yaml` 的 `robot`、`contact`；`world.sdf` |
+| 机器人 | 120 kg；前驱、后轮从动，两个测量轮（80 mm，竖直滑轨，预压 30 N）带编码器，四个导向轴承；车底电池/驱动舱（仅外观，尺寸为估计）；底座 0.3 m、轴高 1.715 m | `capture.yaml` 的 `robot`、`contact`；`world.sdf` |
 | 轨道起伏 | 现行演示为 2 mm 档北京地铁谱竖向起伏加 2 mm 档水平分量（种子 20261001）；竖向可选平直或 5 mm，水平可选 0 或 4 mm（§11） | `capture.yaml` 的 `truth.track_irregularity`；`world/track/rail_top_*.png` |
 | 车轮柔性 | 现行演示为聚氨酯轮柔性，静压缩量 0.2 mm（标定 SDF 刚度 2.86×10⁶ N/m）；可选 0.15/0.4 mm 或刚性轮（§11） | `capture.yaml` 的 `truth.wheel_compliance` |
 | 纹理预算 | OptiX GPU 2 GiB、CPU 1 GiB；GUI 1280 MiB（现行 140 块约 746 MiB） | `stage_b_scene.yaml` 的 `resources` |
@@ -312,7 +312,7 @@ tools/run_mission.sh --demo local_data/stage_b/contact_demo --output-root sessio
 
 管理器分别报告运行、已暂停、等待落盘、原始采集完成或失败；不在采集或任务退出时运行畸变校正和平场补偿。已保存行数只计入已写盘且回读哈希通过的块，尾块关闭后计入；成像滞后是最近输入位姿与写线程已处理曝光时间之差，不等于待耐久化尾块的时间。最终数据状态和哈希仍以会话清单为准。会话生成失败或后台成像失败会显示错误；每次重新开始创建不同的会话和任务输入目录。
 
-RViz 复用 SDF 的视觉几何、颜色和预览贴图，转换为 Collada 并缓存到 `local_data/rviz_preview/`，每张纹理最长边 512 px；不加载 0.1 mm 光学纹理。环境 MarkerArray 缓存后以 1 Hz 重发，防止新任务时间归零或手动 Reset 清空显示后场景丢失；不重读或重新烘焙资产。车辆各 link 由 10 Hz TF 更新，完整原始图像不经 DDS。显示话题 `/ssb/sim_truth/scene`、`/ssb/sim_truth/joint_states` 和坐标系 `sim_truth/*` 只供观察；位姿来自仿真物理状态，严禁用于盲重建。`/clock` 与 Gazebo 仿真时间一致，RViz 启用 `use_sim_time`，支持新任务时的时间归零。RViz 光照只是观察效果，不模拟采集条光的光度和阴影。
+RViz 复用 SDF 的视觉几何、颜色和预览贴图，转换为 Collada 并缓存到 `local_data/rviz_preview/`，每张纹理最长边 512 px；不加载 0.1 mm 光学纹理。环境 MarkerArray 缓存后以 1 Hz 重发，防止新任务时间归零或手动 Reset 清空显示后场景丢失；不重读或重新烘焙资产。车辆各 link 由 30 Hz TF 更新（与 RViz 帧率一致；原 10 Hz 时车辆运动明显跳动），完整原始图像不经 DDS。显示话题 `/ssb/sim_truth/scene`、`/ssb/sim_truth/joint_states` 和坐标系 `sim_truth/*` 只供观察；位姿来自仿真物理状态，严禁用于盲重建。`/clock` 与 Gazebo 仿真时间一致，RViz 启用 `use_sim_time`，支持新任务时的时间归零。RViz 光照只是观察效果，不模拟采集条光的光度和阴影。
 
 任务控制面板位于右侧，左下方（Displays 下方）的 Live Capture Preview 显示最近已保存原始块的缩略图及行号范围；默认一个块为 4096 行。只读取写完且回读哈希通过后原子重命名的 `.u8`，不读取未完成块或依赖采集结束的索引。预览按面积平均缩小至最多 512×512、保留 Mono8 DN，每秒最多更新一次，同一块复用编码缓存；PNG 与会话/行号信息通过单条低频消息 `/ssb/mission/preview` 发送，消息小于 512 KiB。任务切换清空旧图，按会话身份拒绝延迟的旧图；暂停和结束后显示最后已保存图。预览不做畸变、平场、对比度或锐化校正，原始文件不变；文件访问错误只显示预览错误，不中断采集。
 
@@ -325,6 +325,7 @@ RViz 复用 SDF 的视觉几何、颜色和预览贴图，转换为 Collada 并�
 | GZ GUI | 1.000 | 0.994 | 3.34 GiB |
 | RViz | 1.000 | 0.995 | 2.79 GiB |
 | GZ GUI＋RViz | 1.000 | 0.995 | 3.78 GiB |
+| GZ GUI＋RViz（2026-10-01 晚，测量轮、2+2 mm 轨道、v5 衬面、30 Hz TF） | 1.000 | 0.994 | 未测 |
 
 测量记录 `local_data/evaluation/mission_ui_20261001_cleanup/tmp/ssb_ui_preview_acceptance/report.json`；RSS 为测试期间各自进程树的采样合计，包含共享页重复计数，不是独占内存。OptiX 的纹理分配峰值约 2.00 GiB，与 2 GiB 配置预算一致，未测量整机显存峰值。实时率从首个采集位姿开始，排除资产加载和 GPU 初始化，本轮未执行采后校正；暂停测试不用于性能表。上述结果仍是 3 m 短程，完整 20 m 待验收。
 

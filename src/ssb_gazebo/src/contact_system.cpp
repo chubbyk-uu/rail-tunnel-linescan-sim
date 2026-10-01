@@ -150,7 +150,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
                      const gz::sim::EntityComponentManager& ecm) {
     if (!status_pub_) return;
     const auto now = std::chrono::steady_clock::now();
-    if (now - last_status_ < std::chrono::milliseconds(100)) return;
+    // 30 Hz, the RViz frame rate: vehicle motion in RViz must not step visibly.
+    if (now - last_status_ < std::chrono::milliseconds(33)) return;
     last_status_ = now;
     const auto pose = gz::sim::worldPose(base_.Entity(), ecm);
     const auto& p = pose.Pos(); const auto& q = pose.Rot();
