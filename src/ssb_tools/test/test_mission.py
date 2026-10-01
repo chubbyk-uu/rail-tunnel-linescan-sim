@@ -6,7 +6,7 @@ from PIL import Image
 import pytest
 from scipy.spatial.transform import Rotation
 
-from ssb_tools.mission_plan import plan
+from ssb_tools.mission_plan import plan, start_values
 from ssb_tools.mission_preview import Preview, textured_dae
 
 
@@ -15,7 +15,9 @@ def config():
     return dict(tunnel=dict(x_min_m=-1.5, x_max_m=21.5), camera=dict(fov_at_nominal_m=.85),
                 scan_encoder=dict(ppr=2500, edges_per_cycle=4),
                 rescaler=dict(multiply=128, divide=15),
-                motion=dict(advance_per_rev_m=.6, line_rate_hz=28444.444444444445), acceptance={})
+                gate=dict(start_deg=-120., end_deg=120.),
+                motion=dict(advance_per_rev_m=.6, line_rate_hz=28444.444444444445,
+                            start_theta_deg=180.), acceptance={})
 
 
 @pytest.mark.parametrize('distance', [1., 1.2, 3., 20.])
@@ -28,6 +30,35 @@ def test_distance_profile_integrates_to_requested_travel(config, distance):
     assert task['speed_m_s'] == pytest.approx(.2)
     assert np.all(np.diff(p[:, 0]) > 0)
     assert config == before
+
+
+@pytest.mark.parametrize('distance', [1., 1.2, 3., 20.])
+@pytest.mark.parametrize('phase', [180., -130., 0., 120.])
+def test_exposure_acceptance_is_inside_nominal_gate_span(config, distance, phase):
+    config['motion']['start_theta_deg'] = phase
+    c, task = plan(config, 3. if distance <= 3. else 0., distance)
+    lo, hi = c['acceptance']['valid_x_m']
+    # Independent dense spatial samples: a line is available only inside the 240° gate.
+    x = np.linspace(0., distance, 100001)
+    angle = (phase+360*x/.6+120.) % 360.
+    exposed = x[angle < 240.]
+    assert exposed.min() < lo-task['start_m'] < hi-task['start_m'] < exposed.max()
+    assert lo >= task['start_m']+.11-1e-12
+    assert hi <= task['end_m']-.21+1e-12
+    assert task['exposure_acceptance_x_m'] == [lo, hi]
+
+
+def test_acceptance_guard_does_not_hide_an_interior_missing_row(config):
+    from ssb_tools.validate_stage_a import valid_region
+    c, _ = plan(config, 3., 3.)
+    poses = np.array([(0., 3., 1.), (3., 6., 1.)],
+                     dtype=[('t', 'f8'), ('x', 'f8'), ('v', 'f8')])
+    truth = np.array([(3.10021,), (4.,), (5.90003,)], dtype=[('x', 'f8')])
+    dropped = np.zeros(0, dtype=[('gated', 'u1'), ('t_lo', 'f8'), ('t_hi', 'f8'), ('reason', 'u1')])
+    assert valid_region(c, poses, [], truth, dropped)['state'] == 'pass'
+    missing = np.array([(1, 1., 1.001, 2)], dtype=dropped.dtype)
+    check = valid_region(c, poses, [], truth, missing)
+    assert check['state'] == 'fail' and check['missing_in_region'] == 1
 
 
 @pytest.mark.parametrize('start,distance', [(-.001, 1), (19., 2.), (0., 0.), (0., .05), (0., .1), (0., .12), (0., .2), (0., .999999), (0., float('nan')), (float('inf'), 1)])
@@ -99,3 +130,39 @@ def test_invalid_command_cannot_crash_manager_or_poison_queue(message):
     assert fake.error and fake.commands.empty()
     MissionManager.enqueue(fake, String(data='{"id":"good","action":"pause"}'))
     assert fake.commands.get_nowait()['id'] == 'good'
+
+
+@pytest.mark.parametrize('value', [None, [], {}, True, 'invalid', float('nan'), float('inf')])
+@pytest.mark.parametrize('key', ['start_m', 'distance_m'])
+def test_malformed_start_rejected_before_queueing_without_failing_active_task(value, key):
+    pytest.importorskip('rclpy')
+    import json
+    import queue
+    import threading
+    from types import SimpleNamespace
+    from std_msgs.msg import String
+    from ssb_tools.mission_manager import MissionManager
+    fake = SimpleNamespace(commands=queue.Queue(), lock=threading.RLock(), error='',
+                           state='running', command_result={})
+    command = dict(id='bad', action='start', start_m=3., distance_m=1.)
+    command[key] = value
+    MissionManager.enqueue(fake, String(data=json.dumps(command)))
+    assert fake.commands.empty() and fake.state == 'running'
+    assert fake.command_result['id'] == 'bad' and not fake.command_result['ok']
+    with pytest.raises(ValueError): start_values(command)
+
+
+def test_full_command_queue_returns_rejection_with_matching_id():
+    pytest.importorskip('rclpy')
+    import queue
+    import threading
+    from types import SimpleNamespace
+    from std_msgs.msg import String
+    from ssb_tools.mission_manager import MissionManager
+    fake = SimpleNamespace(commands=queue.Queue(maxsize=1), lock=threading.RLock(),
+                           error='', state='paused', command_result={})
+    fake.commands.put({'id': 'previous', 'action': 'pause'})
+    MissionManager.enqueue(fake, String(data='{"id":"full","action":"resume"}'))
+    assert fake.state == 'paused' and fake.commands.qsize() == 1
+    assert fake.command_result['id'] == 'full' and not fake.command_result['ok']
+    assert 'queue is full' in fake.command_result['error']

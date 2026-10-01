@@ -28,7 +28,7 @@ from gz.msgs10.boolean_pb2 import Boolean
 from gz.msgs10.stringmsg_pb2 import StringMsg
 from gz.msgs10.world_control_pb2 import WorldControl
 
-from .mission_plan import prepare, plan
+from .mission_plan import prepare, plan, start_values
 from .mission_preview import Preview, pose_values, transform
 from .mission_image_preview import RawImagePreview
 from .optical_identity import check_calibration
@@ -99,16 +99,24 @@ class MissionManager(Node):
             self.get_logger().error(str(e))
 
     def enqueue(self, message):
+        identifier = None
         try:
             command = json.loads(message.data)
             if not isinstance(command, dict): raise ValueError('Command must be a JSON object')
             if not isinstance(command.get('id'), str) or not command['id']:
                 raise ValueError('Command ID is missing')
+            identifier = command['id']
             if command.get('action') not in ('start', 'pause', 'resume', 'stop'):
                 raise ValueError('Unknown mission command')
+            if command['action'] == 'start':
+                command['start_m'], command['distance_m'] = start_values(command)
             self.commands.put_nowait(command)
         except (ValueError, queue.Full) as e:
-            with self.lock: self.error = str(e)
+            error = 'Command queue is full; try again later' if isinstance(e, queue.Full) else str(e)
+            with self.lock:
+                self.error = error
+                if identifier:
+                    self.command_result = dict(id=identifier, ok=False, error=error)
 
     def transition(self, state):
         with self.lock:
@@ -132,7 +140,7 @@ class MissionManager(Node):
     def launch(self, command):
         if self.state not in TERMINAL:
             raise ValueError('A mission is already active')
-        start, distance = float(command['start_m']), float(command['distance_m'])
+        start, distance = start_values(command)
         plan(self.config, start, distance)  # Reject before creating any files/processes.
         token = time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
         inputs = self.repo/'local_data/mission_runs'/token

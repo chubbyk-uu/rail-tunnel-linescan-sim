@@ -56,10 +56,24 @@ MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
   auto* note = new QLabel("Scene: simulated pose, for visualization only.\nTravel and scan: rear-wheel odometry.\nPause freezes simulation; pending images are saved.");
   note->setWordWrap(true); layout->addWidget(note); layout->addStretch();
   connect(this, &MissionPanel::received, this, &MissionPanel::showStatus, Qt::QueuedConnection);
+  command_watchdog_ = new QTimer(this);
+  command_watchdog_->setTimerType(Qt::PreciseTimer);
+  command_watchdog_->setSingleShot(true); command_watchdog_->setInterval(90000);
+  connect(command_watchdog_, &QTimer::timeout, this, [this] {
+    if (pending_.isEmpty()) return;
+    pending_.clear();
+    command_error_ = "Command acknowledgement timed out. Check task state before trying again.";
+    error_->setText(command_error_); updateControls();
+  });
   watchdog_ = new QTimer(this); watchdog_->setSingleShot(true); watchdog_->setInterval(3000);
   connect(watchdog_, &QTimer::timeout, this, [this] {
     connected_ = false; status_->setText("Mission manager disconnected");
-    for (auto* b : {begin_, pause_, resume_, stop_}) b->setEnabled(false);
+    if (!pending_.isEmpty()) {
+      pending_.clear(); command_watchdog_->stop();
+      command_error_ = "Connection lost while awaiting acknowledgement. Check task state after reconnecting.";
+      error_->setText(command_error_);
+    }
+    updateControls();
   });
   for (auto* b : {begin_, pause_, resume_, stop_}) b->setEnabled(false);
 }
@@ -96,7 +110,11 @@ void MissionPanel::saveReview(const QString& name) {
   QJsonObject result{{"connected", connected_}, {"begin_enabled", begin_->isEnabled()},
     {"pause_enabled", pause_->isEnabled()}, {"resume_enabled", resume_->isEnabled()},
     {"stop_enabled", stop_->isEnabled()}, {"status", status_->text()},
-    {"state", last_state_}, {"pending", pending_}};
+    {"state", last_state_}, {"pending", pending_}, {"error", error_->text()},
+    {"command_timeout_ms", command_watchdog_->interval()},
+    {"command_timer_active", command_watchdog_->isActive()}};
+  const auto begin_center = begin_->mapToGlobal(begin_->rect().center());
+  result["begin_center_x"] = begin_center.x(); result["begin_center_y"] = begin_center.y();
   if (auto* preview = window()->findChild<QLabel*>("raw_preview_image")) {
     result["preview_ready"] = preview->property("preview_ready").toBool();
     result["preview_output"] = preview->property("preview_output").toString();
@@ -109,12 +127,17 @@ void MissionPanel::saveReview(const QString& name) {
 
 void MissionPanel::send(const QString& action) {
   if (!connected_ || !pending_.isEmpty()) return;
+  if (commands_->get_subscription_count() == 0) {
+    command_error_ = "Command receiver unavailable. Try again when connected.";
+    error_->setText(command_error_); return;
+  }
+  command_error_.clear();
   pending_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
   QJsonObject object{{"id", pending_}, {"action", action}};
   if (action == "start") { object["start_m"] = start_->value(); object["distance_m"] = distance_->value(); }
   std_msgs::msg::String msg; msg.data = QJsonDocument(object).toJson(QJsonDocument::Compact).toStdString();
   commands_->publish(msg);
-  for (auto* b : {begin_, pause_, resume_, stop_}) b->setEnabled(false);
+  command_watchdog_->start(); updateControls();
 }
 
 void MissionPanel::showStatus(const QString& text) {
@@ -123,13 +146,10 @@ void MissionPanel::showStatus(const QString& text) {
   last_state_ = state;
   connected_ = true; watchdog_->start();
   pitch_ = object["scan_pitch_m"].toDouble(); updateExtent();
-  if (object["command_result"].toObject()["id"].toString() == pending_) pending_.clear();
-  const bool terminal = state == "idle" || state == "complete" || state == "stopped" || state == "failed";
-  const bool available = pending_.isEmpty();
-  start_->setEnabled(terminal && available); distance_->setEnabled(terminal && available);
-  begin_->setEnabled(terminal && available); pause_->setEnabled(state == "running" && available);
-  resume_->setEnabled(state == "paused" && available);
-  stop_->setEnabled((state == "running" || state == "paused") && available);
+  if (!pending_.isEmpty() && object["command_result"].toObject()["id"].toString() == pending_) {
+    pending_.clear(); command_watchdog_->stop(); command_error_.clear();
+  }
+  updateControls();
   const QJsonObject labels{{"idle", "Ready"}, {"starting", "Initializing"}, {"running", "Running"},
     {"paused", "Paused"}, {"draining", "Saving pending images"},
     {"complete", "Capture complete; correction before stitching"}, {"stopped", "Stopped early; raw data saved"}, {"failed", "Failed"}};
@@ -141,7 +161,17 @@ void MissionPanel::showStatus(const QString& text) {
     .arg(object["speed_m_s"].toDouble(),0,'f',3).arg(object["scan_rate_rad_s"].toDouble(),0,'f',3)
     .arg(object["rows_generated"].toDouble(),0,'f',0).arg(object["rows_saved"].toDouble(),0,'f',0)
     .arg(object["imaging_lag_s"].toDouble(),0,'f',3).arg(object["scan_rad"].toDouble(),0,'f',3));
-  output_->setText("Output: "+object["output"].toString()); error_->setText(object["error"].toString());
+  output_->setText("Output: "+object["output"].toString());
+  error_->setText(command_error_.isEmpty() ? object["error"].toString() : command_error_);
+}
+
+void MissionPanel::updateControls() {
+  const bool terminal = last_state_ == "idle" || last_state_ == "complete" || last_state_ == "stopped" || last_state_ == "failed";
+  const bool available = connected_ && pending_.isEmpty();
+  start_->setEnabled(terminal && available); distance_->setEnabled(terminal && available);
+  begin_->setEnabled(terminal && available); pause_->setEnabled(last_state_ == "running" && available);
+  resume_->setEnabled(last_state_ == "paused" && available);
+  stop_->setEnabled((last_state_ == "running" || last_state_ == "paused") && available);
 }
 
 void MissionPanel::updateExtent() {

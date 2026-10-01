@@ -7,7 +7,22 @@ import xml.etree.ElementTree as ET
 import yaml
 
 
+def start_values(command):
+    """Reject malformed external inputs before they can change a task's state."""
+    try:
+        values = [command[key] for key in ('start_m', 'distance_m')]
+        if any(isinstance(value, bool) for value in values):
+            raise ValueError('Boolean is not a distance')
+        start, distance = map(float, values)
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise ValueError('Start and distance must be finite numbers') from error
+    if not all(math.isfinite(value) for value in (start, distance)):
+        raise ValueError('Start and distance must be finite numbers')
+    return start, distance
+
+
 def plan(config, start, distance):
+    start, distance = start_values(dict(start_m=start, distance_m=distance))
     if not all(math.isfinite(x) for x in (start, distance)) or distance <= 0:
         raise ValueError('Start and distance must be finite; distance must be positive')
     if distance < 1.:
@@ -33,10 +48,24 @@ def plan(config, start, distance):
         profile.append([ramp+cruise, 1.])
     profile.extend([[2*ramp+cruise, 0.], [2*ramp+cruise+1., 0.]])
     m['profile'] = profile
-    c['acceptance']['valid_x_m'] = [start, start+distance]
     pitch = m['advance_per_rev_m']
+    gate = c['gate']
+    open_deg = (gate['end_deg']-gate['start_deg']) % 360.
+    initial_phase = (m['start_theta_deg']-gate['start_deg']) % 360.
+    entry_deg = 0. if initial_phase < open_deg else 360.-initial_phase
+    ramp_distance = speed*ramp/2
+    # Predetermined nominal head-x interval, not a crop inferred from recorded rows.
+    # A full bottom arc bounds the unexposed tail for any requested stop phase.
+    # 10 mm covers nominal servo/encoder lag and avoids testing exact gate boundaries.
+    guard = .01
+    valid = [start+max(pitch*entry_deg/360., ramp_distance)+guard,
+             start+distance-max(pitch*(1.-open_deg/360.), ramp_distance)-guard]
+    if valid[0] >= valid[1]:
+        raise ValueError('Travel is too short for a nonempty exposure acceptance interval')
+    c['acceptance']['valid_x_m'] = valid
     return c, dict(start_m=start, distance_m=distance, end_m=start+distance,
                    speed_m_s=speed, duration_s=profile[-1][0],
+                   exposure_acceptance_x_m=valid,
                    image_extent_m=[start-fov/2, start+distance+fov/2],
                    conservative_full_angle_m=([start+pitch, start+distance-pitch]
                                               if distance > 2*pitch else None),

@@ -105,6 +105,20 @@ def main():
             spread = float(np.asarray(im.convert('RGB'), dtype=float).std())
         assert spread > 5., 'RViz scene is blank; inspect framebuffer screenshot'
         return spread
+    def replay_and_validate(session, name):
+        replay = output/name
+        with (output/(name+'.log')).open('w') as log:
+            subprocess.run([str(repo/'install/ssb_core/lib/ssb_core/ssb_render'),
+                            '--config', str(session/'evaluation/config_source.yaml'), '--session', str(replay),
+                            '--poses', str(session/'evaluation/pose_stream.bin'), '--batch-rows', '333'],
+                           stdout=log, stderr=subprocess.STDOUT, check=True)
+            subprocess.run([str(repo/'install/ssb_tools/lib/ssb_tools/validate_stage_b_smoke'),
+                            str(session), '--compare', str(replay)],
+                           stdout=log, stderr=subprocess.STDOUT, check=True)
+        originals = list((session/'raw').glob('*.u8')) + list((session/'metadata').glob('*.bin'))
+        for path in originals: assert sha256_file(path) == sha256_file(replay/path.relative_to(session))
+        smoke = json.loads((session/'evaluation/reports/stage_b_smoke.json').read_text())
+        return dict(identical_files=len(originals), acceptance=smoke)
     report = dict(checks={}, performance={})
     try:
         wait(lambda: latest.get('state') == 'idle')
@@ -116,6 +130,9 @@ def main():
         assert not command('start', start_m=2., distance_m=.999)['ok']
         assert latest['state'] == 'idle' and latest['output'] == ''
         report['checks']['short_travel_rejection'] = True
+        assert not command('start', start_m=None, distance_m=1.)['ok']
+        assert latest['state'] == 'idle' and latest['output'] == ''
+        report['checks']['malformed_start_rejection'] = True
         assert command('start', start_m=2., distance_m=1.)['ok']
         def entered_gate():
             if latest['scan_rad'] < 4*np.pi/3:
@@ -151,15 +168,9 @@ def main():
         first_angle = float(Session(first).evaluation('row_truth')['theta'][0])
         assert 4*np.pi/3 <= first_angle < 4*np.pi/3+.001, first_angle
         report['checks']['first_exposure_rad'] = first_angle
-        replay = output/'replay'
-        with (output/'replay.log').open('w') as log:
-            subprocess.run([str(repo/'install/ssb_core/lib/ssb_core/ssb_render'),
-                            '--config', str(first/'evaluation/config_source.yaml'), '--session', str(replay),
-                            '--poses', str(first/'evaluation/pose_stream.bin'), '--batch-rows', '333'],
-                           stdout=log, stderr=subprocess.STDOUT, check=True)
-        originals = list((first/'raw').glob('*.u8')) + list((first/'metadata').glob('*.bin'))
-        for path in originals: assert sha256_file(path) == sha256_file(replay/path.relative_to(first))
-        report['checks']['replay_identical_files'] = len(originals)
+        replay_check = replay_and_validate(first, 'replay')
+        report['checks']['replay_identical_files'] = replay_check['identical_files']
+        report['checks']['pause_resume_smoke'] = replay_check['acceptance']
         assert command('start', start_m=4., distance_m=2.)['ok']
         wait(lambda: latest['distance_estimated_m'] > .16 and latest['rows_generated'] > 1000)
         assert command('stop')['ok']
@@ -173,6 +184,11 @@ def main():
         third = Path(latest['output']); report['checks']['restart'] = verify(third)
         assert len({str(first), str(second), str(third)}) == 3
         report['checks']['minimum_travel'] = report['checks']['restart']
+        assert command('start', start_m=3., distance_m=3.)['ok']
+        wait(lambda: latest['state'] in ('complete', 'failed'))
+        assert latest['state'] == 'complete', latest
+        fourth = Path(latest['output']); report['checks']['three_m_travel'] = verify(fourth)
+        report['checks']['three_m_smoke'] = replay_and_validate(fourth, 'three_m_replay')['acceptance']
         if a.performance:
             for mode in ('gz', 'rviz', 'both'):
                 viewers = []

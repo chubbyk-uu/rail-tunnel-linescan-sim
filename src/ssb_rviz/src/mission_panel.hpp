@@ -20,15 +20,16 @@ class MissionPanel : public rviz_common::Panel {
   void send(const QString& action);
   void showStatus(const QString& text);
   void updateExtent();
+  void updateControls();
   void saveReview(const QString& name);
   QDoubleSpinBox *start_, *distance_;
   QLabel *extent_, *status_, *progress_, *output_, *error_;
   QPushButton *begin_, *pause_, *resume_, *stop_;
-  QTimer *watchdog_;
+  QTimer *watchdog_, *command_watchdog_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr commands_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subscription_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr review_subscription_;
-  QString pending_;
+  QString pending_, command_error_;
   bool connected_ = false;
   double pitch_ = 0.;
   QString last_state_, review_dir_;

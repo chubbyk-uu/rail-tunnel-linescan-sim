@@ -54,7 +54,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
   --demo local_data/stage_b/contact_demo --output /tmp/subway_demo_bundle
 ```
 
-复制为新克隆的 `local_data/stage_b/contact_demo` 即可运行。资产包含有生成端真值（HMAC 密钥、畸变），只用于生成采集，不能作为盲重建评估的输入。已验证的副本是 `local_data/stage_b/review_portable_relocated/`（327 个文件，约 1.8 GiB）。
+复制为新克隆的 `local_data/stage_b/contact_demo` 即可运行。资产包含有生成端真值（HMAC 密钥、畸变），只用于生成采集，不能作为盲重建评估的输入。已验证的副本是 `local_data/stage_b/review_portable_relocated/`（327 个文件，约 1.8 GiB）。该历史副本仍从 −130° 开始，现行 `contact_demo` 从 180° 开始；恢复资产包后须核对起始相位和配置哈希。要保留新相位，应从现行演示重新导出成套资产包。
 
 ## 3. 现行场景与成像配置
 
@@ -215,6 +215,15 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply --sessio
 
 校正数据保留 float32，最大值约 267.52 DN；显示 PNG 裁剪到 0–255，不修改测量值。Gazebo 观察确认了条光旋转时的顶部光斑和底部支架局部照明；这次截图运行关闭了成像，不能作为新的成像实时率测量。性能基线仍是 §7 的 3 m GUI 采集实时率 0.99387。
 
+以下示例使用已完成离线校正的历史验收会话。新任务只保存原始数据；在运行复核工具前，须按 §6 手动执行 `optical_calibration apply`，将结果写到该会话的 `processed/optical/`。该目录已存在时不要重复覆盖。
+
+```bash
+SSB_REVIEW_SESSION=sessions/mission/YOUR_SESSION
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply \
+  --session "$SSB_REVIEW_SESSION" --calibration local_data/stage_b/contact_demo/calibration.json \
+  --output "$SSB_REVIEW_SESSION/processed/optical"
+```
+
 可重新生成原像素复核材料（输出目录不得已存在）：
 
 ```bash
@@ -223,6 +232,8 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_review \
   --demo local_data/stage_b/contact_demo \
   --output local_data/stage_b/NEW_REVIEW --supplementary-probes
 ```
+
+`stage_b_review` 是当前资产的指定样例复核工具，内部固定了背景/板缝坐标，以及 crack_000/018/056 等裂缝编号；补充探针还使用 crack_020/047。换缺陷布局、任务区间或 20 m 场景时，须重新选择可见样例并调整坐标，不能将该工具当作通用全隧道成果浏览器。
 
 新生成的页面默认等待人工确认，不继承本轮验收；Gazebo 观察截图需另行添加。复核使用缺陷真值选择样例，仅限 `evaluation/`，不得供盲重建使用。报告冻结演示配置、世界、场景、标定、数据索引及归档光学资产的哈希；不向公开重建配置导出光学密钥。
 
@@ -265,7 +276,9 @@ tools/run_mission.sh --demo local_data/stage_b/contact_demo --output-root sessio
 
 面板设置轨道纵向起点和前进距离，分别显示车体预计终点和全角度覆盖保守估计，界面全部使用英文，提供 Start、Pause、Resume、Stop（快捷键 Ctrl+Alt+S/P/R/E）。当前范围为 0–20 m，最短任务 1 m（按用户要求，避免过短采集）；开始前核对轨道及视场缓冲余量。运行中锁定输入。点击 Start 后，起点在生成任务世界时初始化，相当于将车体直接放到指定起点；只修改输入框不会移动车体；使用现行 0.2 m/s 标称速度，根据距离生成缓起停剖面，保留扫描由后轮编码器驱动的逻辑。行驶距离显示编码器估计值，轮径误差仍会影响扫描。当前终止按运动剖面的计划时长执行；带轮径偏差的里程目标停车控制尚未实现。
 
-统一管理器 `ssb_tools.mission_manager` 接收 `/ssb/mission/command`，发布 `/ssb/mission/status`。每条命令带独立 ID；拒绝越界、活动任务中重新开始和重复请求。暂停采用 Gazebo 冻结仿真时间，保留计数和扫描相位；已有曝光继续成像落盘。结束任务先暂停，再通知自己启动的服务器退出并排空队列，保存尾块；提前结束保持 `session.json` 的 `motion.complete=false`，界面显示“Stopped early; raw data saved”。此时完整任务检查脚本拒绝会话是预期行为。
+有效曝光验收区 `acceptance.valid_x_m` 在生成任务时确定，按扫描初始相位、门控空转段和起停坡段向内收，另外保留 10 mm 名义跟踪余量。现行 3 m 任务起点为 3 m 时，区间为 [3.11,5.79] m；1 m 任务也有非空验收区。这是头部位置的无缺行检查区，不是车体行程或全角度壁面覆盖区，不从成像结果反推，不修改验收器。轮径或安装误差较大时仍可能判失败，须独立分析，不能静默继续缩区。
+
+统一管理器 `ssb_tools.mission_manager` 接收 `/ssb/mission/command`，发布 `/ssb/mission/status`。每条命令带独立 ID；拒绝越界、活动任务中重新开始和重复请求。null、非数值及非有限的起点/距离在进入工作队列前被拒绝，保留原任务状态；队列已满时返回带请求 ID 的拒绝回执。面板发送前检查接收端是否存在，并在 90 s 内等待回执（覆盖 60 s 启动等待）；超时后清除等待状态，按最新任务状态恢复可用按钮并显示提示，不自动重发。管理器连接中断时取消等待，重连后重新按状态启用控件。暂停采用 Gazebo 冻结仿真时间，保留计数和扫描相位；已有曝光继续成像落盘。结束任务先暂停，再通知自己启动的服务器退出并排空队列，保存尾块；提前结束保持 `session.json` 的 `motion.complete=false`，界面显示“Stopped early; raw data saved”。此时完整任务检查脚本拒绝会话是预期行为。
 
 管理器分别报告运行、已暂停、等待落盘、原始采集完成或失败；不在采集或任务退出时运行畸变校正和平场补偿。已保存行数只计入已写盘且回读哈希通过的块，尾块关闭后计入；成像滞后是最近输入位姿与写线程已处理曝光时间之差，不等于待耐久化尾块的时间。最终数据状态和哈希仍以会话清单为准。会话生成失败或后台成像失败会显示错误；每次重新开始创建不同的会话和任务输入目录。
 
@@ -287,6 +300,8 @@ RViz 复用 SDF 的视觉几何、颜色和预览贴图，转换为 Collada 并�
 
 黑屏排查：RViz 会在时间回拨及手动 Reset 时清空 Marker；原来仅发布一次场景，清空后不会自动恢复。现行 1 Hz 缓存重发解决这条路径。负向验证仅在测试进程中禁用重发定时器，恢复旧行为：不打开 GZ GUI，Reset 后画面退化为纯背景（各通道标准差为 0），被空场景检查拒绝；记录在 `local_data/evaluation/mission_ui_20261001_cleanup/tmp/ssb_marker_restore_negative/report.json`。在单开 RViz 和 GZ GUI＋RViz 两组实际采集中，分别操作视角、Reset 和任务时间归零，渲染缓冲截图均保留隧道和车辆，日志无渲染资源错误。双界面另外通过实际面板快捷键验证开始、暂停、继续、提前结束和重新开始；新会话不生成 `processed/optical/`。记录在 `local_data/evaluation/mission_ui_20261001_cleanup/tmp/ssb_mission_integration_final/view_regression.json` 和 `local_data/evaluation/mission_ui_20261001_cleanup/tmp/ssb_rviz_diagnose12/`。没有复现用户所述的所有偶发黑屏，不能据此排除 WSL 显示驱动等其他原因，也不能认定 GZ GUI 是必要触发条件。
 
+任务集成回归对 1 m 暂停/继续任务和 3 m 完整任务执行独立重放，并运行 `validate_stage_b_smoke --compare`，包含有效区检查；提前结束仍按未完成任务处理。在下述相同的 Mesa/ROS 环境中，将测试命令换成 `python3 tools/test_mission_panel.py --output /tmp/ssb_panel_NEW` 可单独测试面板回执丢失/重连；该工具使用假的状态发布者和丢弃指令的接收端，不启动 Gazebo，按实际 90 s 超时验证 UI 恢复。
+
 可重跑集成验收（输出目录必须不存在，需先重建）：
 
 ```bash
@@ -305,3 +320,13 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 ### 10.1 临时测试数据清理（2026-10-01）
 
 本轮已清理临时任务原始图像、重放副本、过期任务输入和日志，以及 560 个未被现行世界引用的 RViz 缓存文件，释放约 86.04 GiB 已分配磁盘空间。保留现行 `contact_demo` 及标定、已接受的画质基线 `sessions/review_portable_gui_final` 和当前 280 个缓存文件。测试报告、必要截图和会话元数据归档到 `local_data/evaluation/mission_ui_20261001_cleanup/`，删除清单见其中 `cleanup.json`；归档不含这些临时任务的原始图像，重放需要重新采集。该本地归档含生成端私有配置，不纳入 Git，也不作为盲重建输入。
+
+### 10.2 任务数据保留
+
+当前采用手动清理，不自动删除任务。每个 3 m 原始任务约 1.3 GB，20 m 约 8–9 GB；离线 float32 校正、重放副本和复核材料另计。任务原始数据在 `sessions/mission/`，对应生成端私有输入在 `local_data/mission_runs/`，运行日志在 `local_data/mission_logs/`。采集前检查可用空间；保留已接受的画质/验收基线和用户仍在检查的会话。临时试验验证完成后保留小型报告、必要配置和截图，再手动删除不再需要的原始数据及匹配的输入目录；运行中的会话不可清理。可用 `du -sh sessions/mission local_data/mission_runs local_data/mission_logs` 查看增长。
+
+### 10.3 任务验收与回执修复回归（2026-10-01）
+
+132 项 Python 测试通过，包含 1/1.2/3/20 m 的名义验收区、多种初始相位、区内缺行拒绝、畸形输入和满队列回执。真实 Gazebo＋OptiX 的 1 m 暂停/继续和 3 m 完整任务，各经独立重放后通过阶段 B 验收器全部 22 项检查。1 m 任务有效区 [2.11,2.79] m 有 68282 行、零缺行；3 m 任务有效区 [3.11,5.79] m 有 267393 行、零缺行，总行数仍为 284445。起停缓冲区内丢行继续如实报告。
+
+实际 RViz 面板验证了接收端缺失、拒绝回执、管理器断连/重连，以及实际等待 90 s 无回执后重新操作；测试在 91.29 s 检查时已恢复按钮，下一条命令成功接收并回执。报告位于 `local_data/evaluation/mission_audit_fix/capture_regression/report.json` 和 `local_data/evaluation/mission_audit_fix/panel_regression_final/report.json`。回归临时原始数据/重放副本及其私有输入已清理约 4.23 GiB，保留小型配置、报告和必要截图。用户观看的历史会话 `sessions/mission/20261001_145804_982cf426` 保持原配置与哈希，其中原有 [3,6] m 验收区不会追溯修改；修正后的区间用于新生成任务。
