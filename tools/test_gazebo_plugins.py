@@ -63,7 +63,11 @@ def run(output):
            ('irregular',True,None,rough),('irregular_mismatch',True,'physical world check failed',rough),
            ('start_mismatch',True,'start position differs',{}),
            # Configuration edited after the world was generated: true wheel diameter, track seed.
-           ('odo_mismatch',True,'physical world check failed',rough),('seed_mismatch',True,'physical world check failed',rough)]
+           ('odo_mismatch',True,'physical world check failed',rough),('seed_mismatch',True,'physical world check failed',rough),
+           ('flat_box_mismatch',True,'physical world check failed',{}),
+           ('irregular_box_mismatch',True,'physical world check failed',rough),
+           ('loaded_flat_box_mismatch',True,'physical world differs from its manifest',{}),
+           ('loaded_irregular_box_mismatch',True,'physical world differs from its manifest',rough)]
     for name,contact,bad,truth in cases:
         folder=output/name;folder.mkdir()
         c=copy.deepcopy(base);c['robot']={'base_reference_z_m':.37,'scan_axis_height_m':1.645}
@@ -92,10 +96,21 @@ def run(output):
         if name=='start_mismatch':
             tree=ET.parse(world);pose=tree.find("world/model[@name='scan_car']/pose")
             p=list(map(float,pose.text.split()));p[0]+=.5;pose.text=' '.join(map(str,p));tree.write(world)
+        if name.endswith('box_mismatch'):
+            tree=ET.parse(world);pose=tree.find("world/model[@name='track']/link[@name='rails']/collision[@name='left_head']/pose")
+            p=list(map(float,pose.text.split()));p[2]+=.1;pose.text=' '.join(map(str,p));tree.write(world)
         env=dict(os.environ,SSB_WORLD=str(world),GZ_PARTITION=f'ssb_plugin_test_{os.getpid()}_{name}')
         session=folder/'session'
+        command=['bash',str(REPO/'tools/run_gz.sh'),str(session),str(cfg)]
+        if name.startswith('loaded_'):
+            # Bypass Python preflight to prove the plugin checks loaded ECM entities itself.
+            env.update(SSB_CONFIG=str(cfg),SSB_SESSION=str(session))
+            command=['bash',str(REPO/'tools/with_optix_runtime.sh'),'bash','-c',
+                     'source /opt/ros/jazzy/setup.bash; source "$1/install/setup.bash"; '
+                     'export GZ_SIM_SYSTEM_PLUGIN_PATH="$1/install/ssb_gazebo/lib"; '
+                     'gz sim -s -r --iterations 1300 "$SSB_WORLD"','_',str(REPO)]
         with (folder/'run.log').open('w') as log:
-            proc=subprocess.run(['bash',str(REPO/'tools/run_gz.sh'),str(session),str(cfg)],
+            proc=subprocess.run(command,
                                 env=env,stdout=log,stderr=subprocess.STDOUT,timeout=60)
         if bad:
             assert proc.returncode!=0 and not session.exists()

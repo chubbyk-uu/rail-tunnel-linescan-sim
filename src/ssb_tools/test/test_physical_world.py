@@ -222,3 +222,28 @@ def test_legacy_unprotected_snapshot_requires_recapture(archived):
     shutil.rmtree(session.root/'evaluation/physical')
     with pytest.raises(FileNotFoundError, match='recapture legacy sessions'):
         gazebo_world_checks(session, config, prov)
+
+
+@pytest.mark.parametrize('rough', [False, True])
+@pytest.mark.parametrize('mutation', ['height', 'gauge', 'width', 'length', 'rotation', 'model', 'link', 'missing'])
+def test_rail_collision_boxes_are_checked(built, tmp_path, rough, mutation):
+    _, config, spec = built
+    config = copy.deepcopy(config)
+    if not rough: config['truth'].pop('track_irregularity')
+    folder = tmp_path/'world'; folder.mkdir(); make_world(folder, config, spec)
+    assert check(config, spec, folder/'world.sdf')['passed']
+    def mutate(root):
+        track = root.find("world/model[@name='track']")
+        link = track.find("link[@name='rails']")
+        collision = link.find("collision[@name='left_head']")
+        if mutation == 'missing':
+            link.remove(collision); return
+        if mutation in ('model', 'link'):
+            ET.SubElement(track if mutation == 'model' else link, 'pose').text = '0 0 .1 0 0 0'
+            return
+        node = collision.find('geometry/box/size' if mutation in ('width', 'length') else 'pose')
+        index = {'height': 2, 'gauge': 1, 'width': 1, 'length': 0, 'rotation': 5}[mutation]
+        values = list(map(float, node.text.split())); values[index] += .1
+        node.text = ' '.join(map(str, values))
+    edit_world(folder, mutate)
+    assert {'rail_boxes_match_configuration', 'rail_boxes_match_manifest'} <= failed(check(config, spec, folder/'world.sdf'))

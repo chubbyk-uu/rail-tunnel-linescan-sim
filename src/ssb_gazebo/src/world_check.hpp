@@ -11,11 +11,14 @@
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Geometry.hh>
 #include <gz/sim/components/Pose.hh>
+#include <gz/sim/components/Collision.hh>
+#include <gz/sim/components/ParentEntity.hh>
 #include <gz/sim/Link.hh>
 #include <sdf/Geometry.hh>
 #include <sdf/Heightmap.hh>
 #include <sdf/Sphere.hh>
 #include <sdf/Cylinder.hh>
+#include <sdf/Box.hh>
 #include <filesystem>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -75,7 +78,7 @@ inline std::vector<std::string> CheckPhysicalManifest(const gz::sim::Model& car,
                                                       const std::string& config_text,const nlohmann::json& manifest) {
   std::vector<std::string> images;
   auto fail=[](const std::string& what){throw std::runtime_error("physical world differs from its manifest: "+what);};
-  if(manifest.value("schema",std::string())!="ssb.physical_manifest.v1")fail("unsupported manifest");
+  if(manifest.value("schema",std::string())!="ssb.physical_manifest.v2")fail("unsupported manifest; regenerate the world");
   std::map<std::string,nlohmann::json> listed;
   for(const auto& r:manifest.at("actual").at("rails"))listed[r.at("name").get<std::string>()]=r;
   std::size_t loaded=0;
@@ -101,13 +104,52 @@ inline std::vector<std::string> CheckPhysicalManifest(const gz::sim::Model& car,
       images.push_back(path);
       return true;});
   if(loaded!=listed.size())fail("rail heightmaps missing ("+std::to_string(loaded)+" of "+std::to_string(listed.size())+")");
+  // Both the flat running surfaces and the lowered guide faces must match the manifest.
+  gz::sim::Entity track=gz::sim::kNullEntity;
+  ecm.Each<gz::sim::components::Model,gz::sim::components::Name>(
+    [&](const gz::sim::Entity& e,const auto*,const auto* name){
+      if(name->Data()=="track") {
+        if(track!=gz::sim::kNullEntity)fail("duplicate track model");
+        track=e;
+      }
+      return true;
+    });
+  if(track==gz::sim::kNullEntity)fail("missing track model");
+  const auto rails=gz::sim::Model(track).LinkByName(ecm,"rails");
+  auto pose_matches=[&](gz::sim::Entity entity,const nlohmann::json& want,const std::string& label){
+    const auto* component=ecm.Component<gz::sim::components::Pose>(entity);
+    const auto p=component?component->Data():gz::math::Pose3d();
+    const double values[6]={p.Pos().X(),p.Pos().Y(),p.Pos().Z(),p.Rot().Roll(),p.Rot().Pitch(),p.Rot().Yaw()};
+    for(int i=0;i<6;++i)if(std::abs(values[i]-want.at(i).get<double>())>1e-9)fail("pose of "+label);
+  };
+  if(rails==gz::sim::kNullEntity)fail("missing track rails link");
+  std::size_t boxes=0;
+  ecm.Each<gz::sim::components::Collision,gz::sim::components::ParentEntity>(
+    [&](const gz::sim::Entity&,const auto*,const auto* parent){if(parent->Data()==rails)++boxes;return true;});
+  const auto& rail_boxes=manifest.at("actual").at("rail_boxes");
+  if(boxes!=rail_boxes.size()||boxes!=2)fail("rail collision box set");
+  for(const auto& box:rail_boxes) {
+    const auto name=box.at("name").get<std::string>();
+    const auto collision=gz::sim::Link(rails).CollisionByName(ecm,name);
+    if(collision==gz::sim::kNullEntity)fail("missing rail box "+name);
+    const auto* g=CollisionGeometry(ecm,track,"rails",name);
+    if(!g||!g->BoxShape()||box.at("shape")!="box")fail("geometry of rail box "+name);
+    const auto size=g->BoxShape()->Size();
+    const auto& want=box.at("size");
+    if(std::abs(size.X()-want.at(0).get<double>())>1e-9||std::abs(size.Y()-want.at(1).get<double>())>1e-9||
+       std::abs(size.Z()-want.at(2).get<double>())>1e-9)fail("size of rail box "+name);
+    pose_matches(track,box.at("model_pose"),"track model");
+    pose_matches(rails,box.at("link_pose"),"rails link");
+    pose_matches(collision,box.at("pose"),name);
+  }
   // Wheel collision radii: the truth diameters, not what the world happens to contain.
   const YAML::Node truth=YAML::Load(config_text)["truth"];
   auto radius=[&](const std::string& link,bool sphere)->double{
     const auto* g=CollisionGeometry(ecm,car.Entity(),link,"tread_contact");
     if(!g)fail("collision of "+link);
     if(sphere){if(!g->SphereShape())fail(link+" is not a sphere");return g->SphereShape()->Radius();}
-    if(!g->CylinderShape())fail(link+" is not a cylinder");return g->CylinderShape()->Radius();};
+    if(!g->CylinderShape())fail(link+" is not a cylinder");
+    return g->CylinderShape()->Radius();};
   for(const char* link:{"odometer_wheel","wheel_1","wheel_2","wheel_3"})
     if(std::abs(radius(link,false)-truth["wheel_diameter_m"].as<double>()/2)>1e-12)fail("running wheel radius "+std::string(link));
   for(const char* side:{"left","right"})

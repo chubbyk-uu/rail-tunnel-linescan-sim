@@ -137,7 +137,8 @@ void AddShape(gz::sim::EntityComponentManager& ecm,gz::sim::Entity model,const s
 }
 // A manifest and matching loaded entities: one rail heightmap, six wheels, two measuring slides.
 struct PhysicalFixture {
-  gz::sim::EntityComponentManager ecm;gz::sim::Entity car,rail;nlohmann::json manifest;std::string config;
+  gz::sim::EntityComponentManager ecm;gz::sim::Entity car,rail,track,rails,left_box;
+  nlohmann::json manifest;std::string config;
   std::filesystem::path image=std::filesystem::temp_directory_path()/"ssb_test_rail_top.png";
   PhysicalFixture() {
     std::ofstream(image)<<"heightmap bytes";
@@ -161,9 +162,22 @@ struct PhysicalFixture {
     sdf::Geometry g;g.SetType(sdf::GeometryType::HEIGHTMAP);sdf::Heightmap h;
     h.SetUri("file://"+image.string());h.SetSize({3.,.073,.002});g.SetHeightmapShape(h);
     AddShape(ecm,rail,"top","rail_top",g);
-    manifest["schema"]="ssb.physical_manifest.v1";
+    manifest["schema"]="ssb.physical_manifest.v2";
     manifest["actual"]["rails"]=nlohmann::json::array({{{"name","rail_surface_left_00"},{"pose",{1.5,.754,-.001,0,0,0}},
       {"size",{3.,.073,.002}},{"sha256",ssb::Sha256File(image)}}});
+    track=AddModel(ecm,"track");rails=AddChild(ecm,track,"rails",true);
+    manifest["actual"]["rail_boxes"]=nlohmann::json::array();
+    for(const char* side:{"left","right"}) {
+      const auto name=std::string(side)+"_head";
+      const double y=std::string(side)=="left"?.754:-.754;
+      const auto collision=AddChild(ecm,rails,name,false);
+      if(std::string(side)=="left")left_box=collision;
+      sdf::Geometry box;box.SetType(sdf::GeometryType::BOX);sdf::Box shape;shape.SetSize({3.,.073,.036});box.SetBoxShape(shape);
+      ecm.CreateComponent(collision,gz::sim::components::Geometry(box));
+      ecm.CreateComponent(collision,gz::sim::components::Pose(gz::math::Pose3d(1.5,y,-.020,0,0,0)));
+      manifest["actual"]["rail_boxes"].push_back({{"name",name},{"shape","box"},{"model_pose",{0,0,0,0,0,0}},
+        {"link_pose",{0,0,0,0,0,0}},{"pose",{1.5,y,-.020,0,0,0}},{"size",{3.,.073,.036}}});
+    }
     config="truth: {wheel_diameter_m: 0.2, odo_left_diameter_m: 0.08, odo_right_diameter_m: 0.08}\n";
   }
   void Check(){ssb_gazebo::CheckPhysicalManifest(gz::sim::Model(car),ecm,config,manifest);}
@@ -190,4 +204,22 @@ TEST(WorldCheck, WheelDiameterOrSlideSpringMismatchIsRejected) {
   EXPECT_THROW(wheel.Check(),std::runtime_error);
   PhysicalFixture spring;spring.manifest["expected"]["joints"]["measure_right_slide"]["stiffness"]=2500.;
   EXPECT_THROW(spring.Check(),std::runtime_error);
+}
+
+TEST(WorldCheck, LoadedRailBoxesCheckPosesSizesAndCompleteSet) {
+  PhysicalFixture moved;
+  moved.ecm.Component<gz::sim::components::Pose>(moved.left_box)->Data().Pos().Z(.08);
+  EXPECT_THROW(moved.Check(),std::runtime_error);
+  PhysicalFixture width;
+  auto& geometry=width.ecm.Component<gz::sim::components::Geometry>(width.left_box)->Data();
+  sdf::Box shape;shape.SetSize({3.,.08,.036});geometry.SetBoxShape(shape);
+  EXPECT_THROW(width.Check(),std::runtime_error);
+  PhysicalFixture model;
+  model.ecm.CreateComponent(model.track,gz::sim::components::Pose(gz::math::Pose3d(0,0,.1,0,0,0)));
+  EXPECT_THROW(model.Check(),std::runtime_error);
+  PhysicalFixture link;
+  link.ecm.CreateComponent(link.rails,gz::sim::components::Pose(gz::math::Pose3d(0,0,0,0,0,.1)));
+  EXPECT_THROW(link.Check(),std::runtime_error);
+  PhysicalFixture missing;missing.ecm.RemoveComponent<gz::sim::components::Collision>(missing.left_box);
+  EXPECT_THROW(missing.Check(),std::runtime_error);
 }

@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import yaml
 
-SCHEMA = 'ssb.physical_manifest.v1'
+SCHEMA = 'ssb.physical_manifest.v2'
 NAME = 'physical_manifest.json'
 RUNNING_WHEELS = ('odometer_wheel', 'wheel_1', 'wheel_2', 'wheel_3')
 MEASURING = {'left': 'measure_left', 'right': 'measure_right'}
@@ -77,12 +77,24 @@ def describe(world_path, snapshot=None):
                                     damping=float(axis.findtext('dynamics/damping', '0')),
                                     reference=float(axis.findtext('dynamics/spring_reference', '0')),
                                     lower=float(axis.findtext('limit/lower')), upper=float(axis.findtext('limit/upper')))
-    return dict(rails=sorted(rails, key=lambda r: r['name']), wheels=wheels, joints=joints)
+    boxes = []
+    track = root.find("world/model[@name='track']")
+    link = track.find("link[@name='rails']") if track is not None else None
+    if link is not None:
+        for collision in link.findall('collision'):
+            box = collision.find('geometry/box')
+            boxes.append(dict(name=collision.get('name'), shape='box' if box is not None else 'other',
+                              model_pose=_floats(track.findtext('pose', '0 0 0 0 0 0')),
+                              link_pose=_floats(link.findtext('pose', '0 0 0 0 0 0')),
+                              pose=_floats(collision.findtext('pose', '0 0 0 0 0 0')),
+                              size=_floats(box.findtext('size')) if box is not None else []))
+    return dict(rails=sorted(rails, key=lambda r: r['name']), rail_boxes=sorted(boxes, key=lambda b: b['name']),
+                wheels=wheels, joints=joints)
 
 
 def expected(config, spec):
     """What the configuration (truth) and scene spec require."""
-    from .rail_irregularity import settings, segments, SDF_SIZE_FACTOR, SEGMENT_SAMPLES
+    from .rail_irregularity import settings, segments, SDF_SIZE_FACTOR, SEGMENT_SAMPLES, rails as rail_profiles, guide_box_top
     s = settings(config)
     track, robot = spec['track'], spec['robot']
     head_y = (track['gauge_m']+track['head_width_m'])/2
@@ -93,6 +105,13 @@ def expected(config, spec):
             for side, y in (('left', head_y), ('right', -head_y)):
                 rails.append(dict(name=f'rail_surface_{side}_{k:02d}', rail=side, x_m=[a, b], y=y,
                                   length=(b-a)*SDF_SIZE_FACTOR, width=track['head_width_m']*SDF_SIZE_FACTOR))
+    profile = rail_profiles(config) if s is not None else None
+    box_top = guide_box_top(np.minimum(profile[1], profile[2])) if profile is not None else 0.
+    height = .038+box_top
+    boxes = [dict(name=side+'_head', shape='box', model_pose=[0.]*6, link_pose=[0.]*6,
+                  pose=[(x0+x1)/2, sign*head_y, box_top-height/2, 0., 0., 0.],
+                  size=[x1-x0, track['head_width_m'], height])
+             for side, sign in (('left', 1), ('right', -1))]
     truth = config['truth']
     wheels = {name: dict(shape='cylinder', radius=truth['wheel_diameter_m']/2) for name in RUNNING_WHEELS}
     joints = {}
@@ -108,7 +127,7 @@ def expected(config, spec):
                                           reference=-m['preload_n']/m['spring_rate_n_m'],
                                           lower=-m['travel_m'], upper=m['travel_m'])
     return dict(settings=s, x_range_m=[x0, x1], head_y_m=head_y, head_width_m=track['head_width_m'],
-                segment_samples=SEGMENT_SAMPLES, rails=rails, wheels=wheels, joints=joints)
+                segment_samples=SEGMENT_SAMPLES, rails=rails, rail_boxes=boxes, wheels=wheels, joints=joints)
 
 
 def write_manifest(world_path, config, spec):
@@ -147,6 +166,15 @@ def check(config, spec, world_path, manifest_path=None, snapshot=None, decode=Tr
         bad = [r['name'] for r in have['rails'] if r['name'] not in listed or r['sha256'] != listed[r['name']]['sha256']
                or not _close(r['pose'], listed[r['name']]['pose']) or not _close(r['size'], listed[r['name']]['size'])]
         record('rail_files_match_manifest', not bad and len(listed) == len(have['rails']), mismatched=bad)
+    def boxes_match(a, b):
+        return (a['name'] == b['name'] and a['shape'] == b['shape'] and
+                all(_close(a[k], b[k]) for k in ('model_pose', 'link_pose', 'pose', 'size')))
+    def box_set_matches(a, b):
+        return len(a) == len(b) and all(boxes_match(x, y) for x, y in zip(a, b))
+    record('rail_boxes_match_configuration', box_set_matches(have['rail_boxes'], want['rail_boxes']),
+           actual=have['rail_boxes'], expected=want['rail_boxes'])
+    record('rail_boxes_match_manifest', manifest is not None and
+           box_set_matches(have['rail_boxes'], manifest['actual'].get('rail_boxes', [])))
     # Rails: complete set, both rails, coverage, placement, orientation, size, samples.
     names_want = {r['name'] for r in want['rails']}; names_have = {r['name'] for r in have['rails']}
     record('rail_models_complete', names_want == names_have, missing=sorted(names_want-names_have),

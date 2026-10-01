@@ -387,6 +387,8 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 
 阶段 B 接触验收使用同一归档世界核对车辆起点和物理参数，并把归档 SDF 哈希与采集输入哈希比较；原世界路径仅保留为来源标签。缺少完整快照或文件哈希保护的旧接触会话需要重新采集，不自动补齐或降级验收。此独立性仅针对物理输入；光学验收仍需要原光学资产。
 
+物理清单现为 `ssb.physical_manifest.v2`，还包含两侧钢轨碰撞盒的尺寸、形状及模型/连杆/碰撞的完整姿态。平直轨承载面顶面必须为 z=0；起伏轨限位盒顶面按剖面最低点向下留出 3 mm，底面保持 z=−38 mm，侧面保留轮缘限位。启动器和插件分别检查 SDF 与已加载实体。旧 v1 世界需重新生成；若物理世界本身已正确，可用 `python3 -m ssb_tools.physical_world write --config ... --world ...` 更新清单，再运行 `check`，不可修改历史会话来补验收。
+
 **生成内容**：`world/track/` 下有 `rail_profile.npz`（5 mm 网格剖面）、`rail_irregularity.json`（档位、种子、均方根、10 m 弦最大值、最大坡度、各段高度场哈希）和 `rail_top_{left,right}_XX.png`（每根钢轨每段一张 16 位高度场）。剖面文件存左右两根钢轨，记录中另有水平最大值、5 m 和 0.7 m 基长扭曲最大值。它们都是仿真真值，重建不得读取。
 
 **DART 车轮刚度标定**（车体 98 kg、轴座 0.5 kg、车轮 5 kg，1 ms，阻尼比 0.2）：
