@@ -132,12 +132,24 @@ inline void SnapshotPhysical(const std::filesystem::path& world,const std::files
                              const std::vector<std::string>& images,const std::filesystem::path& destination) {
   namespace fs=std::filesystem;
   fs::create_directories(destination);
-  auto copy=[&](const fs::path& from){if(fs::exists(from))fs::copy_file(from,destination/from.filename(),fs::copy_options::overwrite_existing);};
+  std::map<std::string,fs::path> copied;
+  auto copy=[&](const fs::path& from,bool required=true){
+    if(!fs::is_regular_file(from)) {
+      if(required)throw std::runtime_error("missing physical snapshot input: "+from.string());
+      return;
+    }
+    const auto key=from.filename().string();
+    const auto source=fs::canonical(from);
+    if(copied.count(key)&&copied.at(key)!=source)
+      throw std::runtime_error("physical snapshot basename collision: "+key);
+    copied[key]=source;
+    fs::copy_file(from,destination/from.filename(),fs::copy_options::overwrite_existing);
+  };
   copy(world.parent_path()/"physical_manifest.json");copy(world);copy(config.parent_path()/"spec.yaml");copy(config);
   for(const auto& image:images)copy(image);
   if(!images.empty()) {
     const fs::path track=fs::path(images.front()).parent_path();
-    copy(track/"rail_irregularity.json");copy(track/"rail_profile.npz");
+    copy(track/"rail_irregularity.json",false);copy(track/"rail_profile.npz",false);
   }
 }
 }  // namespace ssb_gazebo

@@ -383,6 +383,8 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 - 车轮弹簧与标定：`stage_b_robot.wheel_compliance`、`ssb_tools.wheel_stiffness`；
 - 一致性检查：物理清单与检查 `ssb_tools.physical_world`（采集前、采集后），插件 `world_check.hpp`（启动时），验收器 `validate_contact` 和 `validate_stage_b`（用会话里的物理快照）。
 
+接触采集必须在配置旁提供 `spec.yaml`。会话 `evaluation/physical/` 保存世界、规格、配置、物理清单和高度场，完成时为其中每个文件记录哈希。快照检查只读取归档文件：缺图像或规格即失败，不回退到原演示目录。剖面 NPZ/统计 JSON 若存在也一并归档。
+
 **生成内容**：`world/track/` 下有 `rail_profile.npz`（5 mm 网格剖面）、`rail_irregularity.json`（档位、种子、均方根、10 m 弦最大值、最大坡度、各段高度场哈希）和 `rail_top_{left,right}_XX.png`（每根钢轨每段一张 16 位高度场）。剖面文件存左右两根钢轨，记录中另有水平最大值、5 m 和 0.7 m 基长扭曲最大值。它们都是仿真真值，重建不得读取。
 
 **DART 车轮刚度标定**（车体 98 kg、轴座 0.5 kg、车轮 5 kg，1 ms，阻尼比 0.2）：

@@ -4,6 +4,7 @@
 #include <fstream>
 #include "ssb_core/kinematic.hpp"
 #include "ssb_core/pipeline.hpp"
+#include "ssb_core/sha256.hpp"
 
 namespace {
 class FailingRenderer : public ssb::RowRenderer {
@@ -47,5 +48,28 @@ TEST(PipelineFailure, StopsLocalPoseDrainAndNeverRepeatsTableRecords) {
   std::ifstream(path,std::ios::binary).read(reinterpret_cast<char*>(edges.data()),edges.size()*sizeof(edges[0]));
   for(size_t i=1;i<edges.size();++i) EXPECT_GT(edges[i].t,edges[i-1].t);
   EXPECT_FALSE(std::filesystem::exists(root/"raw/index.json"));
+  std::filesystem::remove_all(root);
+}
+
+TEST(PipelineCompletion, HashesEveryArchivedPhysicalFile) {
+  auto c=ssb::Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_a.yaml");
+  c.profile={{0,1},{.002,1}};c.batch_rows=4096;
+  const auto root=std::filesystem::temp_directory_path()/("ssb_physical_hash_"+std::to_string(getpid()));
+  std::filesystem::remove_all(root);
+  ssb::Pipeline p(c,std::make_unique<FailingRenderer>(c.width),{root,{"test"},"kinematic"});
+  const auto physical=root/"evaluation/physical";
+  std::filesystem::create_directories(physical/"nested");
+  for(const char* name:{"world.sdf","spec.yaml","capture.yaml","physical_manifest.json","nested/rail.png"})
+    std::ofstream(physical/name)<<name;
+  for(const auto& sample:ssb::KinematicSource(c).Sample())p.Push(sample);
+  p.Finish();const auto summary=p.Wait();
+  for(const auto& entry:std::filesystem::recursive_directory_iterator(physical)) {
+    if(!entry.is_regular_file())continue;
+    const auto name=entry.path().lexically_relative(root).generic_string();
+    EXPECT_EQ(summary.at("files").at(name),ssb::Sha256File(entry.path()));
+  }
+  const auto original=summary.at("files").at("evaluation/physical/world.sdf");
+  std::ofstream(physical/"world.sdf")<<"changed";
+  EXPECT_NE(original,ssb::Sha256File(physical/"world.sdf"));
   std::filesystem::remove_all(root);
 }

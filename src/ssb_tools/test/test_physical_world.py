@@ -13,6 +13,7 @@ from ssb_tools.physical_world import check
 from ssb_tools.stage_b_scene import load_spec, make_world
 from ssb_tools.demo_bundle import export_demo
 from ssb_tools.session import sha256_file
+from ssb_tools.validate_contact import physical_world_report
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -164,3 +165,18 @@ def test_contact_bundle_survives_relocation_without_source(built, tmp_path):
     packed = json.loads((moved/'world/physical_manifest.json').read_text())
     assert all(r['file'].startswith('0') for r in packed['actual']['rails'])
     assert yaml.safe_load((moved/'spec.yaml').read_text()) == spec
+
+
+@pytest.mark.parametrize('missing', ['spec.yaml', 'physical_manifest.json', 'world.sdf', 'rail_top_left_00.png'])
+def test_physical_snapshot_never_falls_back_to_source(built, tmp_path, missing):
+    folder, config, spec = built
+    snapshot = tmp_path/'evaluation/physical'; snapshot.mkdir(parents=True)
+    for name in ('world.sdf', 'physical_manifest.json'):
+        shutil.copyfile(folder/name, snapshot/name)
+    for image in (folder/'track').glob('rail_top*.png'):
+        shutil.copyfile(image, snapshot/image.name)
+    (snapshot/'spec.yaml').write_text(yaml.safe_dump(spec))
+    assert physical_world_report(tmp_path, None, config, spec, folder/'world.sdf')['passed']
+    (snapshot/missing).unlink()
+    with pytest.raises((FileNotFoundError, ValueError)):
+        physical_world_report(tmp_path, None, config, spec, folder/'world.sdf')

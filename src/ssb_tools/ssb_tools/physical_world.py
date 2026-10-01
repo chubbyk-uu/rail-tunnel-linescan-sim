@@ -39,8 +39,11 @@ def _floats(text):
 
 def _resolve(uri, base, snapshot=None):
     uri = uri.strip().removeprefix('file://')
-    if snapshot is not None and (Path(snapshot)/Path(uri).name).exists():
-        return Path(snapshot)/Path(uri).name
+    if snapshot is not None:
+        path = Path(snapshot)/Path(uri).name
+        if not path.is_file():
+            raise FileNotFoundError(f'missing archived physical asset: {path}')
+        return path
     return Path(uri) if Path(uri).is_absolute() else Path(base)/uri
 
 
@@ -224,6 +227,20 @@ def spec_for(config_path):
     local = config_path.parent/'spec.yaml'
     return yaml.safe_load((local if local.exists() else
                            Path(__file__).resolve().parents[1]/'config/stage_b_scene.yaml').read_text())
+
+
+def snapshot_inputs(root):
+    """Strict archived inputs, independent of the original world/config directories."""
+    snapshot = Path(root)/'evaluation/physical'
+    if not snapshot.is_dir():
+        raise FileNotFoundError(f'physical snapshot missing: {snapshot}; recapture legacy sessions')
+    for name in (NAME, 'spec.yaml'):
+        if not (snapshot/name).is_file():
+            raise FileNotFoundError(f'missing archived physical input: {snapshot/name}')
+    worlds = list(snapshot.glob('*.sdf'))
+    if len(worlds) != 1:
+        raise ValueError(f'physical snapshot requires exactly one SDF: {snapshot}')
+    return snapshot, worlds[0], yaml.safe_load((snapshot/'spec.yaml').read_text())
 
 
 def main():

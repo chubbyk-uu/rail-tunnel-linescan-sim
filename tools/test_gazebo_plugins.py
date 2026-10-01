@@ -84,6 +84,7 @@ def run(output):
         if name=='odo_mismatch':c['truth']['odo_left_diameter_m']=.081
         if name=='seed_mismatch':c['truth']['track_irregularity']['seed']=7
         cfg=folder/'capture.yaml';cfg.write_text(yaml.safe_dump(c))
+        (folder/'spec.yaml').write_text(yaml.safe_dump(spec))
         world=folder/'world.sdf'
         if name=='mismatch':
             tree=ET.parse(world);pose=tree.find("world/model[@name='scan_car']/link[@name='head']/pose")

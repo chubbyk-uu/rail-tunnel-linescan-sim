@@ -443,9 +443,14 @@ nlohmann::json Pipeline::Wait() {
     files[name] = Sha256File(s.root / name);
   if(std::filesystem::exists(s.root / "evaluation" / "optical_assets.json"))
     files["evaluation/optical_assets.json"]=Sha256File(s.root / "evaluation" / "optical_assets.json");
-  // Physical-world snapshot archived by the contact plugin; its manifest lists the image hashes.
-  if(std::filesystem::exists(s.root / "evaluation" / "physical" / "physical_manifest.json"))
-    files["evaluation/physical/physical_manifest.json"]=Sha256File(s.root / "evaluation" / "physical" / "physical_manifest.json");
+  // Protect the complete archived physical input set, including SDF, spec, config and images.
+  const auto physical = s.root / "evaluation" / "physical";
+  if (std::filesystem::exists(physical)) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(physical)) {
+      if (entry.is_regular_file())
+        files[entry.path().lexically_relative(s.root).generic_string()] = Sha256File(entry.path());
+    }
+  }
   const nlohmann::json summary = {{"schema", "ssb.session.v1"},
                                   {"status", "complete"},
                                   {"files", files},

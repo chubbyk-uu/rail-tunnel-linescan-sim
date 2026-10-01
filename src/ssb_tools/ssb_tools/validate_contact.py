@@ -41,13 +41,11 @@ def disc_centre(x, z, centre, radius):
 def physical_world_report(root, config_path, config, spec, world=None):
     """Strict physical-world check (ssb_tools.physical_world) on the run's archived snapshot when
     present (evaluation/physical), else on the given world beside its manifest."""
-    from .physical_world import check
+    from .physical_world import check, snapshot_inputs
     snapshot = Path(root)/'evaluation/physical'
-    if (snapshot/'physical_manifest.json').exists():
-        local = snapshot/'spec.yaml'
-        spec = yaml.safe_load(local.read_text()) if local.exists() else spec
-        worlds = [p for p in snapshot.glob('*.sdf')]
-        return check(config, spec, worlds[0], snapshot/'physical_manifest.json', snapshot=snapshot)
+    if snapshot.exists():
+        snapshot, archived_world, archived_spec = snapshot_inputs(root)
+        return check(config, archived_spec, archived_world, snapshot/'physical_manifest.json', snapshot=snapshot)
     return check(config, spec, world) if world else None
 
 
