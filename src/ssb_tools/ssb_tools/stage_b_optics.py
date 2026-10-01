@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from .stage_b_scene import digest,load_spec
+from .optical_identity import ensure_optical_key
 
 
 def crack_optics(defects):
@@ -64,6 +65,7 @@ def prepare(config_path,geometry,surface,defects,output,area_samples=16,time_sam
                                      cpu_bytes=spec['resources']['cpu_texture_cache_bytes'])
         scene['runtime_spec']=entry(Path(spec_path).resolve())
     config=yaml.safe_load(Path(config_path).read_text())
+    ensure_optical_key(config)
     output.mkdir(parents=True)
     (output/'scene.json').write_text(json.dumps(scene,indent=2)+'\n')
     config['render']['optical_scene']=str(output/'scene.json')

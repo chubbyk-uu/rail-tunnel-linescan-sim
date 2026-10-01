@@ -1,12 +1,43 @@
 #include "ssb_core/sha256.hpp"
 
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
 
 #include <fstream>
 #include <stdexcept>
 #include <vector>
 
 namespace ssb {
+
+namespace {
+std::string Hex(const unsigned char* bytes, size_t size) {
+  const char* digits = "0123456789abcdef";
+  std::string out;
+  for (size_t i = 0; i < size; ++i) {
+    out.push_back(digits[bytes[i] >> 4]);
+    out.push_back(digits[bytes[i] & 15]);
+  }
+  return out;
+}
+}  // namespace
+
+std::string RandomKeyHex() {
+  unsigned char bytes[32];
+  if (RAND_bytes(bytes, sizeof(bytes)) != 1) throw std::runtime_error("optical key generation failed");
+  return Hex(bytes, sizeof(bytes));
+}
+
+std::string HmacSha256Hex(const std::string& key_hex, const std::string& message) {
+  if (key_hex.size() != 64 || key_hex.find_first_not_of("0123456789abcdef") != std::string::npos)
+    throw std::invalid_argument("optical key must be 32 random bytes in lowercase hex");
+  unsigned char key[32], digest[EVP_MAX_MD_SIZE];
+  for (size_t i = 0; i < sizeof(key); ++i) key[i] = std::stoul(key_hex.substr(2*i, 2), nullptr, 16);
+  unsigned length = 0;
+  if (!HMAC(EVP_sha256(), key, sizeof(key), reinterpret_cast<const unsigned char*>(message.data()),
+            message.size(), digest, &length)) throw std::runtime_error("optical HMAC failed");
+  return Hex(digest, length);
+}
 
 struct Sha256Stream::Impl {
   EVP_MD_CTX* ctx = nullptr;

@@ -325,7 +325,8 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
 
   std::vector<float2> pixel_steps(config.width);
   for(int u=0;u<config.width;++u) pixel_steps[u]=make_float2(
-      config.PixelTangentStep(u,true),config.PixelTangentStep(u,false));
+      config.PixelTangentStep(u,Config::PixelDirection::AlongLine),
+      config.PixelTangentStep(u,Config::PixelDirection::Perpendicular));
   std::vector<float> tangents(config.width);
   for (int u = 0; u < config.width; ++u) tangents[u] = static_cast<float>(config.PixelTangent(u));
   std::vector<int> slot(config.width, -1);

@@ -8,6 +8,8 @@ namespace ssb {
 
 std::string Sha256Hex(const void* data, size_t size);
 std::string Sha256File(const std::filesystem::path& path);
+std::string RandomKeyHex();
+std::string HmacSha256Hex(const std::string& key_hex, const std::string& message);
 
 // Incremental hash for files written in pieces.
 class Sha256Stream {

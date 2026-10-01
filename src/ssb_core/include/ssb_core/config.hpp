@@ -37,6 +37,7 @@ struct Config {
   double odo_left_calibrated=0,odo_right_calibrated=0,odo_left_true=0,odo_right_true=0;
 
   struct Truth {
+    std::string optical_key; // private, persistent per optical rig; never a public salt
     double lens_k1 = 0; // q_d=q_u*(1+k1*q_u^2), normalized by sensor half-width.
     double wheel_diameter_m = 0, scan_encoder_zero_rad = 0;
     double gate_start_offset_rad = 0, gate_end_offset_rad = 0, head_mount_x_m = 0;
@@ -66,7 +67,8 @@ struct Config {
   // Tangent of the angle between pixel u's ray and the optical axis, along the line.
   double PixelTangent(double u) const;
   // Local inverse radial Jacobian: along sensor / perpendicular to sensor.
-  double PixelTangentStep(double u, bool across) const;
+  enum class PixelDirection { AlongLine, Perpendicular };
+  double PixelTangentStep(double u, PixelDirection direction) const;
 
   // Everything except `truth`: what a session exposes to reconstruction (config/).
   nlohmann::json ObservableJson() const;

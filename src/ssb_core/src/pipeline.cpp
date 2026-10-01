@@ -74,6 +74,10 @@ struct Pipeline::Impl {
     std::lock_guard<std::mutex> lock(mutex);
     if (!failed) error = e;
     failed = true;
+    poses.clear();
+    render_queue.clear();
+    write_queue.clear();
+    write_queue_bytes = 0;
     cv.notify_all();
   }
 
@@ -141,6 +145,7 @@ nlohmann::json FileIdentity(const std::filesystem::path& path) {
 void Pipeline::Push(const PoseSample& sample) {
   auto& s = *impl_;
   std::lock_guard<std::mutex> lock(s.mutex);
+  if (s.failed) return; // worker error is reported by Wait; never accumulate more input
   if (s.input_finished) throw std::logic_error("pose pushed after Finish");
   if (!s.have_first) s.have_first = true, s.first_pushed = sample.t, s.first_push_wall = Clock::now();
   s.poses.push_back(sample);
@@ -176,7 +181,11 @@ void Pipeline::Impl::TimingLoop() {
     std::vector<RowJob> batch;
     std::vector<RowRecord> row_records;
     std::vector<RowTruthRecord> truth_records;
-    auto drain = [&] {
+    auto drain = [&]() -> bool {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (failed) return false;
+      }
       scan_table.Append(out.scan_edges);
       odo_table.Append(out.odo_edges);right_odo_table.Append(out.right_odo_edges);
       gate_table.Append(out.gates);
@@ -193,7 +202,7 @@ void Pipeline::Impl::TimingLoop() {
           cv.wait(lock, [&] {
             return failed || render_queue.size() < static_cast<size_t>(config.max_queued_batches);
           });
-          if (failed) return;
+          if (failed) return false;
           render_queue.push_back(std::move(batch));
           render_queue_peak = std::max(render_queue_peak, render_queue.size());
           batch.clear();
@@ -203,6 +212,7 @@ void Pipeline::Impl::TimingLoop() {
       rows_table.Append(row_records);
       truth_table.Append(truth_records);
       out.Clear();
+      return true;
     };
     for (;;) {
       std::deque<PoseSample> local;
@@ -215,9 +225,13 @@ void Pipeline::Impl::TimingLoop() {
         finished = input_finished;
       }
       for (const auto& p : local) {
+        {
+          std::lock_guard<std::mutex> lock(mutex);
+          if (failed) return;
+        }
         pose_table.Append(&p, 1);
         engine.Push(p, out);
-        drain();
+        if (!drain()) return;
       }
       if (finished) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -226,13 +240,14 @@ void Pipeline::Impl::TimingLoop() {
       }
     }
     engine.Finish(out);
-    drain();
+    if (!drain()) return;
     nlohmann::json meta = {{"rows", rows_table.Close()}, {"scan_edges", scan_table.Close()},
                            {"odometer_edges", odo_table.Close()}, {"odometer_right_edges",right_odo_table.Close()}, {"gate_events", gate_table.Close()},
                            {"dropped_rows", drop_table.Close()}};
     nlohmann::json evalj = {{"pose_stream", pose_table.Close()}, {"row_truth", truth_table.Close()}};
     const auto& st = engine.Stats();
     std::lock_guard<std::mutex> lock(mutex);
+    if (failed) return;
     if (!batch.empty()) render_queue.push_back(std::move(batch));
     metadata_tables = meta;
     evaluation_tables = evalj;

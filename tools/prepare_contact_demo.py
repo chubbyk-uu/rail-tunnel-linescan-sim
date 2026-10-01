@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
+import subprocess
 import xml.etree.ElementTree as ET
 import yaml
 
@@ -13,18 +14,22 @@ sys.path.insert(0,str(REPO/'src/ssb_tools'))
 from ssb_tools.stage_b_gui_world import prepare
 from ssb_tools.stage_b_scene import digest
 from ssb_tools.stage_b_track import make_track
+from ssb_tools.optical_identity import ensure_optical_key, check_calibration
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--world',type=Path,default=REPO/'local_data/stage_b/track_contact_v2/world.sdf')
-    p.add_argument('--config',type=Path,default=REPO/'local_data/stage_b/optics_b3_quality64/capture.yaml')
+    p.add_argument('--config',type=Path,default=REPO/'local_data/stage_b/gui_optics_v11/capture.yaml')
     p.add_argument('--spec',type=Path,default=REPO/'src/ssb_tools/config/stage_b_scene.yaml')
     p.add_argument('--output',required=True,type=Path)
+    p.add_argument('--calibrate',action='store_true',help='render independent targets and fit this demo rig')
+    p.add_argument('--calibration',type=Path,help='reuse a compatible measured calibration')
     a=p.parse_args();out=a.output.resolve()
     if out.exists():raise ValueError('refuse to overwrite prepared demo')
     out.mkdir(parents=True)
     c=yaml.safe_load(a.config.read_text());spec=yaml.safe_load(a.spec.read_text())
+    ensure_optical_key(c)
     c['contact']={'enabled':True,'settle_s':2.}
     c['motion']['start_x_m']=3.
     c['motion']['profile']=[[0.,0.],[1.,1.],[15.,1.],[16.,0.],[17.,0.]]
@@ -60,5 +65,21 @@ def main():
     report['track_regenerated']=True;report['world_sha256']=digest(world)
     manifest.write_text(json.dumps(report,indent=2)+'\n')
     shutil.copyfile(REPO/'src/ssb_gazebo/worlds/stage_b_gui.config',out/'gui.config')
+    if a.calibrate and a.calibration:
+        raise ValueError('choose --calibrate or --calibration')
+    if a.calibrate:
+        env = dict(__import__('os').environ)
+        env['PYTHONPATH'] = str(REPO/'src/ssb_tools')
+        for command in ([sys.executable,'-m','ssb_tools.optical_bench','--config',str(out/'capture.yaml'),
+                         '--output',str(out/'bench'),'--render'],
+                        [sys.executable,'-m','ssb_tools.optical_calibration','fit','--bench',str(out/'bench/bench.json'),
+                         '--output',str(out/'calibration.json')]):
+            with (out/'calibration.log').open('a') as log:
+                subprocess.run(command,env=env,stdout=log,stderr=subprocess.STDOUT,check=True)
+    elif a.calibration:
+        check_calibration(out/'capture.yaml',a.calibration)
+        shutil.copyfile(a.calibration,out/'calibration.json')
+    if (out/'calibration.json').exists():
+        check_calibration(out/'capture.yaml',out/'calibration.json')
 
 if __name__=='__main__':main()

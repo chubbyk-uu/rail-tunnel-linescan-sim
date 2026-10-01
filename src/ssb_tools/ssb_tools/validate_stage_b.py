@@ -18,6 +18,10 @@ from .validate_stage_a import (check,PASS,FAIL,UNMEASURABLE,verify_hashes,proven
                               advance_per_rev,compare_sessions)
 
 
+def runtime_source_budget(scene, scene_path):
+    return read_json(Path(scene_path).parent/scene['surface']['file'])['resources']['gpu_source_budget_bytes']
+
+
 def optical_assets(session):
     archive=read_json(session.root/'evaluation/optical_assets.json')
     backend=read_json(session.root/'config/backend.json')['describe']
@@ -150,7 +154,7 @@ def main(argv=None):
         if final.get('runtime_surface_recipe'):
             # Tiles are generated on the GPU from the recipe: the CPU tile cache must stay
             # unused, and the recipe source upload has its own device budget.
-            source_budget=read_json(Path(scene['surface']['file']))['resources']['gpu_source_budget_bytes']
+            source_budget=runtime_source_budget(scene,scene_path)
             used=final['recipe_source_device_bytes']
             checks.append(check('cpu_texture_budget',PASS if peak==0 else FAIL,peak_bytes=peak,budget_bytes=budget,
                                 note='runtime recipe: CPU tile cache unused'))

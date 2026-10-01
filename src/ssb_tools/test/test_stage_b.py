@@ -288,7 +288,7 @@ def test_optics_config_persists_accepted_texture_footprint_sampling(tmp_path):
     geometry=tmp_path/'geometry';geometry.mkdir()
     for name in ('panels.obj','joints.obj'):(geometry/name).write_text('v 0 0 0\n')
     (tmp_path/'surface.json').write_text('{}');(tmp_path/'defects.json').write_text('{}')
-    (tmp_path/'config.yaml').write_text('render: {}\n')
+    (tmp_path/'config.yaml').write_text('render: {}\ntruth: {}\n')
     scene=optics(tmp_path/'config.yaml',geometry,tmp_path/'surface.json',tmp_path/'defects.json',tmp_path/'out',integrated=True)
     written=json.loads((tmp_path/'out/scene.json').read_text())
     assert scene['sampling']['texture_footprint_samples']==2 and written['sampling']['texture_footprint_samples']==2

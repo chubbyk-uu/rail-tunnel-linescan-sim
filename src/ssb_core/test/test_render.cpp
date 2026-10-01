@@ -9,6 +9,7 @@
 #include "ssb_core/kinematic.hpp"
 #include "ssb_core/optix_renderer.hpp"
 #include "ssb_core/pipeline.hpp"
+#include "ssb_core/sha256.hpp"
 #include "ssb_core/texture.hpp"
 
 using namespace ssb;
@@ -203,9 +204,35 @@ TEST(Render, PincushionRaysMatchIndependentInverseAndCpuGeometry) {
       if(q*(1+.006*q*q)<qd)lo=q;else hi=q;}
     double expected=(lo+hi)/2*(.5*c.width)*c.pixel_pitch_m/c.FocalLength();
     EXPECT_NEAR(c.PixelTangent(u),expected,1e-14);
-    EXPECT_NEAR(c.PixelTangentStep(u,true),c.PixelTangent(u+.5)-c.PixelTangent(u-.5),1e-12);
+    EXPECT_NEAR(c.PixelTangentStep(u,Config::PixelDirection::AlongLine),c.PixelTangent(u+.5)-c.PixelTangent(u-.5),1e-12);
   }
   OptixRenderer r(c,DefaultPtxPath(),16);
   EXPECT_TRUE(r.SelfCheck().at("passed").get<bool>());
   c.truth.lens_k1=-.1; EXPECT_THROW(c.Validate(),std::exception);
+}
+
+TEST(Config, OpticalIdentityRequiresPrivateKeyAndTracksRigChanges) {
+  auto c=BaseConfig();
+  const auto id=c.OpticalSignature();
+  const auto public_bytes=c.ObservableJson().dump();
+  EXPECT_EQ(public_bytes.find(c.truth.optical_key),std::string::npos);
+  EXPECT_EQ(public_bytes.find("optical_key"),std::string::npos);
+  for(int i=0;i<=50;++i) {
+    auto candidate=c;
+    candidate.truth.optical_key=RandomKeyHex();
+    candidate.truth.lens_k1=i*.001;
+    EXPECT_NE(candidate.OpticalSignature(),id);
+  }
+  auto changed=c;changed.truth.lens_k1=.006;
+  EXPECT_NE(changed.OpticalSignature(),id);
+  changed=c;changed.truth.mount.e_m=.01;
+  EXPECT_NE(changed.OpticalSignature(),id);
+  EXPECT_EQ(Config::Parse(c.source_text).truth.optical_key.size(),64u);
+  auto textured=c.source_text;
+  textured.insert(textured.find("render:\n")+8,"  optical_scene: scene.json\n");
+  EXPECT_THROW(Config::Parse(textured),std::runtime_error);
+  textured.insert(textured.find("truth:\n")+7,"  optical_key: '"+c.truth.optical_key+"'\n");
+  EXPECT_EQ(Config::Parse(textured).truth.optical_key,c.truth.optical_key);
+  EXPECT_EQ(HmacSha256Hex(std::string(64,'0'),"test"),
+            "43b0cef99265f9e34c10ea9d3501926d27b39f57c6d674561d8ba236e7a819fb");
 }

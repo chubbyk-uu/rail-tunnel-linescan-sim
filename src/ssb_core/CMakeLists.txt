@@ -64,6 +64,9 @@ target_compile_definitions(ssb_core PRIVATE
 target_link_libraries(ssb_core PUBLIC ssb_timing CUDA::cudart ${CMAKE_DL_LIBS} pthread)
 
 add_executable(ssb_render tools/ssb_render.cpp)
+add_executable(ssb_optical_identity tools/ssb_optical_identity.cpp)
+target_link_libraries(ssb_optical_identity ssb_timing)
+install(TARGETS ssb_optical_identity DESTINATION lib/${PROJECT_NAME})
 target_link_libraries(ssb_render ssb_core)
 add_executable(ssb_selfcheck tools/ssb_selfcheck.cpp)
 target_link_libraries(ssb_selfcheck ssb_core)
@@ -86,6 +89,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_timing test/test_timing.cpp)
   target_link_libraries(test_timing ssb_timing)
   target_compile_definitions(test_timing PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
+  ament_add_gtest(test_pipeline_failure test/test_pipeline_failure.cpp)
+  target_link_libraries(test_pipeline_failure ssb_core)
+  target_compile_definitions(test_pipeline_failure PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
 
   # GPU tests run inside the OptiX runtime wrapper against the build-tree PTX.
   set(SSB_WRAPPER "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/with_optix_runtime.sh")

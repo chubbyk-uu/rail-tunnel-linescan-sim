@@ -105,6 +105,7 @@ Config Config::Parse(const std::string& text) {
   }
 
   const auto truth = Require(root, "truth", "");
+  c.truth.optical_key = truth["optical_key"] ? truth["optical_key"].as<std::string>() : RandomKeyHex();
   c.truth.lens_k1 = truth["lens_k1"] ? truth["lens_k1"].as<double>() : 0;
   c.truth.wheel_diameter_m = Get<double>(truth, "wheel_diameter_m", "truth.");
   c.truth.scan_encoder_zero_rad = Deg(Get<double>(truth, "scan_encoder_zero_deg", "truth."));
@@ -137,6 +138,8 @@ Config Config::Parse(const std::string& text) {
   c.max_queued_batches = Get<int>(render, "max_queued_batches", "render.");
   c.debug_delay_per_batch_s = Get<double>(render, "debug_delay_per_batch_s", "render.");
   if (render["optical_scene"]) c.optical_scene = render["optical_scene"].as<std::string>();
+  Check(c.optical_scene.empty() || bool(truth["optical_key"]),
+        "textured capture requires persistent truth.optical_key; regenerate the optical/demo configuration");
 
   const auto storage = Require(root, "storage", "");
   c.block_rows = Get<int>(storage, "block_rows", "storage.");
@@ -147,6 +150,8 @@ Config Config::Parse(const std::string& text) {
 }
 
 void Config::Validate() const {
+  Check(truth.optical_key.size()==64 && truth.optical_key.find_first_not_of("0123456789abcdef")==std::string::npos,
+        "truth.optical_key must be 64 lowercase hex characters");
   Check(std::isfinite(truth.lens_k1) && truth.lens_k1>=0 && truth.lens_k1<=.05,
         "lens_k1 must be finite and in [0, 0.05] (pincushion model)");
   Check(Finite({tunnel_radius_m, tunnel_axis_z_m, tunnel_x_min_m, tunnel_x_max_m, rescale_max_period_s,
@@ -192,16 +197,16 @@ double Config::PixelTangent(double u) const {
     qu-=(qu*(1+truth.lens_k1*qu*qu)-qd)/(1+3*truth.lens_k1*qu*qu);
   return qu*(.5*width)*pixel_pitch_m/FocalLength();
 }
-double Config::PixelTangentStep(double u, bool across) const {
+double Config::PixelTangentStep(double u, PixelDirection direction) const {
   const double qu=PixelTangent(u)*FocalLength()/(.5*width*pixel_pitch_m);
-  return pixel_pitch_m/FocalLength()/(1+(across?3:1)*truth.lens_k1*qu*qu);
+  return pixel_pitch_m/FocalLength()/(1+(direction==PixelDirection::AlongLine?3:1)*truth.lens_k1*qu*qu);
 }
 
 double Config::NominalOmega() const { return 2 * kPi * line_rate_hz / RowsPerRev(); }
 
 std::string Config::OpticalSignature() const {
   const auto& m=truth.mount;
-  nlohmann::json key={{"model","ssb.optics.v1"},{"width",width},{"pitch",pixel_pitch_m},
+  nlohmann::json key={{"model","ssb.optics.v2"},{"width",width},{"pitch",pixel_pitch_m},
     {"fov",fov_at_nominal_m},{"distance",nominal_distance_m},{"exposure",exposure_s},
     {"lens",truth.lens_k1},{"mount",{m.e_m,m.tangential_m,m.dy_m,m.dz_m,m.tilt_y_rad,m.tilt_z_rad,m.twist_rad}}};
   if(!optical_scene.empty()) {
@@ -209,7 +214,7 @@ std::string Config::OpticalSignature() const {
     key["lamp"]=scene.at("lamp");key["response_gain"]=scene.at("response_gain");
     key["indirect_fill"]=scene.value("indirect_fill_relative",0.);
   }
-  const auto bytes=key.dump();return Sha256Hex(bytes.data(),bytes.size());
+  return HmacSha256Hex(truth.optical_key, key.dump());
 }
 
 nlohmann::json Config::ObservableJson() const {
@@ -245,6 +250,7 @@ nlohmann::json Config::TruthJson() const {
           {"start_theta_rad", start_theta_rad},
           {"wheel_diameter_m", truth.wheel_diameter_m},
           {"lens_k1", truth.lens_k1},
+          {"optical_key", truth.optical_key},
           {"scan_encoder_zero_rad", truth.scan_encoder_zero_rad},
           {"gate_start_offset_rad", truth.gate_start_offset_rad},
           {"gate_end_offset_rad", truth.gate_end_offset_rad},

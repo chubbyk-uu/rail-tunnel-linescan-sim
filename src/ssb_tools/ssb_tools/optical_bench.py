@@ -7,11 +7,15 @@ from pathlib import Path
 import subprocess
 import yaml
 from .session import sha256_file
+from .optical_identity import ensure_optical_key
 
 
 def prepare(config_path, output):
     config_path = Path(config_path).resolve(); output = Path(output).resolve()
     config = yaml.safe_load(config_path.read_text())
+    if not config['truth'].get('optical_key'):
+        raise ValueError('prepare a persistent optical key in the capture configuration before calibrating')
+    ensure_optical_key(config)
     if any(config['truth']['mount'].values()):
         raise ValueError('bench currently requires nominal centered/parallel mounting')
     scene_path = Path(config['render']['optical_scene'])

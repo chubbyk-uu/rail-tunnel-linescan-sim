@@ -38,6 +38,7 @@ class Pipeline {
   Pipeline(const Pipeline&) = delete;
   Pipeline& operator=(const Pipeline&) = delete;
 
+  // After a worker failure input is discarded; Wait reports the original error.
   void Push(const PoseSample& sample);
   void Finish();
   // Blocks until everything is on disk; returns the session summary. Rethrows the

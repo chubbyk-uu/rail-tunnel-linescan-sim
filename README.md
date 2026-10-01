@@ -60,12 +60,17 @@ lens flare can be enabled with the top-left switch (off at startup) and follows 
 strongest visible source, with direction and occlusion checks;
 it does not change OptiX illumination or raw images.
 
-Open the prepared 3 m contact demo with `tools/run_gz_gui.sh` (paused initially).
-Play includes 2 s of settling before capture. The default assets are in
-`local_data/stage_b/gui_strip_shadow_final_v10/`. To derive another demo from the accepted
-local assets, use `python3 tools/prepare_contact_demo.py --output NEW_DIRECTORY`;
-then pass its `capture.yaml` and `world/world.sdf` as the second/third GUI arguments.
-Old ideal configurations/worlds remain usable when supplied explicitly.
+Prepare a calibrated 3 m demo from the accepted local assets:
+`python3 tools/prepare_contact_demo.py --output local_data/stage_b/contact_demo --calibrate`.
+Then open it with `tools/run_gz_gui.sh` (paused initially).
+Play includes 2 s of settling before capture. Configuration, world and calibration
+are selected together from `local_data/stage_b/contact_demo/`; for another generated
+directory, pass its `capture.yaml` as the second argument (the world and calibration
+are inferred beside it). `SSB_OPTICAL_CALIBRATION` can override the calibration.
+An incompatible or missing calibration fails before Gazebo starts.
+Generated configurations carry a private random HMAC key in `truth`; do not publish
+that section as reconstruction input. Legacy unsigned optical configurations need
+regeneration and recalibration. Historical sessions are retained without alteration.
 
 The final GUI run at 0.2 m/s and 64 crack samples achieved imaging RTF 0.994,
 284445 rows over 3 m, no missing rows in the valid region and byte-identical replay.
