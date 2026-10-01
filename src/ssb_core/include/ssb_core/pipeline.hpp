@@ -41,6 +41,8 @@ class Pipeline {
   // After a worker failure input is discarded; Wait reports the original error.
   void Push(const PoseSample& sample);
   void Finish();
+  // Low-rate UI snapshot; does not expose truth or copy image buffers.
+  nlohmann::json Progress() const;
   // Blocks until everything is on disk; returns the session summary. Rethrows the
   // first worker error after marking the session failed.
   nlohmann::json Wait();

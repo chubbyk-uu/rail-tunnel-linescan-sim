@@ -1,0 +1,44 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: ssb_rviz/MissionPanel
+    Name: 隧道采集任务
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 42; 45; 49
+    Fixed Frame: world
+    Frame Rate: 30
+  Displays:
+    - Class: rviz_default_plugins/MarkerArray
+      Name: 隧道轨道与轨道车（仿真真值）
+      Enabled: true
+      Topic:
+        Value: /ssb/sim_truth/scene
+        Depth: 1
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+    - Class: rviz_default_plugins/TF
+      Name: 坐标系
+      Enabled: false
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 3.2
+      Focal Point:
+        X: 3
+        Y: 0
+        Z: 1.3
+      Pitch: 0.14
+      Yaw: 3.55
+      Target Frame: world
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+Window Geometry:
+  Width: 1400
+  Height: 850
+  X: 50
+  Y: 50

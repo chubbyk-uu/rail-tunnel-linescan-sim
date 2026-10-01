@@ -58,6 +58,7 @@ struct Pipeline::Impl {
   double first_pushed = 0;
   Clock::time_point first_push_wall;
   std::atomic<double> latest_written_center{0};
+  std::atomic<int64_t> rows_generated{0}, rows_persisted{0};
   Clock::time_point start_wall, finish_called_wall;
   double pushed_at_finish = 0, written_at_finish = 0;
   bool finish_called = false;
@@ -165,6 +166,16 @@ void Pipeline::Finish() {
   s.cv.notify_all();
 }
 
+nlohmann::json Pipeline::Progress() const {
+  auto& s = *impl_;
+  std::lock_guard<std::mutex> lock(s.mutex);
+  return {{"rows_generated", s.rows_generated.load()},
+          {"rows_saved", s.rows_persisted.load()},
+          {"sim_time_pushed", s.latest_pushed.load()},
+          {"sim_time_written", s.latest_written_center.load()},
+          {"failed", s.failed}};
+}
+
 void Pipeline::Impl::TimingLoop() {
   try {
     const auto dir = root / "metadata", eval = root / "evaluation";
@@ -193,6 +204,7 @@ void Pipeline::Impl::TimingLoop() {
       row_records.clear();
       truth_records.clear();
       for (const auto& job : out.rows) {
+        ++rows_generated;
         row_records.push_back(job.record);
         const auto& p = job.pose;
         truth_records.push_back({job.record.sequence, job.record.t_center, p.theta, p.omega, p.x, p.v,p.y,p.z,p.roll,p.pitch,p.yaw,p.body_valid});
@@ -328,6 +340,7 @@ void Pipeline::Impl::WriteLoop() {
       }
       const auto t0 = Clock::now();
       blocks.Append(b.pixels.data(), b.rows, b.first_sequence);
+      rows_persisted = blocks.RowsPersisted();
       for (size_t i = 0; i < b.rows; ++i) {
         const int64_t seq = b.first_sequence + static_cast<int64_t>(i);
         std::memcpy(record.data(), &seq, 8);
@@ -343,6 +356,7 @@ void Pipeline::Impl::WriteLoop() {
                           {"sim_time_written", b.last_center}, {"sim_time_pushed", latest_pushed.load()}});
     }
     nlohmann::json raw = blocks.Close();
+    rows_persisted = blocks.RowsPersisted();
     nlohmann::json hits = hit_table.Close();
     hits["columns"] = debug_columns;
     std::lock_guard<std::mutex> lock(mutex);

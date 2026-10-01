@@ -27,7 +27,7 @@ python3 "$mesa_wrapper" bash "$repo/tools/with_optix_runtime.sh" bash -c '
   export GZ_SIM_SYSTEM_PLUGIN_PATH="$1/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
   export GZ_GUI_PLUGIN_PATH="$1/install/ssb_gazebo/lib${GZ_GUI_PLUGIN_PATH:+:$GZ_GUI_PLUGIN_PATH}"
   # Manage server and GUI separately: closing the GUI must drain/stop the server
-  # before running the correction step. Only these owned process groups are stopped.
+  # before checking the raw session. Only these owned process groups are stopped.
   server_pid=""
   gui_pid=""
   cleanup() {
@@ -60,7 +60,5 @@ python3 "$mesa_wrapper" bash "$repo/tools/with_optix_runtime.sh" bash -c '
 ' _ "$repo" > "$log_dir/gazebo.log" 2>&1
 if [[ -d "$session" ]]; then
   python3 "$repo/tools/check_session.py" "$session"
-  echo "Applying measured optical calibration: $calibration"
-  PYTHONPATH="$repo/src/ssb_tools${PYTHONPATH:+:$PYTHONPATH}" python3 -m ssb_tools.optical_calibration apply \
-    --session "$session" --calibration "$calibration" --output "$session/processed/optical"
+  echo "Raw capture saved: $session. Apply optical calibration separately before stitching."
 fi

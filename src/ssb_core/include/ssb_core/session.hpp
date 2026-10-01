@@ -45,6 +45,7 @@ class BlockWriter {
   void Append(const uint8_t* rows, size_t count, int64_t first_sequence);
   nlohmann::json Close();
   int64_t RowsWritten() const { return next_sequence_; }
+  int64_t RowsPersisted() const { return next_sequence_ - static_cast<int64_t>(buffered_); }
 
  private:
   void Flush();

@@ -7,7 +7,8 @@ stages reconstruct the unrolled tunnel wall.
 Status (2026-10-01): stage A (geometry and timing) is accepted. Stage B (scene,
 lighting, rail contact, lens calibration) has a validated 3 m capture and a user-accepted
 visual baseline ([review record](docs/STAGE_B.md#71-画面复核与基线冻结2026-10-01)).
-The RViz mission UI is next; full 20 m capture and stitching are not implemented yet.
+The RViz mission UI is implemented ([usage](docs/STAGE_B.md#10-rviz-与任务控制));
+full 20 m capture and stitching are not implemented yet.
 
 ## Documentation
 
@@ -63,14 +64,20 @@ A stage A session is about 0.9 GB. Stage A has no persistent `truth.optical_key`
 
 ## Stage B demo
 
+For the RViz mission panel (start position, travel distance, start/pause/resume/stop),
+run `tools/run_mission.sh` after building all packages. Add `--gz-gui` for both viewers.
+Each task creates a fresh session; closing RViz drains raw capture. Optical correction is
+run separately before stitching.
+
 ```bash
 tools/run_gz_gui.sh            # opens local_data/stage_b/contact_demo, paused; press Play
 ```
 
 The demo is a 3 m run on rigid wheel/rail contact (2 s settling, then 0.2 m/s, 20 rpm,
 28.444 kHz line triggers). The launcher checks the optical calibration before starting
-Gazebo. After the GUI closes, it waits for all rows to reach disk, checks the session,
-and writes the dark/flat/geometric correction to `SESSION/processed/optical/`.
+Gazebo. After the GUI closes, it waits for all raw rows to reach disk and checks the
+session. Dark/flat/geometric correction is run separately before stitching, writing
+to `SESSION/processed/optical/` without changing the raw data.
 Details, asset regeneration, replay and validation: [docs/STAGE_B.md](docs/STAGE_B.md).
 
 ## Data

@@ -10,6 +10,7 @@
 - 刚体轮轨接触：前轮驱动，两个后轮编码器控制扫描。
 - OptiX 扫描条光、0.6% 镜头畸变、标靶标定与离线校正。
 - GUI 预览：同源纹理、车载工作灯、带阴影的条光、可选眩光。
+- RViz：轻量环境和轨道车显示、内嵌任务面板、统一原始采集控制（§10）。
 
 有 3 m 短程完整采集和重放验收（§7）。2026-10-01 用户已确认当前画质作为后续 20 m 采集的基线（§7.1）。
 
@@ -17,7 +18,6 @@
 
 - 完整 20 m 任务的画面覆盖、资源与性能验收。
 - 完整 20 m 采集（阶段 C），拼接与全局优化（阶段 D）。
-- RViz 任务界面。
 - 其余设计层面的待办见 DESIGN §14。
 
 ## 2. 默认演示
@@ -35,7 +35,7 @@ tools/run_gz_gui.sh SESSION path/to/capture.yaml   # 其他演示目录，世界
 1. 启动前用 `ssb_optical_identity` 检查配置与标定的光学身份，不匹配就不启动 Gazebo。可用 `SSB_OPTICAL_CALIBRATION` 指定另一份标定。
 2. 服务器和 GUI 分别启动，初始暂停，点击 Play 开始。
 3. 先静置 2 s，然后车体从 x=3 m 按缓起停剖面行驶 3 m（0.2 m/s、20 rpm、28.444 kHz）。
-4. 关闭 GUI 后，脚本停止服务器、等待数据全部落盘，用 `tools/check_session.py` 检查完整性，再自动做离线光学校正，结果写到 `SESSION/processed/optical/`。
+4. 关闭 GUI 后，脚本停止服务器、等待数据全部落盘，用 `tools/check_session.py` 检查完整性，只保留原始图像；畸变校正和平场补偿在拼接前另行执行（§6）。
 
 日志在 `local_data/gui_logs/<时间>/`。WSL 下需要私有 Mesa（`SSB_MESA_PREFIX`，默认 `~/opt/agv-mesa-25.2.8/install`），启动器是 `tools/with_mesa_runtime.py`。
 
@@ -186,7 +186,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply --sessio
 | 重放 | 333 行批次重放 `sessions/review_portable_replay`，81 个原始文件逐字节一致 |
 | 采集检查 | `validate_stage_b_smoke` 22 项全部通过；CPU 独立射线命中最大误差 0.1972 μm |
 | 接触检查 | 全部通过；最大纵向滑移速度 0.0776 mm/s，最大扫描跟踪误差 0.010502 rad |
-| 离线校正 | 退出后自动校正 70 个块 |
+| 离线校正 | 本次历史验收在退出后校正 70 个块；现行采集已改为拼接前单独执行 |
 | 资产包 | 327 个文件哈希在移动后全部匹配，Gazebo 日志无资源加载错误 |
 
 其他已验证项（会话数据已清理，数字记录在 [history/STAGE_B_DEVLOG.md](history/STAGE_B_DEVLOG.md)）：
@@ -248,7 +248,52 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_review \
 
 ## 9. 待完成
 
-1. RViz 显示与任务面板（DESIGN §13）：隧道和轨道车、任务起点与距离、开始/暂停/继续，以及联合界面的资源验收。
-2. 阶段 C：完整 20 m 采集，包括覆盖图、资源和吞吐报告，以及 20 m 场景的 double 格式裂缝索引。
-3. 阶段 D：展开、重叠匹配、全局优化、分块重采样。
-4. 按需加入：裂缝几何凹陷参考、机器人遮挡、镜头退化、未填/破损板缝的新模型、弯轨。
+1. 阶段 C：完整 20 m 采集，包括覆盖图、资源和吞吐报告，以及 20 m 场景的 double 格式裂缝索引。
+2. 阶段 D：展开、重叠匹配、全局优化、分块重采样。
+3. 按需加入：裂缝几何凹陷参考、机器人遮挡、镜头退化、未填/破损板缝的新模型、弯轨。
+
+## 10. RViz 与任务控制
+
+```bash
+tools/run_mission.sh             # RViz 显示，Gazebo 服务器按任务启动
+tools/run_mission.sh --gz-gui    # 同时显示 GZ GUI
+# 可指定成套的演示与会话根目录：
+tools/run_mission.sh --demo local_data/stage_b/contact_demo --output-root sessions/mission
+```
+
+面板设置轨道纵向起点和前进距离，分别显示车体预计终点和全角度覆盖保守估计，提供开始、暂停、继续、结束任务（快捷键 Ctrl+Alt+S/P/R/E）。当前范围为 0–20 m，最短任务 0.05 m；开始前核对轨道及视场缓冲余量。运行中锁定输入。起点在生成任务世界时初始化，不是自动驾驶到起点；使用现行 0.2 m/s 标称速度，根据距离生成缓起停剖面，保留扫描由后轮编码器驱动的逻辑。行驶距离显示编码器估计值，轮径误差仍会影响扫描。当前终止按运动剖面的计划时长执行；带轮径偏差的里程目标停车控制尚未实现。
+
+统一管理器 `ssb_tools.mission_manager` 接收 `/ssb/mission/command`，发布 `/ssb/mission/status`。每条命令带独立 ID；拒绝越界、活动任务中重新开始和重复请求。暂停采用 Gazebo 冻结仿真时间，保留计数和扫描相位；已有曝光继续成像落盘。结束任务先暂停，再通知自己启动的服务器退出并排空队列，保存尾块；提前结束保持 `session.json` 的 `motion.complete=false`，界面显示“提前结束，数据已保存”。此时完整任务检查脚本拒绝会话是预期行为。
+
+管理器分别报告运行、已暂停、等待落盘、原始采集完成或失败；不在采集或任务退出时运行畸变校正和平场补偿。已保存行数只计入已写盘且回读哈希通过的块，尾块关闭后计入；成像滞后是最近输入位姿与写线程已处理曝光时间之差，不等于待耐久化尾块的时间。最终数据状态和哈希仍以会话清单为准。会话生成失败或后台成像失败会显示错误；每次重新开始创建不同的会话和任务输入目录。
+
+RViz 复用 SDF 的视觉几何、颜色和预览贴图，转换为 Collada 并缓存到 `local_data/rviz_preview/`，每张纹理最长边 512 px；不加载 0.1 mm 光学纹理。环境 MarkerArray 缓存后以 1 Hz 重发，防止新任务时间归零或手动 Reset 清空显示后场景丢失；不重读或重新烘焙资产。车辆各 link 由 10 Hz TF 更新，图像不经 DDS。显示话题 `/ssb/sim_truth/scene`、`/ssb/sim_truth/joint_states` 和坐标系 `sim_truth/*` 只供观察；位姿来自仿真物理状态，严禁用于盲重建。`/clock` 与 Gazebo 仿真时间一致，RViz 启用 `use_sim_time`，支持新任务时的时间归零。RViz 光照只是观察效果，不模拟采集条光的光度和阴影。
+
+运行日志在 `local_data/mission_logs/`，各任务私有输入、世界和服务器日志在 `local_data/mission_runs/`；任务状态变更与最终真值写入会话的 `evaluation/mission.json`。关闭 RViz 会结束活动任务并等待原始图像保存；任务自然结束后 RViz 保持打开。可选的 GZ GUI 保留最后画面，新任务复用它连接新的服务器。
+
+本轮真实 Gazebo＋OptiX 联调验证：越界拒绝、任意扫描相位暂停/继续、暂停后无新增曝光、活动任务中重新开始被拒、提前结束尾块保存与未完成标记、重新开始的会话隔离。0.6 m 暂停任务采集 56889 行，333 行批次重放的 20 个原始/元数据文件逐字节一致；所有采集位姿时间间隔仍为 1 ms。另测 3 组 3 m 任务，各 284445 行，原始文件与会话清单哈希全部通过，RViz 预览无资源加载错误。
+
+| 界面 | 动力学实时率 | 成像实时率 | 进程 RSS 合计峰值 |
+|---|---:|---:|---:|
+| GZ GUI | 1.000 | 0.994 | 3.35 GiB |
+| RViz | 1.000 | 0.994 | 2.81 GiB |
+| GZ GUI＋RViz | 1.000 | 0.994 | 3.79 GiB |
+
+测量记录 `/tmp/ssb_mission_integration_final/report.json`；RSS 为测试期间各自进程树的采样合计，包含共享页重复计数，不是独占内存。OptiX 的纹理分配峰值约 2.00 GiB，与 2 GiB 配置预算一致，未测量整机显存峰值。实时率从首个采集位姿开始，排除资产加载和 GPU 初始化，本轮未执行采后校正；暂停测试不用于性能表。上述结果仍是 3 m 短程，完整 20 m 待验收。
+
+黑屏排查：RViz 会在时间回拨及手动 Reset 时清空 Marker；原来仅发布一次场景，清空后不会自动恢复。现行 1 Hz 缓存重发解决这条路径。负向验证仅在测试进程中禁用重发定时器，恢复旧行为：不打开 GZ GUI，Reset 后画面退化为纯背景（各通道标准差为 0），被空场景检查拒绝；记录在 `/tmp/ssb_marker_restore_negative/report.json`。在单开 RViz 和 GZ GUI＋RViz 两组实际采集中，分别操作视角、Reset 和任务时间归零，渲染缓冲截图均保留隧道和车辆，日志无渲染资源错误。双界面另外通过实际面板快捷键验证开始、暂停、继续、提前结束和重新开始；新会话不生成 `processed/optical/`。记录在 `/tmp/ssb_mission_integration_final/view_regression.json` 和 `/tmp/ssb_rviz_diagnose12/`。没有复现用户所述的所有偶发黑屏，不能据此排除 WSL 显示驱动等其他原因，也不能认定 GZ GUI 是必要触发条件。
+
+可重跑集成验收（输出目录必须不存在，需先重建）：
+
+```bash
+python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
+  source /opt/ros/jazzy/setup.bash
+  source install/setup.bash
+  export GZ_SIM_SYSTEM_PLUGIN_PATH="$PWD/install/ssb_gazebo/lib"
+  export GZ_GUI_PLUGIN_PATH="$PWD/install/ssb_gazebo/lib"
+  export GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA QT_QPA_PLATFORM=xcb
+  python3 tools/test_mission.py --output /tmp/ssb_mission_NEW --performance
+' > /tmp/ssb_mission_NEW.log 2>&1
+```
+
+仅做动力学调试可加 `--dynamics-only`，面板会明确标注不采图。可用 `SSB_RVIZ_REVIEW_DIR=/tmp/NEW_REVIEW tools/run_mission.sh` 保存启动后的面板和渲染缓冲截图；此开关启用时还接受 `/ssb/mission/review` 上的 String 消息，内容为文件名前缀（字母、数字、下划线或短横线，1–32 字符）。默认关闭，不产生持续截图负载。截图也不代表采集相机图像。

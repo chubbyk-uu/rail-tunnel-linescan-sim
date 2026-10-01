@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ssb_rviz</name><version>0.1.0</version>
+  <description>RViz scene display and tunnel scan mission control panel.</description>
+  <maintainer email="dk.illidan@gmail.com">jerry</maintainer><license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rviz_common</depend><depend>rviz_rendering</depend><depend>rclcpp</depend><depend>std_msgs</depend>
+  <depend>pluginlib</depend><depend>qtbase5-dev</depend>
+  <exec_depend>ssb_tools</exec_depend><exec_depend>rviz2</exec_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

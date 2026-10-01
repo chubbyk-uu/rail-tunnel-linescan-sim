@@ -5,6 +5,8 @@
 #include <gz/sim/Joint.hh>
 #include <gz/sim/Link.hh>
 #include <gz/sim/Util.hh>
+#include <gz/transport/Node.hh>
+#include <gz/msgs/stringmsg.pb.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -32,6 +34,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       const char* cp=std::getenv("SSB_CONFIG"),*sp=std::getenv("SSB_SESSION");
       if(!cp||!sp)throw std::runtime_error("SSB_CONFIG and SSB_SESSION required");
       config_path_=cp;session_=sp;c_=ssb::Config::Load(cp);dynamics_only_=std::getenv("SSB_DYNAMICS_ONLY")!=nullptr;
+      if (const char* topic = std::getenv("SSB_MISSION_STATUS_TOPIC"))
+        status_pub_ = transport_.Advertise<gz::msgs::StringMsg>(topic);
       gz::sim::Model model(entity);base_=gz::sim::Link(model.LinkByName(ecm,"base"));base_.EnableVelocityChecks(ecm,true);
       CheckAssembly(model,ecm,c_);
       auto joint=[&](std::string name){gz::sim::Joint j(model.JointByName(ecm,name));if(!j.Valid(ecm))throw std::runtime_error("missing joint "+name);j.EnablePositionCheck(ecm,true);j.EnableVelocityCheck(ecm,true);return j;};
@@ -76,6 +80,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     }
   }
   void PostUpdate(const gz::sim::UpdateInfo& info,const gz::sim::EntityComponentManager& ecm) override {
+    PublishStatus(info, ecm);
     if(info.paused||finished_)return;
     const double t=std::chrono::duration<double>(info.simTime).count()-settle_;
     auto pose=gz::sim::worldPose(base_.Entity(),ecm);auto linear=base_.WorldLinearVelocity(ecm);
@@ -108,6 +113,34 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     }
   }
  private:
+  void PublishStatus(const gz::sim::UpdateInfo& info,
+                     const gz::sim::EntityComponentManager& ecm) {
+    if (!status_pub_) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_status_ < std::chrono::milliseconds(100)) return;
+    last_status_ = now;
+    const auto pose = gz::sim::worldPose(base_.Entity(), ecm);
+    const auto& p = pose.Pos(); const auto& q = pose.Rot();
+    auto position = [&](const gz::sim::Joint& joint) {
+      const auto value = joint.Position(ecm);
+      return value && !value->empty() ? value->front() : 0.;
+    };
+    auto rate = scan_.Velocity(ecm);
+    auto velocity = base_.WorldLinearVelocity(ecm);
+    nlohmann::json status = {
+      {"session", session_},
+      {"sim_time", std::chrono::duration<double>(info.simTime).count()},
+      {"paused", info.paused}, {"started", started_}, {"motion_complete", finished_},
+      {"s_hat", s_hat_}, {"scan", position(scan_)},
+      {"scan_rate", rate && !rate->empty() ? rate->front() : 0.},
+      {"speed", velocity ? velocity->X() : 0.},
+      {"base_pose", {p.X(), p.Y(), p.Z(), q.X(), q.Y(), q.Z(), q.W()}},
+      {"wheel_angles", {position(enc_[0]), position(drive_[0]),
+                         position(enc_[1]), position(drive_[1])}},
+      {"capture", pipeline_ ? pipeline_->Progress() : nlohmann::json::object()}};
+    gz::msgs::StringMsg message; message.set_data(status.dump());
+    status_pub_.Publish(message);
+  }
   void StartPipeline(){
     auto renderer=std::make_unique<ssb::OptixRenderer>(c_,ssb::DefaultPtxPath(),c_.batch_rows);
     ssb::PipelineOptions options{session_,{"gz-contact",config_path_},"gazebo_contact"};options.inputs["config"]=ssb::FileIdentity(config_path_);
@@ -115,6 +148,9 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     options.planned_end_s=c_.profile.back()[0];pipeline_=std::make_unique<ssb::Pipeline>(c_,std::move(renderer),options);
   }
   ssb::Config c_;gz::sim::Joint enc_[2],drive_[2],scan_;gz::sim::Link base_;
+  gz::transport::Node transport_;
+  gz::transport::Node::Publisher status_pub_;
+  std::chrono::steady_clock::time_point last_status_{};
   std::string config_path_,session_,log_root_;std::ofstream obs_,truth_;
   std::unique_ptr<ssb::Pipeline> pipeline_;std::future<nlohmann::json> completion_;
   ScanServo servo_;

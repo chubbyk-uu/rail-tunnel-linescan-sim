@@ -1,0 +1,5 @@
+<library path="ssb_mission_panel">
+  <class name="ssb_rviz/MissionPanel" type="ssb_rviz::MissionPanel" base_class_type="rviz_common::Panel">
+    <description>Tunnel line-scan mission start, pause, resume and drain control.</description>
+  </class>
+</library>
