@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import numpy as np
+from .robot_geometry import mount_geometry
 import yaml
 
 
@@ -23,7 +24,7 @@ def validate(root,config):
     slip=max(float(np.max(abs(a['vx']-a['left_rate']*tl/2))),float(np.max(abs(a['vx']-a['right_rate']*tr/2))))
     checks=dict(complete=bool(summary['complete']),positive_travel=bool(travel>1),
         no_reverse=bool(a['vx'].min()>-1e-4),lateral_guidance=bool(abs(a['y']).max()<.001),
-        supported=bool(abs(a['z']-.3).max()<.003),attitude=bool(max(abs(a['roll']).max(),abs(a['pitch']).max())<.02),
+        supported=bool(abs(a['z']-mount_geometry(c)[0]).max()<.003),attitude=bool(max(abs(a['roll']).max(),abs(a['pitch']).max())<.02),
         small_longitudinal_slip=slip<.001,
         encoder_distance=bool(np.max(abs(estimated-b['s_hat']))<1e-10),
         encoder_scan_target=bool(np.max(abs(target-b['theta_target']))<1e-9),

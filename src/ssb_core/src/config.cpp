@@ -65,6 +65,10 @@ Config Config::Parse(const std::string& text) {
   c.tunnel_axis_z_m = Get<double>(tunnel, "axis_z_m", "tunnel.");
   c.tunnel_x_min_m = Get<double>(tunnel, "x_min_m", "tunnel.");
   c.tunnel_x_max_m = Get<double>(tunnel, "x_max_m", "tunnel.");
+  const auto robot = root["robot"];
+  c.base_reference_z_m = robot && robot["base_reference_z_m"] ? robot["base_reference_z_m"].as<double>() : .3;
+  c.scan_axis_height_m = robot && robot["scan_axis_height_m"] ? robot["scan_axis_height_m"].as<double>() :
+      c.tunnel_axis_z_m-c.base_reference_z_m;
 
   const auto enc = Require(root, "scan_encoder", "");
   c.scan_ppr = Get<int>(enc, "ppr", "scan_encoder.");
@@ -150,6 +154,8 @@ Config Config::Parse(const std::string& text) {
 }
 
 void Config::Validate() const {
+  Check(Finite({base_reference_z_m,scan_axis_height_m}) && base_reference_z_m>0 && scan_axis_height_m>0,
+        "invalid robot base reference or scan axis height");
   Check(truth.optical_key.size()==64 && truth.optical_key.find_first_not_of("0123456789abcdef")==std::string::npos,
         "truth.optical_key must be 64 lowercase hex characters");
   Check(std::isfinite(truth.lens_k1) && truth.lens_k1>=0 && truth.lens_k1<=.05,
@@ -209,6 +215,7 @@ std::string Config::OpticalSignature() const {
   nlohmann::json key={{"model","ssb.optics.v2"},{"width",width},{"pitch",pixel_pitch_m},
     {"fov",fov_at_nominal_m},{"distance",nominal_distance_m},{"exposure",exposure_s},
     {"lens",truth.lens_k1},{"mount",{m.e_m,m.tangential_m,m.dy_m,m.dz_m,m.tilt_y_rad,m.tilt_z_rad,m.twist_rad}}};
+  key["assembly"]={base_reference_z_m,scan_axis_height_m};
   if(!optical_scene.empty()) {
     std::ifstream in(optical_scene);nlohmann::json scene;in>>scene;
     key["lamp"]=scene.at("lamp");key["response_gain"]=scene.at("response_gain");
@@ -220,6 +227,7 @@ std::string Config::OpticalSignature() const {
 nlohmann::json Config::ObservableJson() const {
   nlohmann::json j;
   j["schema"] = "ssb.observable_config.v1";
+  j["robot"]={{"base_reference_z_m",base_reference_z_m},{"scan_axis_height_m",scan_axis_height_m}};
   j["tunnel"] = {{"x_min_m", tunnel_x_min_m}, {"x_max_m", tunnel_x_max_m}};
   j["scan_encoder"] = {{"ppr", scan_ppr}, {"edges_per_cycle", scan_edges_per_cycle}};
   j["rescaler"] = {{"multiply", rescale_multiply}, {"divide", rescale_divide},
@@ -251,6 +259,7 @@ nlohmann::json Config::TruthJson() const {
           {"wheel_diameter_m", truth.wheel_diameter_m},
           {"lens_k1", truth.lens_k1},
           {"optical_key", truth.optical_key},
+          {"robot",{{"base_reference_z_m",base_reference_z_m},{"scan_axis_height_m",scan_axis_height_m}}},
           {"scan_encoder_zero_rad", truth.scan_encoder_zero_rad},
           {"gate_start_offset_rad", truth.gate_start_offset_rad},
           {"gate_end_offset_rad", truth.gate_end_offset_rad},

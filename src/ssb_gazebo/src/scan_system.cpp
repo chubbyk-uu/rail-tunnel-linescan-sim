@@ -19,6 +19,7 @@
 
 #include "ssb_core/optix_renderer.hpp"
 #include "ssb_core/pipeline.hpp"
+#include "assembly_check.hpp"
 
 namespace ssb_gazebo {
 
@@ -67,6 +68,7 @@ class ScanSystem final : public gz::sim::System,
     step_ = config_.sample_period_s;
 
     gz::sim::Model model(entity);
+    CheckAssembly(model,ecm,config_);
     auto joint = [&](const char* element) {
       const auto name = sdf->Get<std::string>(element);
       gz::sim::Joint j(model.JointByName(ecm, name));

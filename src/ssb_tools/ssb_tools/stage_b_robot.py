@@ -10,6 +10,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .stage_b_scene import sub, box, cylinder, inertial, make_joint
+from .robot_geometry import mount_geometry
 
 WHITE = '0.91 0.93 0.95 1'
 ORANGE = '1.0 0.235 0.025 1'
@@ -65,7 +66,9 @@ def mesh_visual(link,name,path,placement,color):
 
 
 def make_robot(out,config,spec):
-    robot=spec['robot'];zc=config['tunnel']['axis_z_m']
+    robot=spec['robot']
+    base_z, axis_height = mount_geometry(config)
+    zc=base_z+axis_height
     contact=config.get('contact',{}).get('enabled',False)
     half=robot['wheelbase_m']/2;diameter=robot['wheel_diameter_m']
     rail_y=(spec['track']['gauge_m']+spec['track']['head_width_m'])/2
@@ -107,22 +110,22 @@ def make_robot(out,config,spec):
 
     car=ET.Element('model',name='scan_car')
     sub(car,'pose',pose(config['motion']['start_x_m']))
-    base=sub(car,'link',name='base');sub(base,'pose',pose(z=.3))
+    base=sub(car,'link',name='base');sub(base,'pose',pose(z=base_z))
     inertial(base,robot['total_mass_kg']-35-(.8 if contact else 0),(4.2,8.1,10.5))
     # Helpers take coordinates in the car frame, converting into the base link.
     def base_box(name,x,y,z,size,color=WHITE,collision=False):
-        box(base,name,pose(x,y,z-.3),size,color,collision)
+        box(base,name,pose(x,y,z-base_z),size,color,collision)
     def base_cylinder(name,x,y,z,radius,length,color=METAL,roll=0,pitch=0):
-        cylinder(base,name,pose(x,y,z-.3,roll,pitch),radius,length,color)
+        cylinder(base,name,pose(x,y,z-base_z,roll,pitch),radius,length,color)
     def base_tube(name,a,b,radius,color):
-        tube(base,name,(a[0],a[1],a[2]-.3),(b[0],b[1],b[2]-.3),radius,color)
+        tube(base,name,(a[0],a[1],a[2]-base_z),(b[0],b[1],b[2]-base_z),radius,color)
 
     for i,x in enumerate((-half,half)):
         base_box(f'crossbar_{i}',x,0,.245,f'.065 {2*rail_y-.08} .065',WHITE,True)
         base_box(f'crossbar_trim_{i}',x,0,.282,f'.055 {2*rail_y-.15} .008',METAL)
     for side,sign in (('left',1),('right',-1)):
         y=sign*(rail_y-.070)
-        mesh_visual(base,side+'_drive_box',folder/'drive_cover.obj',pose(y=y,z=-.3),ORANGE)
+        mesh_visual(base,side+'_drive_box',folder/'drive_cover.obj',pose(y=y,z=-base_z),ORANGE)
         # A shallow inset face and hub rings give the drive box its patent silhouette.
         base_box(side+'_drive_inset',0,y+sign*.041,.157,f'{2*half-.12} .006 .10',WHITE)
         for x in (-half,half):
@@ -147,9 +150,9 @@ def make_robot(out,config,spec):
         for i,x in enumerate((-.22,0,.22)):
             base_cylinder(f'{side}_case_fastener_{i}',x,y+sign*.042,.21,.008,.006,METAL,roll=math.pi/2)
         yc=sign*(bay_inner+bay_outer)/2
-        mesh_visual(base,side+'_electronics_cover',folder/'bay_cover.obj',pose(y=yc,z=-.3),WHITE)
+        mesh_visual(base,side+'_electronics_cover',folder/'bay_cover.obj',pose(y=yc,z=-base_z),WHITE)
         for end,ey in (('inner',sign*bay_inner),('outer',sign*bay_outer)):
-            mesh_visual(base,f'{side}_{end}_endplate',folder/'bay_end.obj',pose(y=ey,z=-.3),ORANGE)
+            mesh_visual(base,f'{side}_{end}_endplate',folder/'bay_end.obj',pose(y=ey,z=-base_z),ORANGE)
         base_box(side+'_bay_latch',0,sign*(bay_outer+.010),.353,'.09 .017 .028',DARK)
         # Low profile orange centre strip, shared profile keeps it flush with the lid.
         # Small label plate has no texture allocation or runtime GUI text rendering.
@@ -320,7 +323,7 @@ def make_robot(out,config,spec):
                     n=visual.get('name')
                     if n==tag or n.startswith(tag+'_seal') or n.startswith(tag+'_inner_race'):
                         base.remove(visual);coords=list(map(float,visual.findtext('pose').split()))
-                        coords[0]-=x;coords[1]-=gy;coords[2]+=.3-guide_z
+                        coords[0]-=x;coords[1]-=gy;coords[2]+=base_z-guide_z
                         visual.find('pose').text=' '.join(map(str,coords));bearing.append(visual)
                 col=sub(bearing,'collision',name='guide_contact');g=sub(sub(col,'geometry'),'cylinder')
                 sub(g,'radius',guide_radius);sub(g,'length',guide_width);friction(col,.5)

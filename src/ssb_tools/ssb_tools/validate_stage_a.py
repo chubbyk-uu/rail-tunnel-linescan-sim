@@ -267,6 +267,8 @@ def truth_from_source(src, source_sha):
     rad = math.pi / 180
     t, m = src['truth'], src['truth']['mount']
     return {
+        **({('optical_key',):t['optical_key']} if 'optical_key' in t else {}),
+        **({('robot',k):v for k,v in src['robot'].items()} if 'robot' in src else {}),
         ('tunnel', 'radius_m'): src['tunnel']['radius_m'], ('tunnel', 'axis_z_m'): src['tunnel']['axis_z_m'],
         ('start_theta_rad',): src['motion']['start_theta_deg'] * rad,
         ('wheel_diameter_m',): t['wheel_diameter_m'],

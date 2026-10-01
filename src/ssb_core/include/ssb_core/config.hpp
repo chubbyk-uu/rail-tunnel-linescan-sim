@@ -20,6 +20,7 @@ struct MountOffsets {
 struct Config {
   // Tunnel (scene truth; the nominal radius for reconstruction is calibration.radius_m).
   double tunnel_radius_m = 0, tunnel_axis_z_m = 0, tunnel_x_min_m = 0, tunnel_x_max_m = 0;
+  double base_reference_z_m = .3, scan_axis_height_m = 0; // nominal robot assembly, shared with SDF
   int scan_ppr = 0, scan_edges_per_cycle = 0;
   int rescale_multiply = 0, rescale_divide = 0;
   double rescale_max_period_s = 0;

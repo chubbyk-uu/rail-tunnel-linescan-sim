@@ -15,6 +15,8 @@
 #include <iostream>
 #include "ssb_core/pipeline.hpp"
 #include "ssb_core/optix_renderer.hpp"
+#include "control_math.hpp"
+#include "assembly_check.hpp"
 
 namespace ssb_gazebo {
 class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfigure,
@@ -31,6 +33,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       if(!cp||!sp)throw std::runtime_error("SSB_CONFIG and SSB_SESSION required");
       config_path_=cp;session_=sp;c_=ssb::Config::Load(cp);dynamics_only_=std::getenv("SSB_DYNAMICS_ONLY")!=nullptr;
       gz::sim::Model model(entity);base_=gz::sim::Link(model.LinkByName(ecm,"base"));base_.EnableVelocityChecks(ecm,true);
+      CheckAssembly(model,ecm,c_);
       auto joint=[&](std::string name){gz::sim::Joint j(model.JointByName(ecm,name));if(!j.Valid(ecm))throw std::runtime_error("missing joint "+name);j.EnablePositionCheck(ecm,true);j.EnableVelocityCheck(ecm,true);return j;};
       for(int i=0;i<2;++i){enc_[i]=joint(sdf->Get<std::string>(i?"right_encoder":"left_encoder"));drive_[i]=joint(sdf->Get<std::string>(i?"right_drive":"left_drive"));diameter_[i]=sdf->Get<double>(i?"right_diameter":"left_diameter");}
       drive_diameter_=sdf->Get<double>("drive_diameter");settle_=sdf->Get<double>("settle_s");
@@ -65,13 +68,11 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     double s=0;
     for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;
       count_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_))-zero_[i];s+=.5*count_[i]/counts_per_rad_*diameter_[i]/2;}
-    filtered_speed_+=(s-s_hat_-filtered_speed_*dt)/(0.025+dt);s_hat_=s;
-    target_theta_=c_.start_theta_rad+2*M_PI*s_hat_/c_.advance_per_rev_m;
+    s_hat_=s;
     auto p=scan_.Position(ecm);if(p&&!p->empty()){
-      double rate=2*M_PI*filtered_speed_/c_.advance_per_rev_m+12*(target_theta_-p->front());
-      // Finite servo bandwidth suppresses count quantization at the 1 ms control rate.
-      scan_command_+=(std::clamp(rate,0.,3.3)-scan_command_)*dt/(.005+dt);
-      scan_.SetVelocity(ecm,{scan_command_});
+      const double command=servo_.Update(s_hat_,p->front(),dt,c_.start_theta_rad,c_.advance_per_rev_m);
+      target_theta_=servo_.Target();
+      scan_.SetVelocity(ecm,{command});
     }
   }
   void PostUpdate(const gz::sim::UpdateInfo& info,const gz::sim::EntityComponentManager& ecm) override {
@@ -89,10 +90,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
         sample.body_valid=1;sample.y=pose.Pos().Y();sample.z=pose.Pos().Z();
         sample.roll=rpy.X();sample.pitch=rpy.Y();sample.yaw=rpy.Z();sample.vy=linear->Y();sample.vz=linear->Z();
         if(auto angular=base_.WorldAngularVelocity(ecm)){
-          const double horizontal=std::cos(sample.yaw)*angular->X()+std::sin(sample.yaw)*angular->Y();
-          sample.roll_rate=horizontal/std::cos(sample.pitch);
-          sample.pitch_rate=-std::sin(sample.yaw)*angular->X()+std::cos(sample.yaw)*angular->Y();
-          sample.yaw_rate=angular->Z()+std::tan(sample.pitch)*horizontal;
+          const auto rates=EulerRates(sample.pitch,sample.yaw,{angular->X(),angular->Y(),angular->Z()});
+          sample.roll_rate=rates[0];sample.pitch_rate=rates[1];sample.yaw_rate=rates[2];
         }
         sample.right_wheel=b->front();sample.right_wheel_omega=bv->front();
         pipeline_->Push(sample);
@@ -118,7 +117,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
   ssb::Config c_;gz::sim::Joint enc_[2],drive_[2],scan_;gz::sim::Link base_;
   std::string config_path_,session_,log_root_;std::ofstream obs_,truth_;
   std::unique_ptr<ssb::Pipeline> pipeline_;std::future<nlohmann::json> completion_;
-  double diameter_[2]{},drive_diameter_=0,settle_=2,counts_per_rad_=0,torque_[2]{},s_hat_=0,filtered_speed_=0,target_theta_=0,scan_command_=0;
+  ScanServo servo_;
+  double diameter_[2]{},drive_diameter_=0,settle_=2,counts_per_rad_=0,torque_[2]{},s_hat_=0,target_theta_=0;
   long long count_[2]{},zero_[2]{};bool started_=false,finished_=false,dynamics_only_=false;
 };
 }

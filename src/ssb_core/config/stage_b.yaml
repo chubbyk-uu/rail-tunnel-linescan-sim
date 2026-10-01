@@ -1,6 +1,7 @@
 # Stage B geometry/timing baseline. Use stage_b_optics to bind the prepared
 # textured/illuminated OptiX scene; see docs/STAGE_B.md.
 schema: ssb.config.v1
+robot: {base_reference_z_m: 0.3, scan_axis_height_m: 1.715}
 tunnel:
   radius_m: 2.75
   axis_z_m: 2.015            # rail top z=0; tunnel bottom z=-0.735

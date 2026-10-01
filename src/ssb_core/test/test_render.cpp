@@ -236,3 +236,14 @@ TEST(Config, OpticalIdentityRequiresPrivateKeyAndTracksRigChanges) {
   EXPECT_EQ(HmacSha256Hex(std::string(64,'0'),"test"),
             "43b0cef99265f9e34c10ea9d3501926d27b39f57c6d674561d8ba236e7a819fb");
 }
+
+TEST(Render, ConfiguredAssemblyHeightChangesBodyTransform) {
+  auto c=BaseConfig();c.truth.mount={};c.truth.head_mount_x_m=0;
+  c.base_reference_z_m=.37;c.scan_axis_height_m=1.645;
+  PoseSample p{};p.body_valid=1;p.z=.37;p.roll=M_PI/2;
+  const auto h=TrueHeadPose(c,p);
+  EXPECT_NEAR(h.origin[1],-1.645,1e-12);
+  EXPECT_NEAR(h.origin[2],.37,1e-12);
+  p.body_valid=0;
+  EXPECT_NEAR(TrueHeadPose(c,p).origin[2],2.015,1e-12);
+}

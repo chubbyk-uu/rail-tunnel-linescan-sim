@@ -38,14 +38,17 @@ def head_pose(theta, x, truth, body=None):
     is (0, sin theta, cos theta): a rotation of -theta about +x.
     """
     m = truth['mount']
+    assembly = truth.get('robot', {})
+    base_z = assembly.get('base_reference_z_m', .3) # legacy archived sessions
+    axis_height = assembly.get('scan_axis_height_m', truth['tunnel']['axis_z_m']-base_z)
     tilt = _rot('z', m['tilt_z_rad']) @ _rot('y', m['tilt_y_rad'])
     head = tilt @ _rot('x', -np.asarray(theta, np.float64))
     axis_point = np.stack([np.asarray(x, np.float64) + truth['head_mount_x_m'],
                            np.full(np.shape(x), m['dy_m']),
-                           np.full(np.shape(x), truth['tunnel']['axis_z_m'] + m['dz_m'])], axis=-1)
+                           np.full(np.shape(x), base_z + axis_height + m['dz_m'])], axis=-1)
     if body is not None and 'body_valid' in body.dtype.names and np.any(body['body_valid']):
         rotation=_rot('z',body['yaw']) @ _rot('y',body['pitch']) @ _rot('x',body['roll'])
-        nominal=np.array([truth['head_mount_x_m'],m['dy_m'],truth['tunnel']['axis_z_m']-.3+m['dz_m']])
+        nominal=np.array([truth['head_mount_x_m'],m['dy_m'],axis_height+m['dz_m']])
         axis_point=np.stack([np.asarray(x),body['y'],body['z']],axis=-1)+(rotation @ nominal)
         head=rotation @ head
     origin = axis_point + head @ np.array([0.0, m['tangential_m'], m['e_m']])
