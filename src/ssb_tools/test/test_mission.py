@@ -18,7 +18,7 @@ def config():
                 motion=dict(advance_per_rev_m=.6, line_rate_hz=28444.444444444445), acceptance={})
 
 
-@pytest.mark.parametrize('distance', [.12, .2, 3., 20.])
+@pytest.mark.parametrize('distance', [1., 1.2, 3., 20.])
 def test_distance_profile_integrates_to_requested_travel(config, distance):
     before = copy.deepcopy(config)
     c, task = plan(config, 0., distance)
@@ -30,7 +30,7 @@ def test_distance_profile_integrates_to_requested_travel(config, distance):
     assert config == before
 
 
-@pytest.mark.parametrize('start,distance', [(-.001, 1), (19., 2.), (0., 0.), (0., .05), (0., .1), (0., float('nan')), (float('inf'), 1)])
+@pytest.mark.parametrize('start,distance', [(-.001, 1), (19., 2.), (0., 0.), (0., .05), (0., .1), (0., .12), (0., .2), (0., .999999), (0., float('nan')), (float('inf'), 1)])
 def test_out_of_bounds_and_nonfinite_tasks_rejected(config, start, distance):
     with pytest.raises(ValueError): plan(config, start, distance)
 

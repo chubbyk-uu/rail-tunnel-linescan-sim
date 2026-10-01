@@ -9,17 +9,17 @@ import yaml
 
 def plan(config, start, distance):
     if not all(math.isfinite(x) for x in (start, distance)) or distance <= 0:
-        raise ValueError('起点和距离必须为有限值，距离必须大于零')
-    if distance < .12:
-        raise ValueError('当前采集任务距离至少为 0.12 m，正下方到采集边界需约 0.1 m 行程')
+        raise ValueError('Start and distance must be finite; distance must be positive')
+    if distance < 1.:
+        raise ValueError('Minimum capture distance is 1 m')
     t = config['tunnel']
     fov = config['camera']['fov_at_nominal_m']
     # Effective inspection domain excludes the 1.5 m construction buffers.
     if start < 0 or start + distance > 20 + 1e-9:
-        raise ValueError('当前任务范围必须在 0–20 m 内')
+        raise ValueError('Mission must stay within the 0–20 m range')
     clearance = max(.65, fov / 2)
     if start-clearance < t['x_min_m'] or start+distance+clearance > t['x_max_m']:
-        raise ValueError('轨道或相机视场余量不足')
+        raise ValueError('Insufficient track or camera field-of-view margin')
     c = copy.deepcopy(config)
     m = c['motion']
     e, rescaler = c['scan_encoder'], c['rescaler']
@@ -40,13 +40,13 @@ def plan(config, start, distance):
                    image_extent_m=[start-fov/2, start+distance+fov/2],
                    conservative_full_angle_m=([start+pitch, start+distance-pitch]
                                               if distance > 2*pitch else None),
-                   coverage_note='保守估计，完整内壁覆盖须采集后按行几何核验')
+                   coverage_note='Conservative estimate; verify full-angle coverage from captured row geometry')
 
 
 def prepare(template, output, start, distance):
     template, output = Path(template).resolve(), Path(output).resolve()
     if output.exists():
-        raise ValueError('任务输入目录已存在')
+        raise ValueError('Mission input directory already exists')
     source = template/'capture.yaml'
     c, task = plan(yaml.safe_load(source.read_text()), start, distance)
     scene = Path(c['render']['optical_scene'])

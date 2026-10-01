@@ -16,7 +16,7 @@ import uuid
 import numpy as np
 import psutil
 import rclpy
-from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import String
 from PIL import Image
 from ssb_tools.session import Session, sha256_file
@@ -46,6 +46,12 @@ def main():
     qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     node.create_subscription(String, '/ssb/mission/status', receive, qos)
     commands = node.create_publisher(String, '/ssb/mission/command', 10)
+    latest_image = {}
+    def receive_preview(message):
+        assert len(message.data) < 512*1024
+        latest_image.clear(); latest_image.update(json.loads(message.data))
+    node.create_subscription(String, '/ssb/mission/preview', receive_preview,
+        QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
     reviews = node.create_publisher(String, '/ssb/mission/review', 10)
     def wait(predicate, timeout=120):
         deadline = time.monotonic()+timeout
@@ -91,7 +97,8 @@ def main():
                 reviews.publish(String(data=name)); last_request[0] = time.monotonic()
             try:
                 value = json.loads(panel.read_text())
-                return value['state'] == state and not value['pending']
+                return (value['state'] == state and not value['pending']
+                        and value.get('preview_ready') and value.get('preview_output') == latest['output'])
             except (FileNotFoundError, ValueError): return False
         wait(ready, timeout=20)
         with Image.open(directory/(name+'_scene.png')) as im:
@@ -106,7 +113,10 @@ def main():
         assert not command('start', start_m=19., distance_m=2.)['ok']
         assert latest['state'] == 'idle' and latest['output'] == ''
         report['checks']['bounds_rejection'] = True
-        assert command('start', start_m=2., distance_m=.6)['ok']
+        assert not command('start', start_m=2., distance_m=.999)['ok']
+        assert latest['state'] == 'idle' and latest['output'] == ''
+        report['checks']['short_travel_rejection'] = True
+        assert command('start', start_m=2., distance_m=1.)['ok']
         def entered_gate():
             if latest['scan_rad'] < 4*np.pi/3:
                 assert latest['rows_generated'] == 0, 'exposure before right lower gate'
@@ -124,6 +134,14 @@ def main():
         wait(lambda: time.monotonic() >= deadline, timeout=3)
         assert latest['rows_generated'] == frozen_generated
         assert latest['rows_saved'] >= paused['rows_saved']
+        wait(lambda: latest_image.get('status') == 'ready' and latest_image.get('output') == paused['output'])
+        import base64, io
+        with Image.open(io.BytesIO(base64.b64decode(latest_image['png']))) as image:
+            image.load()
+            assert list(image.size) == latest_image['preview_size']
+            assert max(image.size) <= 512
+        assert latest_image['last_row'] < latest['rows_saved']
+        report['checks']['raw_thumbnail'] = {k:v for k,v in latest_image.items() if k != 'png'}
         assert not command('start', start_m=7., distance_m=1.)['ok']
         assert latest['output'] == paused['output'] and latest['state'] == 'paused'
         assert command('resume')['ok']
@@ -149,15 +167,12 @@ def main():
         second = Path(latest['output']); early = verify(second)
         assert not early['motion_complete']
         report['checks']['early_stop'] = early
-        assert command('start', start_m=6., distance_m=.2)['ok']
+        assert command('start', start_m=6., distance_m=1.)['ok']
         wait(lambda: latest['state'] in ('complete', 'failed'))
         assert latest['state'] == 'complete', latest
         third = Path(latest['output']); report['checks']['restart'] = verify(third)
         assert len({str(first), str(second), str(third)}) == 3
-        assert command('start', start_m=7., distance_m=.12)['ok']
-        wait(lambda: latest['state'] in ('complete', 'failed'))
-        assert latest['state'] == 'complete', latest
-        report['checks']['minimum_travel'] = verify(Path(latest['output']))
+        report['checks']['minimum_travel'] = report['checks']['restart']
         if a.performance:
             for mode in ('gz', 'rviz', 'both'):
                 viewers = []

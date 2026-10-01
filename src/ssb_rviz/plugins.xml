@@ -2,4 +2,7 @@
   <class name="ssb_rviz/MissionPanel" type="ssb_rviz::MissionPanel" base_class_type="rviz_common::Panel">
     <description>Tunnel line-scan mission start, pause, resume and drain control.</description>
   </class>
+  <class name="ssb_rviz/LivePreviewPanel" type="ssb_rviz::LivePreviewPanel" base_class_type="rviz_common::Panel">
+    <description>Low-rate uncorrected thumbnail of the latest saved line-scan image block.</description>
+  </class>
 </library>

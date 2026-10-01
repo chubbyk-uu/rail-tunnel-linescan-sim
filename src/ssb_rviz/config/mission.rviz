@@ -2,7 +2,9 @@ Panels:
   - Class: rviz_common/Displays
     Name: Displays
   - Class: ssb_rviz/MissionPanel
-    Name: 隧道采集任务
+    Name: Tunnel Scan Mission
+  - Class: ssb_rviz/LivePreviewPanel
+    Name: Live Capture Preview
 Visualization Manager:
   Class: ""
   Global Options:
@@ -11,7 +13,7 @@ Visualization Manager:
     Frame Rate: 30
   Displays:
     - Class: rviz_default_plugins/MarkerArray
-      Name: 隧道轨道与轨道车（仿真真值）
+      Name: Tunnel, Track and Vehicle (Simulation)
       Enabled: true
       Topic:
         Value: /ssb/sim_truth/scene
@@ -19,7 +21,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Durability Policy: Transient Local
     - Class: rviz_default_plugins/TF
-      Name: 坐标系
+      Name: Coordinate Frames
       Enabled: false
   Views:
     Current:

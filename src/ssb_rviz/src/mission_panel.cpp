@@ -22,21 +22,22 @@ MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
   auto* form = new QFormLayout;
   start_ = new QDoubleSpinBox; distance_ = new QDoubleSpinBox;
   start_->setRange(0, 20); start_->setValue(3); start_->setDecimals(3);
-  distance_->setRange(.12, 20); distance_->setValue(3); distance_->setDecimals(3);
+  distance_->setRange(1, 20); distance_->setValue(3); distance_->setDecimals(3);
   start_->setSuffix(" m"); distance_->setSuffix(" m");
+  start_->setToolTip("Vehicle is placed here when you click Start.");
   start_->setObjectName("mission_start"); distance_->setObjectName("mission_distance");
-  form->addRow("任务起点", start_); form->addRow("前进距离", distance_); layout->addLayout(form);
+  form->addRow("Start position", start_); form->addRow("Travel distance", distance_); layout->addLayout(form);
   extent_ = new QLabel; extent_->setWordWrap(true); layout->addWidget(extent_);
   connect(start_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this]{updateExtent();});
   connect(distance_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this]{updateExtent();});
   updateExtent();
   auto* row = new QHBoxLayout;
-  begin_ = new QPushButton("开始"); pause_ = new QPushButton("暂停");
-  resume_ = new QPushButton("继续"); stop_ = new QPushButton("结束任务");
+  begin_ = new QPushButton("Start"); pause_ = new QPushButton("Pause");
+  resume_ = new QPushButton("Resume"); stop_ = new QPushButton("Stop");
   begin_->setShortcut(QKeySequence("Ctrl+Alt+S")); pause_->setShortcut(QKeySequence("Ctrl+Alt+P"));
   resume_->setShortcut(QKeySequence("Ctrl+Alt+R")); stop_->setShortcut(QKeySequence("Ctrl+Alt+E"));
-  begin_->setToolTip("开始任务 (Ctrl+Alt+S)"); pause_->setToolTip("暂停 (Ctrl+Alt+P)");
-  resume_->setToolTip("继续 (Ctrl+Alt+R)"); stop_->setToolTip("结束并保存 (Ctrl+Alt+E)");
+  begin_->setToolTip("Start mission (Ctrl+Alt+S)"); pause_->setToolTip("Pause (Ctrl+Alt+P)");
+  resume_->setToolTip("Resume (Ctrl+Alt+R)"); stop_->setToolTip("Stop and save (Ctrl+Alt+E)");
   for (auto* button : {begin_, pause_, resume_, stop_}) row->addWidget(button);
   begin_->setObjectName("mission_begin"); pause_->setObjectName("mission_pause");
   resume_->setObjectName("mission_resume"); stop_->setObjectName("mission_stop");
@@ -45,16 +46,17 @@ MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
   connect(pause_, &QPushButton::clicked, this, [this]{send("pause");});
   connect(resume_, &QPushButton::clicked, this, [this]{send("resume");});
   connect(stop_, &QPushButton::clicked, this, [this]{send("stop");});
-  status_ = new QLabel("等待任务管理器"); progress_ = new QLabel;
+  status_ = new QLabel("Waiting for mission manager"); progress_ = new QLabel;
+  status_->setWordWrap(true); progress_->setWordWrap(true);
   output_ = new QLabel; output_->setWordWrap(true); output_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   error_ = new QLabel; error_->setWordWrap(true); error_->setStyleSheet("color: #e87070");
   layout->addWidget(status_); layout->addWidget(progress_); layout->addWidget(output_); layout->addWidget(error_);
-  auto* note = new QLabel("场景/车辆：仿真真值，仅供观察。\n任务距离和扫描控制：后轮编码器估计。\n暂停冻结仿真，已有图像继续落盘。");
+  auto* note = new QLabel("Scene: simulated pose, for visualization only.\nTravel and scan: rear-wheel odometry.\nPause freezes simulation; pending images are saved.");
   note->setWordWrap(true); layout->addWidget(note); layout->addStretch();
   connect(this, &MissionPanel::received, this, &MissionPanel::showStatus, Qt::QueuedConnection);
   watchdog_ = new QTimer(this); watchdog_->setSingleShot(true); watchdog_->setInterval(3000);
   connect(watchdog_, &QTimer::timeout, this, [this] {
-    connected_ = false; status_->setText("任务管理器连接中断");
+    connected_ = false; status_->setText("Mission manager disconnected");
     for (auto* b : {begin_, pause_, resume_, stop_}) b->setEnabled(false);
   });
   for (auto* b : {begin_, pause_, resume_, stop_}) b->setEnabled(false);
@@ -87,6 +89,12 @@ void MissionPanel::saveReview(const QString& name) {
     {"pause_enabled", pause_->isEnabled()}, {"resume_enabled", resume_->isEnabled()},
     {"stop_enabled", stop_->isEnabled()}, {"status", status_->text()},
     {"state", last_state_}, {"pending", pending_}};
+  if (auto* preview = window()->findChild<QLabel*>("raw_preview_image")) {
+    result["preview_ready"] = preview->property("preview_ready").toBool();
+    result["preview_output"] = preview->property("preview_output").toString();
+    result["preview_first_row"] = preview->property("preview_first_row").toDouble();
+    result["preview_last_row"] = preview->property("preview_last_row").toDouble();
+  }
   QFile file(prefix+"panel.json");
   if (file.open(QIODevice::WriteOnly)) file.write(QJsonDocument(result).toJson());
 }
@@ -114,29 +122,29 @@ void MissionPanel::showStatus(const QString& text) {
   begin_->setEnabled(terminal && available); pause_->setEnabled(state == "running" && available);
   resume_->setEnabled(state == "paused" && available);
   stop_->setEnabled((state == "running" || state == "paused") && available);
-  const QJsonObject labels{{"idle", "就绪"}, {"starting", "初始化"}, {"running", "运行"},
-    {"paused", "已暂停"}, {"draining", "运动结束，等待图像落盘"},
-    {"complete", "采集完成，校正留待拼接前"}, {"stopped", "提前结束，原始数据已保存"}, {"failed", "失败"}};
-  status_->setText("状态："+labels[state].toString(state)+(object["dynamics_only"].toBool() ? "（仅动力学，不采图）" : ""));
+  const QJsonObject labels{{"idle", "Ready"}, {"starting", "Initializing"}, {"running", "Running"},
+    {"paused", "Paused"}, {"draining", "Saving pending images"},
+    {"complete", "Capture complete; correction before stitching"}, {"stopped", "Stopped early; raw data saved"}, {"failed", "Failed"}};
+  status_->setText("Status: "+labels[state].toString(state)+(object["dynamics_only"].toBool() ? " (dynamics only; no images)" : ""));
   const double travelled = object["distance_estimated_m"].toDouble();
   const double distance = state == "idle" ? distance_->value() : object["task"].toObject()["distance_m"].toDouble();
-  progress_->setText(QString("估计行驶：%1 m；剩余：%2 m\n速度：%3 m/s；扫描：%4 rad/s\n行数：生成 %5 / 已保存 %6\n成像滞后：%7 s\n扫描角度：%8 rad")
+  progress_->setText(QString("Travel: %1 m; remaining: %2 m\nSpeed: %3 m/s; scan: %4 rad/s\nRows: generated %5 / saved %6\nImaging lag: %7 s\nScan angle: %8 rad")
     .arg(travelled,0,'f',3).arg(std::max(0.,distance-travelled),0,'f',3)
     .arg(object["speed_m_s"].toDouble(),0,'f',3).arg(object["scan_rate_rad_s"].toDouble(),0,'f',3)
     .arg(object["rows_generated"].toDouble(),0,'f',0).arg(object["rows_saved"].toDouble(),0,'f',0)
     .arg(object["imaging_lag_s"].toDouble(),0,'f',3).arg(object["scan_rad"].toDouble(),0,'f',3));
-  output_->setText("输出："+object["output"].toString()); error_->setText(object["error"].toString());
+  output_->setText("Output: "+object["output"].toString()); error_->setText(object["error"].toString());
 }
 
 void MissionPanel::updateExtent() {
   const double start = start_->value(), end = start+distance_->value();
-  QString coverage = "完整内壁覆盖：等待配置";
+  QString coverage = "Coverage: waiting for configuration";
   if (pitch_ > 0) {
     coverage = distance_->value() > 2*pitch_
-      ? QString("全角度覆盖保守估计：%1–%2 m").arg(start+pitch_,0,'f',3).arg(end-pitch_,0,'f',3)
-      : "当前短行程无法给出全角度覆盖保守区间";
+      ? QString("Conservative full-angle coverage: %1–%2 m").arg(start+pitch_,0,'f',3).arg(end-pitch_,0,'f',3)
+      : "No conservative full-angle interval for this short travel";
   }
-  extent_->setText(QString("预计车体终点：%1 m\n%2\n完整覆盖须采集后核验。").arg(end,0,'f',3).arg(coverage));
+  extent_->setText(QString("Expected vehicle endpoint: %1 m\n%2\nCoverage must be verified after capture.").arg(end,0,'f',3).arg(coverage));
 }
 }
 PLUGINLIB_EXPORT_CLASS(ssb_rviz::MissionPanel, rviz_common::Panel)

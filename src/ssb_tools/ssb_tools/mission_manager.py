@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
@@ -30,6 +30,7 @@ from gz.msgs10.world_control_pb2 import WorldControl
 
 from .mission_plan import prepare, plan
 from .mission_preview import Preview, pose_values, transform
+from .mission_image_preview import RawImagePreview
 from .optical_identity import check_calibration
 from .session import sha256_file
 
@@ -68,6 +69,10 @@ class MissionManager(Node):
         self.joints = self.create_publisher(JointState, '/ssb/sim_truth/joint_states', 10)
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.status = self.create_publisher(String, '/ssb/mission/status', qos)
+        self.image_preview = self.create_publisher(String, '/ssb/mission/preview',
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+        self.image_sampler = RawImagePreview()
+        self.image_timer = self.create_timer(1., self.publish_image_preview)
         self.markers = self.create_publisher(MarkerArray, '/ssb/sim_truth/scene', qos)
         self.scene_markers = self.preview.markers()
         self.markers.publish(self.scene_markers)
@@ -96,11 +101,11 @@ class MissionManager(Node):
     def enqueue(self, message):
         try:
             command = json.loads(message.data)
-            if not isinstance(command, dict): raise ValueError('命令必须是 JSON 对象')
+            if not isinstance(command, dict): raise ValueError('Command must be a JSON object')
             if not isinstance(command.get('id'), str) or not command['id']:
-                raise ValueError('命令缺少 id')
+                raise ValueError('Command ID is missing')
             if command.get('action') not in ('start', 'pause', 'resume', 'stop'):
-                raise ValueError('未知任务命令')
+                raise ValueError('Unknown mission command')
             self.commands.put_nowait(command)
         except (ValueError, queue.Full) as e:
             with self.lock: self.error = str(e)
@@ -115,18 +120,18 @@ class MissionManager(Node):
         ok, reply = self.gz.request('/world/'+self.world_name+'/control',
                                     WorldControl(pause=paused), WorldControl, Boolean, 3000)
         if not ok or not reply.data:
-            raise RuntimeError('Gazebo 暂停/继续请求未获确认')
+            raise RuntimeError('Gazebo pause/resume request was not acknowledged')
         # Confirm the simulation has actually applied the request, not only queued it.
         deadline = time.monotonic()+5
         while time.monotonic() < deadline:
             with self.lock:
                 if self.latest.get('paused') == paused: return
             time.sleep(.02)
-        raise RuntimeError('Gazebo 暂停状态确认超时')
+        raise RuntimeError('Timed out waiting for Gazebo pause state')
 
     def launch(self, command):
         if self.state not in TERMINAL:
-            raise ValueError('当前任务尚未结束')
+            raise ValueError('A mission is already active')
         start, distance = float(command['start_m']), float(command['distance_m'])
         plan(self.config, start, distance)  # Reject before creating any files/processes.
         token = time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
@@ -153,16 +158,16 @@ class MissionManager(Node):
                                          stderr=subprocess.STDOUT, start_new_session=True)
         started_at = time.monotonic(); deadline = started_at+60
         while time.monotonic() < deadline:
-            if self.server.poll() is not None: raise RuntimeError('Gazebo 启动失败，见 '+str(inputs/'server.log'))
+            if self.server.poll() is not None: raise RuntimeError('Gazebo failed to start; see '+str(inputs/'server.log'))
             with self.lock:
                 if self.last_received > started_at: break
             time.sleep(.05)
-        else: raise RuntimeError('Gazebo 未发布任务状态')
+        else: raise RuntimeError('Gazebo did not publish mission status')
         self.control(False)
         self.transition('running')
 
     def finish(self, early=False):
-        if self.server is None: raise ValueError('没有活动任务')
+        if self.server is None: raise ValueError('No active mission')
         self.transition('draining')
         self.expected_exit = True
         if self.server.poll() is None:
@@ -171,7 +176,7 @@ class MissionManager(Node):
             # Preserve tail blocks and error evidence; do not kill a draining writer.
             self.server.wait()
         if self.server.returncode != 0:
-            raise RuntimeError('Gazebo 退出异常，请检查任务 server.log')
+            raise RuntimeError('Gazebo exited abnormally; check mission server.log')
         self.server = None
         report = dict(schema='ssb.mission.v1', task=self.task, early_stop=early,
                       simulation_display_only=True, output=str(self.session), events=self.events,
@@ -185,12 +190,12 @@ class MissionManager(Node):
             destination = self.session
             if not (destination/'session.json').exists():
                 # A stop during settling can finish without starting capture.
-                if not early: raise RuntimeError('任务未生成采集会话')
+                if not early: raise RuntimeError('Mission did not create a capture session')
                 destination = Path(str(self.session)+'_dynamics')
                 report['capture_mode'] = 'stopped_before_capture'
             else:
                 summary = json.loads((destination/'session.json').read_text())
-                if summary['status'] != 'complete': raise RuntimeError('采集失败：'+summary.get('error', ''))
+                if summary['status'] != 'complete': raise RuntimeError('Capture failed: '+summary.get('error', ''))
                 report['motion_complete'] = summary['motion']['complete']
                 report['rows'] = summary['rows']
                 report['optical_correction'] = 'deferred_before_stitching'
@@ -208,13 +213,13 @@ class MissionManager(Node):
         action = command['action']
         if action == 'start': self.launch(command)
         elif action == 'pause':
-            if self.state != 'running': raise ValueError('只能暂停运行中的任务')
+            if self.state != 'running': raise ValueError('Only a running mission can be paused')
             self.control(True); self.transition('paused')
         elif action == 'resume':
-            if self.state != 'paused': raise ValueError('任务并未暂停')
+            if self.state != 'paused': raise ValueError('Mission is not paused')
             self.control(False); self.transition('running')
         elif action == 'stop':
-            if self.state not in ('running', 'paused'): raise ValueError('没有可结束的活动任务')
+            if self.state not in ('running', 'paused'): raise ValueError('No active mission to stop')
             self.finish(early=True)
 
     def work(self):
@@ -223,9 +228,9 @@ class MissionManager(Node):
             except queue.Empty:
                 if self.server and self.state in ('running', 'paused'):
                     try:
-                        if self.server.poll() is not None: raise RuntimeError('Gazebo 服务器意外退出')
+                        if self.server.poll() is not None: raise RuntimeError('Gazebo server exited unexpectedly')
                         with self.lock: latest = dict(self.latest)
-                        if latest.get('capture', {}).get('failed'): raise RuntimeError('成像流水线失败')
+                        if latest.get('capture', {}).get('failed'): raise RuntimeError('Imaging pipeline failed')
                         if latest.get('motion_complete'):
                             self.finish()
                     except Exception as e: self.fail(e)
@@ -273,6 +278,18 @@ class MissionManager(Node):
         js.name = ['scan', 'odometer', 'wheel_joint_1', 'wheel_joint_2', 'wheel_joint_3']
         js.position = [latest['scan'], *latest['wheel_angles']]
         self.joints.publish(js)
+
+    def publish_image_preview(self):
+        with self.lock:
+            session = self.session
+        try:
+            data = self.image_sampler.sample(session, self.config['camera']['width'],
+                self.config['storage']['block_rows'], enabled=not self.args.dynamics_only)
+        except (OSError, ValueError) as e:
+            # Observer failures must not mark the acquisition pipeline as failed.
+            data = dict(schema='ssb.raw_preview.v1', output=str(session or ''),
+                        status='error', error=str(e))
+        self.image_preview.publish(String(data=json.dumps(data)))
 
     def close(self):
         self.closing.set(); self.worker.join()
