@@ -9,7 +9,7 @@ world=$(realpath "${3:-$(dirname "$config")/world/world.sdf}")
 calibration=${SSB_OPTICAL_CALIBRATION:-$(dirname "$config")/calibration.json}
 "$repo/install/ssb_core/lib/ssb_core/ssb_optical_identity" --config "$config" --calibration "$calibration" >/dev/null
 [[ ! -e "$session" ]] || { echo "Session already exists: $session" >&2; exit 2; }
-mesa_wrapper=${SSB_MESA_WRAPPER:-$repo/../4WIDS_agv/tools/with_mesa_runtime.py}
+mesa_wrapper=${SSB_MESA_WRAPPER:-$repo/tools/with_mesa_runtime.py}
 [[ -f "$mesa_wrapper" ]] || { echo "Private Mesa launcher missing: $mesa_wrapper" >&2; exit 2; }
 export GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA QT_QPA_PLATFORM=xcb
 export GZ_PARTITION="ssb_gui_$$" SSB_CONFIG="$config" SSB_SESSION="$session" SSB_WORLD="$world"

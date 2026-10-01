@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import sys
 import subprocess
+import os
 import xml.etree.ElementTree as ET
 import yaml
 
@@ -15,21 +16,26 @@ from ssb_tools.stage_b_gui_world import prepare
 from ssb_tools.stage_b_scene import digest
 from ssb_tools.stage_b_track import make_track
 from ssb_tools.optical_identity import ensure_optical_key, check_calibration
+from ssb_tools.robot_geometry import mount_geometry
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--world',type=Path,default=REPO/'local_data/stage_b/track_contact_v2/world.sdf')
+    p.add_argument('--world',type=Path,default=REPO/'local_data/stage_b/gui_strip_shadow_final_v10/world/world.sdf')
     p.add_argument('--config',type=Path,default=REPO/'local_data/stage_b/gui_optics_v11/capture.yaml')
     p.add_argument('--spec',type=Path,default=REPO/'src/ssb_tools/config/stage_b_scene.yaml')
     p.add_argument('--output',required=True,type=Path)
     p.add_argument('--calibrate',action='store_true',help='render independent targets and fit this demo rig')
     p.add_argument('--calibration',type=Path,help='reuse a compatible measured calibration')
     a=p.parse_args();out=a.output.resolve()
+    if a.calibrate and a.calibration:
+        p.error('choose --calibrate or --calibration')
     if out.exists():raise ValueError('refuse to overwrite prepared demo')
     out.mkdir(parents=True)
     c=yaml.safe_load(a.config.read_text());spec=yaml.safe_load(a.spec.read_text())
     ensure_optical_key(c)
+    base,height=mount_geometry(c)
+    c['robot']={'base_reference_z_m':base,'scan_axis_height_m':height}
     c['contact']={'enabled':True,'settle_s':2.}
     c['motion']['start_x_m']=3.
     c['motion']['profile']=[[0.,0.],[1.,1.],[15.,1.],[16.,0.],[17.,0.]]
@@ -65,10 +71,8 @@ def main():
     report['track_regenerated']=True;report['world_sha256']=digest(world)
     manifest.write_text(json.dumps(report,indent=2)+'\n')
     shutil.copyfile(REPO/'src/ssb_gazebo/worlds/stage_b_gui.config',out/'gui.config')
-    if a.calibrate and a.calibration:
-        raise ValueError('choose --calibrate or --calibration')
     if a.calibrate:
-        env = dict(__import__('os').environ)
+        env = dict(os.environ)
         env['PYTHONPATH'] = str(REPO/'src/ssb_tools')
         for command in ([sys.executable,'-m','ssb_tools.optical_bench','--config',str(out/'capture.yaml'),
                          '--output',str(out/'bench'),'--render'],

@@ -116,7 +116,7 @@ def assemble(config,spec,long_catalog,short_catalog,count=60):
     return result
 
 
-def build_grid(instances,bounds,cell_m=.01,max_index_bytes=32<<20,with_depths=False):
+def build_grid(instances,bounds,cell_m=.01,max_index_bytes=64<<20,with_depths=False):
     """Segments, cell offsets, indices and grid metadata; with_depths also returns the per-segment
     depths (DEPTH) interpolated like the radii, from each instance's vertex_depth_m."""
     x0,x1,q0,q1=bounds

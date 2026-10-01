@@ -61,11 +61,12 @@ def add_work_lights(base, spec):
             name=f'work_{sx}_{sy}'
             direction=np.array([sx*math.cos(down)*math.cos(sideways), sy*math.cos(down)*math.sin(sideways), -math.sin(down)])
             direction/=np.linalg.norm(direction)
-            x,y,z=sx*.51,sy*.59,.15  # world rail-relative height 0.45 m
+            base_z=float(base.findtext('pose').split()[2])
+            x,y,z=sx*.51,sy*.59,.45-base_z # nominal rail-relative emitter height
             # Put the emitter beyond the deck edge; otherwise the electronics lid
             # blocks the downward beam once real shadow maps are enabled.
-            box(base,name+'_post',f'{sx*.36} {y} .075 0 0 0','.025 .025 .19','0.48 0.53 0.59 1')
-            box(base,name+'_arm',f'{sx*.43} {y} .17 0 0 0','.16 .025 .022','0.48 0.53 0.59 1')
+            box(base,name+'_post',f'{sx*.36} {y} {.375-base_z} 0 0 0','.025 .025 .19','0.48 0.53 0.59 1')
+            box(base,name+'_arm',f'{sx*.43} {y} {.47-base_z} 0 0 0','.16 .025 .022','0.48 0.53 0.59 1')
             # A little hood behind the emission plane; local +z looks out/down.
             pitch=math.acos(direction[2]);yaw=math.atan2(direction[1],direction[0])
             for label,depth,size,color in [('hood',-.027,'.060 .046 .030','0.06 0.07 0.08 1'),

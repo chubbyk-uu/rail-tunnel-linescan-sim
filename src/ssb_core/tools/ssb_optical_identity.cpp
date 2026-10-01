@@ -2,9 +2,15 @@
 #include <fstream>
 #include <iostream>
 #include "ssb_core/config.hpp"
+#include "ssb_core/timing.hpp"
 
 int main(int argc, char** argv) {
   try {
+    if(argc==2 && std::string(argv[1])=="--record-layout") {
+      std::cout<<nlohmann::json{{"pose_record_bytes",sizeof(ssb::PoseSample)},
+                              {"row_job_bytes",sizeof(ssb::RowJob)}}.dump()<<'\n';
+      return 0;
+    }
     std::string config, calibration;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];

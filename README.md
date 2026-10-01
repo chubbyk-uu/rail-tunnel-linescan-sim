@@ -72,6 +72,24 @@ Generated configurations carry a private random HMAC key in `truth`; do not publ
 that section as reconstruction input. Legacy unsigned optical configurations need
 regeneration and recalibration. Historical sessions are retained without alteration.
 
+Large textures and generated assets are not tracked by Git. A fresh checkout needs
+an asset bundle; the preparation command above assumes the accepted historical
+assets are already present on the development machine. Export a self-contained copy:
+
+```bash
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
+  --demo local_data/stage_b/contact_demo --output /tmp/subway_demo_bundle
+```
+
+After building a new checkout, copy that directory to
+`local_data/stage_b/contact_demo` and run `tools/run_gz_gui.sh`.
+The bundle includes the calibrated simulation rig and runtime assets with relative
+references and updated dependency hashes. Raw source image names remain provenance
+labels; normalized texture payloads are the runtime inputs. On WSL, the private Mesa
+installation is still required (`SSB_MESA_PREFIX`, default
+`~/opt/agv-mesa-25.2.8/install`); the launcher itself is now in this repository.
+OptiX SDK/runtime and ROS remain system prerequisites.
+
 The final GUI run at 0.2 m/s and 64 crack samples achieved imaging RTF 0.994,
 284445 rows over 3 m, no missing rows in the valid region and byte-identical replay.
 A separate 20 m contact-only run passed stability checks; full 20 m reconstruction

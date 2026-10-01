@@ -208,7 +208,7 @@ StageBAssets::StageBAssets(const Config& c) {
   crack_cell=grid.at("cell_m");crack_nx=grid.at("cells_xq")[0];crack_nq=grid.at("cells_xq")[1];
   const size_t segment_count=grid.at("segments"),index_count=grid.at("index_entries");
   const size_t depth_bytes=crack_cavity?segment_count*2*sizeof(float):0;
-  Need(crack_cell>0&&crack_nx>0&&crack_nq>0&&segment_count*sizeof(CrackSegment)+(size_t(crack_nx)*crack_nq+1)*4+index_count*4+depth_bytes<=(32u<<20),"crack grid budget");
+  Need(crack_cell>0&&crack_nx>0&&crack_nq>0&&segment_count*sizeof(CrackSegment)+(size_t(crack_nx)*crack_nq+1)*4+index_count*4+depth_bytes<=(64u<<20),"crack grid budget");
   auto file=[&](const char* name,size_t bytes,auto tag) {
     const auto entry=defects.at("files").at(name);using T=decltype(tag);
     return ReadBinary<T>(Resolve(defect_path.parent_path(),entry.at("file")),bytes,entry.at("sha256"));

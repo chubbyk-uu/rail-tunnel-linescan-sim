@@ -107,10 +107,11 @@ def resource_plan(config, spec):
                 texture_tile_bytes=tile_bytes, texture_tiles_in_budget=budget_tiles,
                 circumference_tiles=across, active_batch_tiles=active_tiles,
                 spare_prefetch_tiles=budget_tiles-active_tiles,
-                rendered_batch_bytes=per_batch, render_job_queue_bytes=batch*96*config['render']['max_queued_batches'],
+                rendered_batch_bytes=per_batch, render_job_queue_bytes=batch*200*config['render']['max_queued_batches'],
                 write_queue_limit_bytes=config['storage']['write_queue_bytes'],
                 storage_block_bytes=config['storage']['block_rows']*cam['width'],
-                pose_stream_bytes_estimate=56*math.ceil(config['motion']['profile'][-1][0]/config['motion']['sample_period_s']),
+                pose_record_bytes=160, row_job_bytes=200,
+                pose_stream_bytes_estimate=160*math.ceil(config['motion']['profile'][-1][0]/config['motion']['sample_period_s']),
                 budgets=spec['resources'],
                 note='Estimates for nominal constant-speed geometry, not measured peaks. Runtime texture cache '
                      'uses bounded CPU/GPU LRU stores. Cache follows the batch footprint in both x and periodic q; '
@@ -644,8 +645,10 @@ def prepare(config_path, spec_path, output, surface_path=None):
                     preparation_peak_rss_bytes=peak_rss_bytes(),
                     limitations=['Bind these hashed optical meshes with stage_b_optics for capture.',
                                  'Handholes remain to implement; joint states are recorded in geometry.joints.',
-                                 'Prismatic guide and velocity-commanded wheels with no wheel contacts; '
-                                 'not a validated wheel/rail contact model.'])
+                                 ('Rigid wheel/rail friction contact; front drive and rear dual encoders. '
+                                  'Contact fidelity requires dynamics validation.' if config.get('contact',{}).get('enabled') else
+                                  'Prismatic guide and velocity-commanded wheels with no wheel contacts; '
+                                  'not a validated wheel/rail contact model.')])
     if surface_path: manifest['preview_surface']=dict(path=str(Path(surface_path).resolve()),sha256=digest(surface_path))
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print(json.dumps(dict(output=str(output), triangles=geometry['triangles'],
