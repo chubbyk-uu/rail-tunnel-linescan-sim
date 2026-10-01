@@ -84,7 +84,7 @@ session. Dark/flat/geometric correction is run separately before stitching, writ
 to `SESSION/processed/optical/` without changing the raw data.
 Optional vertical rail irregularity (flat / 2 mm / 5 mm, Beijing Subway spectrum shape) and
 polyurethane wheel compliance are generated into the world with `tools/prepare_contact_demo.py`
-(`--track-chord-mm`, `--wheel-deflection-mm`); the current demo uses flat rails and rigid wheels.
+(`--track-chord-mm`, `--wheel-deflection-mm`); the default demo uses the 2 mm tier and 0.2 mm wheel deflection.
 Details, asset regeneration, replay and validation: [docs/STAGE_B.md](docs/STAGE_B.md).
 
 ## Data

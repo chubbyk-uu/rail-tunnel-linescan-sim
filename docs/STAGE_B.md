@@ -34,7 +34,7 @@ tools/run_gz_gui.sh SESSION path/to/capture.yaml   # 其他演示目录，世界
 
 1. 启动前用 `ssb_optical_identity` 检查配置与标定的光学身份，不匹配就不启动 Gazebo。可用 `SSB_OPTICAL_CALIBRATION` 指定另一份标定。
 2. 服务器和 GUI 分别启动，初始暂停，点击 Play 开始。
-3. 先静置 2 s，然后车体从 x=3 m 按缓起停剖面行驶 3 m（0.2 m/s、20 rpm、28.444 kHz）。
+3. 先静置 2 s，然后车体从 x=3 m 按缓起停剖面行驶 3 m（0.2 m/s、20 rpm、28.444 kHz）。轨道带 2 mm 档竖向起伏，车轮带 0.2 mm 静压缩量的聚氨酯柔性（§11）。
 4. 关闭 GUI 后，脚本停止服务器、等待数据全部落盘，用 `tools/check_session.py` 检查完整性，只保留原始图像；畸变校正和平场补偿在拼接前另行执行（§6）。
 
 日志在 `local_data/gui_logs/<时间>/`。WSL 下需要私有 Mesa（`SSB_MESA_PREFIX`，默认 `~/opt/agv-mesa-25.2.8/install`），启动器是 `tools/with_mesa_runtime.py`。
@@ -81,8 +81,8 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
 | 相机 | 4096 像素、7.04 μm，90 mm 镜头对焦 2.75 m，视场 0.852 m；8 μs 曝光；k1=0.006 枕形畸变 | `capture.yaml` |
 | 采样档位 | 背景走解析路径，3 个曝光时刻，2×2 纹理足迹积分；临界几何每时刻 16 条 N 车射线；复杂裂缝每时刻 64 条（可选 32 性能档）；自适应关闭 | `stage_b_optics --integrated --area-samples 16 --area-pattern rooks --time-samples 3` |
 | 机器人 | 120 kg，10 个刚体；前驱、后编码器，四个导向轴承；底座 0.3 m、轴高 1.715 m | `capture.yaml` 的 `robot`、`contact`；`world.sdf` |
-| 轨道起伏 | 现行演示为平直轨；可选 2/5 mm 档北京地铁谱竖向起伏（§11） | `capture.yaml` 的 `truth.track_irregularity`；`world/track/rail_top_*.png` |
-| 车轮柔性 | 现行演示为刚性轮；可选聚氨酯轮柔性，静压缩量默认 0.2 mm（§11） | `capture.yaml` 的 `truth.wheel_compliance` |
+| 轨道起伏 | 现行演示为 2 mm 档北京地铁谱竖向起伏（种子 20261001）；可选平直或 5 mm（§11） | `capture.yaml` 的 `truth.track_irregularity`；`world/track/rail_top_*.png` |
+| 车轮柔性 | 现行演示为聚氨酯轮柔性，静压缩量 0.2 mm（标定 SDF 刚度 2.86×10⁶ N/m）；可选 0.15/0.4 mm 或刚性轮（§11） | `capture.yaml` 的 `truth.wheel_compliance` |
 | 纹理预算 | OptiX GPU 2 GiB、CPU 1 GiB；GUI 1280 MiB（现行 140 块约 746 MiB） | `stage_b_scene.yaml` 的 `resources` |
 | GUI 预览 | 同源 Concrete034 分块底色（x=3–6 m 处 1 mm，其余 2 mm），裂缝 4 倍子像素预览；环境散光 0.6；工作灯和条光见 DESIGN §7.5 | `gui_c034_v1`、`gui_strip_shadow_final_v10` |
 
@@ -406,4 +406,6 @@ python3 -m ssb_tools.validate_contact SESSION_dynamics --config CAPTURE.yaml --w
 **带成像的完整采集**（5 mm 档、0.2 mm，3 m，无 GUI，代码定稿并重新构建后采集）：284443 行，成像实时率 0.977，动力学实时率 0.982，渲染 12.6 s。阶段 B 验收器 23 项全部通过，包括运行程序与源码一致、新增的"钢轨剖面与真值一致"、有效区无缺行和 333 行批次重放逐字节一致；接触验收全部通过。会话为 `sessions/irr_trials_v2/final_chord5`，演示资产在 `local_data/stage_b/irregularity_trials_v2/`。GUI 下的实时率尚未在起伏轨道上单独测量。
 
 **单步断触**：刚性轮在高度场上偶有 1 ms 的断触，竖向速度出现 9.8 mm/s（重力加速度乘以 1 ms）的跳变，与起伏幅值和高度场分辨率无关。4WIDS 也观察到同类现象。加上车轮柔性后不再出现。
+
+**默认演示（2026-10-01 起）**：`local_data/stage_b/contact_demo` 改为 2 mm 档起伏加 0.2 mm 车轮柔性，以原平直轨演示的配置和标定为源生成，光学签名不变（标定可直接沿用）。验收会话 `sessions/default_2mm_acceptance`：284443 行，成像实时率 0.990、动力学实时率 0.995（无 GUI），阶段 B 23 项与接触验收全部通过，333 行批次重放逐字节一致；车体升沉范围 1.95 mm、俯仰 2.74 mrad。导出的可移植资产包（329 个文件）通过剖面核对和光学身份检查。旧的平直轨演示已删除，需要时用 `--track-chord-mm 0 --wheel-deflection-mm 0` 重新生成。
 

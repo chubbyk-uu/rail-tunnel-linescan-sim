@@ -35,22 +35,32 @@ def disc_centre(x, z, centre, radius):
 
 
 def rail_profile_matches_world(config, world):
-    """Decode every rail-top heightmap of the world and compare it with the regenerated truth."""
-    from .rail_irregularity import decode_heightmap, profile
+    """Decode every rail-top heightmap from the world SDF alone (pose, size, image) and compare it
+    with the profile regenerated from the configuration truth; works for relocated bundles."""
+    from PIL import Image
+    from .rail_irregularity import profile
     import xml.etree.ElementTree as ET
+    root = ET.parse(world).getroot()
+    surfaces = [m for m in root.iter('model') if m.get('name', '').startswith('rail_surface_')]
     expected = profile(config)
-    uris = [e.text for e in ET.parse(world).getroot().iter('uri')
-            if e.text and Path(e.text).name.startswith('rail_top_')]
     if expected is None:
-        return dict(passed=not uris, heightmaps=len(uris))
+        return dict(passed=not surfaces, heightmaps=len(surfaces))
     x, z, _ = expected
-    record = json.loads((Path(uris[0]).parent/'rail_irregularity.json').read_text())
-    worst = 0.
-    for entry in record['heightmaps']:
-        xs, zs = decode_heightmap(Path(uris[0]).parent/entry['file'], entry)
+    worst, tolerance = 0., 0.
+    for model in surfaces:
+        px, py, pz = map(float, model.findtext('pose').split()[:3])
+        shape = model.find('link/collision/geometry/heightmap')
+        length, width, span = map(float, shape.findtext('size').split())
+        uri = shape.findtext('uri').removeprefix('file://')
+        path = Path(uri) if Path(uri).is_absolute() else Path(world).parent/uri
+        rows = np.asarray(Image.open(path), dtype=float)
+        if np.ptp(rows, axis=0).max() != 0:
+            return dict(passed=False, heightmaps=len(surfaces), error='heightmap varies across the rail head')
+        xs = np.linspace(px-length/2, px+length/2, rows.shape[1])
+        zs = pz+rows[0]/65535*span
         worst = max(worst, float(np.abs(zs-np.interp(xs, x, z)).max()))
-    tolerance = max(e['quantization_m'] for e in record['heightmaps'])+1e-9
-    return dict(passed=bool(uris) and worst <= tolerance, heightmaps=len(uris),
+        tolerance = max(tolerance, span/65535/2+1e-9)
+    return dict(passed=bool(surfaces) and worst <= tolerance, heightmaps=len(surfaces),
                 max_error_m=worst, tolerance_m=tolerance)
 
 
