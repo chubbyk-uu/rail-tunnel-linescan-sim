@@ -94,4 +94,8 @@ def prepare(template, output, start, distance):
     output.mkdir(parents=True)
     (output/'capture.yaml').write_text(yaml.safe_dump(c, sort_keys=False))
     world.write(output/'world.sdf', encoding='unicode', xml_declaration=True)
+    # Physical-world manifest and scene spec travel with the world (car pose is not in them).
+    for name, source_path in (('physical_manifest.json', template/'world/physical_manifest.json'),
+                              ('spec.yaml', template/'spec.yaml')):
+        if source_path.exists(): (output/name).write_bytes(source_path.read_bytes())
     return c, task

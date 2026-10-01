@@ -134,7 +134,9 @@ def audit(folder, radius=2.75, axis_z=2.015):
     leaks = [r for part in results for r in part]
     probed = len(work)
     by_mesh = {name: sum(r['mesh'] == name for r in leaks) for name in NAMES}
-    return dict(folder=str(folder), triangles=int(len(tris)), backing_triangles=int(backing.sum()),
+    import hashlib
+    meshes = {f'{name}.obj': hashlib.sha256((Path(folder)/f'{name}.obj').read_bytes()).hexdigest() for name in NAMES}
+    return dict(folder=str(folder), meshes=meshes, triangles=int(len(tris)), backing_triangles=int(backing.sum()),
                 backing_radius_m=backing_radius, boundary_edges_probed=probed, tunnel_end_edges=ends,
                 probes_per_edge=len(POSITIONS)*len(OFFSETS_M)*3, offsets_m=list(OFFSETS_M),
                 leaks=dict(edges=len(leaks), by_mesh=by_mesh, examples=sorted(leaks, key=lambda r: -r['leak_offset_m'])[:20],

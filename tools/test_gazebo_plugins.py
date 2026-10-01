@@ -60,8 +60,10 @@ def run(output):
                wheel_compliance=dict(static_deflection_m=.0002,damping_ratio=.2,stiffness_n_m=stiffness['stiffness_n_m'],
                                      damping_n_s_m=stiffness['damping_n_s_m']))
     cases=[('ideal',False,None,{}),('contact',True,None,{}),('mismatch',True,'assembly height differs',{}),
-           ('irregular',True,None,rough),('irregular_mismatch',True,'track irregularity differs',rough),
-           ('start_mismatch',True,'start position differs',{})]
+           ('irregular',True,None,rough),('irregular_mismatch',True,'physical world check failed',rough),
+           ('start_mismatch',True,'start position differs',{}),
+           # Configuration edited after the world was generated: true wheel diameter, track seed.
+           ('odo_mismatch',True,'physical world check failed',rough),('seed_mismatch',True,'physical world check failed',rough)]
     for name,contact,bad,truth in cases:
         folder=output/name;folder.mkdir()
         c=copy.deepcopy(base);c['robot']={'base_reference_z_m':.37,'scan_axis_height_m':1.645}
@@ -79,6 +81,8 @@ def run(output):
             flat=copy.deepcopy(c);flat['truth'].pop('track_irregularity');make_world(folder,flat,spec)
         else:
             make_world(folder,c,spec)
+        if name=='odo_mismatch':c['truth']['odo_left_diameter_m']=.081
+        if name=='seed_mismatch':c['truth']['track_irregularity']['seed']=7
         cfg=folder/'capture.yaml';cfg.write_text(yaml.safe_dump(c))
         world=folder/'world.sdf'
         if name=='mismatch':

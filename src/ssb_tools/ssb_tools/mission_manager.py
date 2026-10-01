@@ -40,7 +40,7 @@ TERMINAL = ('idle', 'complete', 'stopped', 'failed')
 
 def initial_state(config, base_pose):
     return dict(sim_time=0., scan=math.radians(config['motion']['start_theta_deg']),
-                wheel_angles=[0.]*4, measure_angles=[0.]*2, base_pose=base_pose,
+                wheel_angles=[0.]*4, measure_angles=[0.]*2, measure_slides=[0.]*2, suspension=[], base_pose=base_pose,
                 s_hat=0., speed=0., scan_rate=0., motion_complete=False, capture={})
 
 
@@ -146,6 +146,12 @@ class MissionManager(Node):
         inputs = self.repo/'local_data/mission_runs'/token
         config, task = prepare(self.demo, inputs, start, distance)
         check_calibration(inputs/'capture.yaml', self.demo/'calibration.json')
+        from .physical_world import check as physical_check, spec_for
+        physical = (physical_check(config, spec_for(inputs/'capture.yaml'), inputs/'world.sdf')
+                    if config.get('contact', {}).get('enabled') else dict(passed=True))
+        if not physical['passed']:
+            raise ValueError('physical world differs from the configuration: '+
+                             ', '.join(n for n, v in physical['checks'].items() if not v['passed']))
         self.session = self.root/token; self.task = task; self.events = []
         self.error = ''; self.expected_exit = False
         self.inputs = inputs

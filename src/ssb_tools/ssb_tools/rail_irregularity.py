@@ -163,11 +163,23 @@ def profile(config):
     return x, (left+right)/2, record
 
 
-def segments(x0, x1):
+def sample_grid(x0, x1):
+    """Global heightmap sample grid: spacing and each segment's first sample index.
+
+    Every segment has SEGMENT_SAMPLES samples on one shared grid that tiles [x0, x1] exactly, and
+    neighbours share their overlap samples, so overlapping surfaces are identical point by point.
+    """
+    n = SEGMENT_SAMPLES-1
     length = x1-x0
     count = max(1, math.ceil((length-SEGMENT_OVERLAP_M)/(SEGMENT_MAX_M-SEGMENT_OVERLAP_M)))
-    size = (length+(count-1)*SEGMENT_OVERLAP_M)/count
-    return [(x0+i*(size-SEGMENT_OVERLAP_M), x0+i*(size-SEGMENT_OVERLAP_M)+size) for i in range(count)]
+    overlap = round(SEGMENT_OVERLAP_M/(SEGMENT_MAX_M/n))          # shared samples
+    intervals = count*n-(count-1)*overlap
+    return length/intervals, [k*(n-overlap) for k in range(count)]
+
+
+def segments(x0, x1):
+    step, starts = sample_grid(x0, x1)
+    return [(x0+s*step, x0+(s+SEGMENT_SAMPLES-1)*step) for s in starts]
 
 
 def guide_box_top(z):
@@ -196,10 +208,14 @@ def write_heightmaps(folder, config, rail_ys, width):
     folder = Path(folder)
     np.savez_compressed(folder/'rail_profile.npz', x=x, left=left, right=right)
     models, images = [], []
-    for k, (a, b) in enumerate(segments(x[0], x[-1])):
-        xs = np.linspace(a, b, SEGMENT_SAMPLES)
+    step, starts = sample_grid(x[0], x[-1])
+    grid = x[0]+step*np.arange(starts[-1]+SEGMENT_SAMPLES)
+    for k, start in enumerate(starts):
+        xs = grid[start:start+SEGMENT_SAMPLES]; a, b = float(xs[0]), float(xs[-1])
         for side, y in rail_ys:
             zs = np.interp(xs, x, profiles[side])
+            # gz stretches each image's own darkest..brightest pixel over the size height (measured):
+            # every image must span 0..65535, so heights are quantized per segment.
             low, high = float(zs.min()), float(zs.max())
             span = max(high-low, 1e-6)
             row = np.rint((zs-low)/span*65535).astype(np.uint16)

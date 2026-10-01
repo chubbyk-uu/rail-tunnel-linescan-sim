@@ -166,3 +166,22 @@ def test_full_command_queue_returns_rejection_with_matching_id():
     assert fake.state == 'paused' and fake.commands.qsize() == 1
     assert fake.command_result['id'] == 'full' and not fake.command_result['ok']
     assert 'queue is full' in fake.command_result['error']
+
+
+def test_preview_moves_sprung_axles_and_measuring_sliders(tmp_path):
+    pytest.importorskip('geometry_msgs')
+    from builtin_interfaces.msg import Time
+    world = tmp_path/'world.sdf'
+    world.write_text('''<sdf><world><model name="scan_car"><pose>3 0 0 0 0 0</pose>
+      <link name="base"><pose>0 0 .3 0 0 0</pose></link>
+      <link name="wheel_2_axle"><pose>-.35 -.754 .1 0 0 0</pose></link>
+      <link name="wheel_2"><pose>-.35 -.754 .1 0 0 0</pose></link>
+      <link name="measure_left_slider"><pose>-.52 .754 .04 0 0 0</pose></link>
+      <link name="measure_left_wheel"><pose>-.52 .754 .04 0 0 0</pose></link></model></world></sdf>''')
+    state = dict(base_pose=[3, 0, .3, 0, 0, 0, 1], scan=0., wheel_angles=[0.]*4, measure_angles=[0.]*2,
+                 suspension=[0., 0., .0004, 0.], measure_slides=[-.002, 0.])
+    frames = {f.child_frame_id: f.transform.translation for f in Preview(world, tmp_path/'cache').frames(state, Time())}
+    assert frames['sim_truth/wheel_2_axle'].z == pytest.approx(.1-.3+.0004)
+    assert frames['sim_truth/wheel_2'].z == pytest.approx(.1-.3+.0004)
+    assert frames['sim_truth/measure_left_slider'].z == pytest.approx(.04-.3-.002)
+    assert frames['sim_truth/measure_left_wheel'].z == pytest.approx(.04-.3-.002)

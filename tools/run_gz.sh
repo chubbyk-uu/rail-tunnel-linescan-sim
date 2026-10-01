@@ -15,6 +15,8 @@ exec bash "$repo/tools/with_optix_runtime.sh" bash -c '
   source /opt/ros/jazzy/setup.bash && source "$0/install/setup.bash"
   export GZ_SIM_SYSTEM_PLUGIN_PATH="$0/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
   export SSB_CONFIG="$1" SSB_SESSION="$2" SSB_WORLD="$4"
+  # Rails, wheels and springs in the world must be exactly the configured truth.
+  python3 -m ssb_tools.physical_world check --config "$SSB_CONFIG" --world "$SSB_WORLD" >/dev/null || { echo "physical world check failed; see: python3 -m ssb_tools.physical_world check --config $SSB_CONFIG --world $SSB_WORLD" >&2; exit 2; }
   gz sim -s -r -v 3 --iterations "$3" "${@:5}" "$SSB_WORLD" || exit $?
   python3 "$0/tools/check_session.py" "$SSB_SESSION"
 ' "$repo" "$config" "$session" "$iterations" "$world" "$@"

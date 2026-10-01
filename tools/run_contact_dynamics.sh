@@ -14,6 +14,7 @@ bash "$repo/tools/with_optix_runtime.sh" bash -c '
  source /opt/ros/jazzy/setup.bash
  source "$1/install/setup.bash"
  export GZ_SIM_SYSTEM_PLUGIN_PATH="$1/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
+ python3 -m ssb_tools.physical_world check --config "$SSB_CONFIG" --world "$SSB_WORLD" >/dev/null || { echo "physical world check failed; see: python3 -m ssb_tools.physical_world check --config $SSB_CONFIG --world $SSB_WORLD" >&2; exit 2; }
  gz sim -s -r -v 3 --iterations "$2" "$SSB_WORLD"
 ' _ "$repo" "$iterations"
 python3 - "$SSB_SESSION" <<'PY'

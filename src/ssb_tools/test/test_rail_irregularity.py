@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from ssb_tools.rail_irregularity import (chord_offsets, cross_shape, decode_heightmap, profile, rails, segments,
-                                         settings, shape, twist, SDF_SIZE_FACTOR, SEGMENT_MAX_M,
+                                         settings, shape, twist, SDF_SIZE_FACTOR, SEGMENT_MAX_M, SEGMENT_SAMPLES,
                                          SEGMENT_OVERLAP_M)
 from ssb_tools.stage_b_scene import load_spec
 
@@ -100,8 +100,10 @@ def test_flat_and_invalid_settings(inputs):
 def test_segments_overlap_and_stay_bounded(length):
     parts = segments(-1.5, -1.5+length)
     assert parts[0][0] == -1.5 and parts[-1][1] == pytest.approx(-1.5+length)
+    step = parts[0][1]-parts[0][0]
     for (a0, a1), (b0, b1) in zip(parts, parts[1:]):
-        assert a1-b0 == pytest.approx(SEGMENT_OVERLAP_M)
+        assert a1-b0 == pytest.approx(SEGMENT_OVERLAP_M, abs=step/(SEGMENT_SAMPLES-1))   # whole shared samples
+        assert b1-b0 == pytest.approx(step)
     assert max(b-a for a, b in parts) <= SEGMENT_MAX_M+1e-9
     assert len(parts) == (9 if length == 23 else 21)
 
@@ -139,15 +141,19 @@ def test_track_heightmaps_match_profile_and_lower_guide_faces(tmp_path, inputs):
         assert px == pytest.approx(sum(entry['x_m'])/2) and sx/SDF_SIZE_FACTOR == pytest.approx(entry['x_m'][1]-entry['x_m'][0])
         assert pz == pytest.approx(entry['z_m'][0]) and sy/SDF_SIZE_FACTOR == pytest.approx(spec['track']['head_width_m'])
         assert model.findtext('link/collision/geometry/heightmap/pos') == '0 0 0'
-    # The validator decodes both rails from the world alone; swapped rails are detected.
-    from ssb_tools.validate_contact import rail_profile_matches_world
-    ET.ElementTree(world).write(tmp_path/'world.sdf')
-    assert rail_profile_matches_world(c, tmp_path/'world.sdf')['passed']
-    assert not rail_profile_matches_world(_with(copy.deepcopy(c), seed=7), tmp_path/'world.sdf')['passed']
+    # The physical check decodes both rails from the world alone; swapped rails are detected.
+    from ssb_tools.physical_world import check
+    track_checks = ('rail_models_complete', 'rail_placement', 'rail_coverage', 'rail_profile_matches_configuration')
+    sdf = ET.Element('sdf'); sdf.append(world)
+    ET.ElementTree(sdf).write(tmp_path/'world.sdf')
+    report = lambda config: check(config, spec, tmp_path/'world.sdf')['checks']
+    assert all(report(c)[name]['passed'] for name in track_checks)
+    assert not report(_with(copy.deepcopy(c), seed=7))['rail_profile_matches_configuration']['passed']
     for model in surfaces:
         model.set('name', model.get('name').replace('left', 'tmp').replace('right', 'left').replace('tmp', 'right'))
-    ET.ElementTree(world).write(tmp_path/'world.sdf')
-    assert not rail_profile_matches_world(c, tmp_path/'world.sdf')['passed']
+    ET.ElementTree(sdf).write(tmp_path/'world.sdf')
+    assert not report(c)['rail_placement']['passed'] and not report(c)['rail_profile_matches_configuration']['passed']
+    sdf.remove(world)
     rail_link = world.find("model[@name='track']/link[@name='rails']")
     for side in ('left', 'right'):
         col = rail_link.find(f"collision[@name='{side}_head']")

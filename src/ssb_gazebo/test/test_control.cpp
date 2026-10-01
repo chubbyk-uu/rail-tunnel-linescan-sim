@@ -113,3 +113,81 @@ TEST(WorldCheck, MatchingSprungWorldIsAccepted) {
   EXPECT_NO_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,
     "truth: {wheel_compliance: {static_deflection_m: 0.0002, stiffness_n_m: 2.9e6, damping_n_s_m: 3300}}\n"));
 }
+
+#include <fstream>
+#include <gz/sim/components/Collision.hh>
+#include <gz/sim/components/Geometry.hh>
+#include <gz/sim/components/Pose.hh>
+#include <sdf/Geometry.hh>
+#include <sdf/Heightmap.hh>
+#include <sdf/Sphere.hh>
+#include <sdf/Cylinder.hh>
+
+namespace {
+gz::sim::Entity AddChild(gz::sim::EntityComponentManager& ecm,gz::sim::Entity parent,const std::string& name,bool link) {
+  auto e=ecm.CreateEntity();
+  if(link)ecm.CreateComponent(e,gz::sim::components::Link());else ecm.CreateComponent(e,gz::sim::components::Collision());
+  ecm.CreateComponent(e,gz::sim::components::Name(name));ecm.CreateComponent(e,gz::sim::components::ParentEntity(parent));
+  return e;
+}
+void AddShape(gz::sim::EntityComponentManager& ecm,gz::sim::Entity model,const std::string& link,
+              const std::string& collision,const sdf::Geometry& g) {
+  auto c=AddChild(ecm,AddChild(ecm,model,link,true),collision,false);
+  ecm.CreateComponent(c,gz::sim::components::Geometry(g));
+}
+// A manifest and matching loaded entities: one rail heightmap, six wheels, two measuring slides.
+struct PhysicalFixture {
+  gz::sim::EntityComponentManager ecm;gz::sim::Entity car,rail;nlohmann::json manifest;std::string config;
+  std::filesystem::path image=std::filesystem::temp_directory_path()/"ssb_test_rail_top.png";
+  PhysicalFixture() {
+    std::ofstream(image)<<"heightmap bytes";
+    car=AddModel(ecm,"scan_car");
+    for(const char* n:{"odometer_wheel","wheel_1","wheel_2","wheel_3"}) {
+      sdf::Geometry g;g.SetType(sdf::GeometryType::CYLINDER);sdf::Cylinder c;c.SetRadius(.1);g.SetCylinderShape(c);
+      AddShape(ecm,car,n,"tread_contact",g);}
+    for(const char* side:{"left","right"}) {
+      sdf::Geometry g;g.SetType(sdf::GeometryType::SPHERE);sdf::Sphere s;s.SetRadius(.04);g.SetSphereShape(s);
+      AddShape(ecm,car,std::string("measure_")+side+"_wheel","tread_contact",g);
+      auto j=ecm.CreateEntity();ecm.CreateComponent(j,gz::sim::components::Joint());
+      ecm.CreateComponent(j,gz::sim::components::Name(std::string("measure_")+side+"_slide"));
+      ecm.CreateComponent(j,gz::sim::components::ParentEntity(car));
+      sdf::JointAxis axis;axis.SetSpringStiffness(2000);axis.SetDamping(20);axis.SetSpringReference(-.015);
+      axis.SetLower(-.012);axis.SetUpper(.012);ecm.CreateComponent(j,gz::sim::components::JointAxis(axis));
+      manifest["expected"]["joints"][std::string("measure_")+side+"_slide"]=
+        {{"stiffness",2000.},{"damping",20.},{"reference",-.015},{"lower",-.012},{"upper",.012}};
+    }
+    rail=AddModel(ecm,"rail_surface_left_00");
+    ecm.CreateComponent(rail,gz::sim::components::Pose(gz::math::Pose3d(1.5,.754,-.001,0,0,0)));
+    sdf::Geometry g;g.SetType(sdf::GeometryType::HEIGHTMAP);sdf::Heightmap h;
+    h.SetUri("file://"+image.string());h.SetSize({3.,.073,.002});g.SetHeightmapShape(h);
+    AddShape(ecm,rail,"top","rail_top",g);
+    manifest["schema"]="ssb.physical_manifest.v1";
+    manifest["actual"]["rails"]=nlohmann::json::array({{{"name","rail_surface_left_00"},{"pose",{1.5,.754,-.001,0,0,0}},
+      {"size",{3.,.073,.002}},{"sha256",ssb::Sha256File(image)}}});
+    config="truth: {wheel_diameter_m: 0.2, odo_left_diameter_m: 0.08, odo_right_diameter_m: 0.08}\n";
+  }
+  void Check(){ssb_gazebo::CheckPhysicalManifest(gz::sim::Model(car),ecm,config,manifest);}
+};
+}
+
+TEST(WorldCheck, LoadedPhysicalWorldMatchesManifest) {
+  PhysicalFixture f;
+  EXPECT_NO_THROW(f.Check());
+}
+
+TEST(WorldCheck, MovedOrMissingRailHeightmapIsRejected) {
+  PhysicalFixture moved;moved.ecm.Component<gz::sim::components::Pose>(moved.rail)->Data().Pos().Y(.854);
+  EXPECT_THROW(moved.Check(),std::runtime_error);
+  PhysicalFixture missing;missing.manifest["actual"]["rails"].push_back(missing.manifest["actual"]["rails"][0]);
+  missing.manifest["actual"]["rails"][1]["name"]="rail_surface_right_00";
+  EXPECT_THROW(missing.Check(),std::runtime_error);
+  PhysicalFixture image;image.manifest["actual"]["rails"][0]["sha256"]="0";
+  EXPECT_THROW(image.Check(),std::runtime_error);
+}
+
+TEST(WorldCheck, WheelDiameterOrSlideSpringMismatchIsRejected) {
+  PhysicalFixture wheel;wheel.config="truth: {wheel_diameter_m: 0.2, odo_left_diameter_m: 0.081, odo_right_diameter_m: 0.08}\n";
+  EXPECT_THROW(wheel.Check(),std::runtime_error);
+  PhysicalFixture spring;spring.manifest["expected"]["joints"]["measure_right_slide"]["stiffness"]=2500.;
+  EXPECT_THROW(spring.Check(),std::runtime_error);
+}

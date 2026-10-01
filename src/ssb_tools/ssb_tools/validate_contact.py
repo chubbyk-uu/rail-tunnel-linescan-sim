@@ -38,40 +38,17 @@ def disc_centre(x, z, centre, radius):
     return np.max(np.interp(centre[:, None]+u, x, z)+np.sqrt(radius*radius-u*u), axis=1)-radius
 
 
-def rail_profile_matches_world(config, world):
-    """Decode every rail-top heightmap from the world SDF alone (pose, size, image) and compare it
-    with the rail profile regenerated from the configuration truth; works for relocated bundles."""
-    from PIL import Image
-    from .rail_irregularity import rails
-    import xml.etree.ElementTree as ET
-    root = ET.parse(world).getroot()
-    surfaces = [m for m in root.iter('model') if m.get('name', '').startswith('rail_surface_')]
-    expected = rails(config)
-    if expected is None:
-        return dict(passed=not surfaces, heightmaps=len(surfaces))
-    x, left, right, _ = expected
-    worst, tolerance = 0., 0.
-    for model in surfaces:
-        side = model.get('name').split('_')[2]
-        if side not in ('left', 'right'):
-            return dict(passed=False, heightmaps=len(surfaces), error=f'unknown rail in {model.get("name")}')
-        z = left if side == 'left' else right
-        px, py, pz = map(float, model.findtext('pose').split()[:3])
-        shape = model.find('link/collision/geometry/heightmap')
-        length, width, span = map(float, shape.findtext('size').split())
-        uri = shape.findtext('uri').removeprefix('file://')
-        path = Path(uri) if Path(uri).is_absolute() else Path(world).parent/uri
-        rows = np.asarray(Image.open(path), dtype=float)
-        if np.ptp(rows, axis=0).max() != 0:
-            return dict(passed=False, heightmaps=len(surfaces), error='heightmap varies across the rail head')
-        # Same convention as the generator: DART spreads the samples over size*(N-1)/N.
-        extent = length*(rows.shape[1]-1)/rows.shape[1]
-        xs = np.linspace(px-extent/2, px+extent/2, rows.shape[1])
-        zs = pz+rows[0]/65535*span
-        worst = max(worst, float(np.abs(zs-np.interp(xs, x, z)).max()))
-        tolerance = max(tolerance, span/65535/2+1e-9)
-    return dict(passed=bool(surfaces) and worst <= tolerance, heightmaps=len(surfaces),
-                max_error_m=worst, tolerance_m=tolerance)
+def physical_world_report(root, config_path, config, spec, world=None):
+    """Strict physical-world check (ssb_tools.physical_world) on the run's archived snapshot when
+    present (evaluation/physical), else on the given world beside its manifest."""
+    from .physical_world import check
+    snapshot = Path(root)/'evaluation/physical'
+    if (snapshot/'physical_manifest.json').exists():
+        local = snapshot/'spec.yaml'
+        spec = yaml.safe_load(local.read_text()) if local.exists() else spec
+        worlds = [p for p in snapshot.glob('*.sdf')]
+        return check(config, spec, worlds[0], snapshot/'physical_manifest.json', snapshot=snapshot)
+    return check(config, spec, world) if world else None
 
 
 def validate(root, config, spec=None, world=None):
@@ -150,8 +127,9 @@ def validate(root, config, spec=None, world=None):
         heave_ref = np.zeros(len(a)); pitch_ref = np.zeros(len(a)); roll_ref = np.zeros(len(a))
     else:
         x, left, right, record = truth
-        rl, fl = (disc_centre(x, left, a['x']+dx, tl/2) for dx in (-half, half))
-        rr, fr = (disc_centre(x, right, a['x']+dx, tr/2) for dx in (-half, half))
+        running = c['truth']['wheel_diameter_m']/2     # load-carrying wheels, not the measuring wheels
+        rl, fl = (disc_centre(x, left, a['x']+dx, running) for dx in (-half, half))
+        rr, fr = (disc_centre(x, right, a['x']+dx, running) for dx in (-half, half))
         heave_ref = (rl+fl+rr+fr)/4; pitch_ref = (rl+rr-fl-fr)/(4*half); roll_ref = (rl+fl-rr-fr)/(4*rail_y)
         twist_ref = (rl-fl-rr+fr)/4
         report['track_irregularity'] = record['metrics']
@@ -171,6 +149,19 @@ def validate(root, config, spec=None, world=None):
                   wheelbase_twist_max_m=float(4*abs(twist_ref[after]).max()))
     if truth is not None:
         checks['body_follows_track'] = bool(report['pitch_error_max_rad'] < 1e-3 and report['roll_error_max_rad'] < 1e-3)
+    # Start-up: exposures begin as soon as the scan head enters the gate (about 1 s), before the
+    # settle pre-stress has released at STARTUP_S. Reported separately, against the steady mean.
+    gate = c.get('gate', {}); lo_g, hi_g = np.deg2rad(gate.get('start_deg', -180.)), np.deg2rad(gate.get('end_deg', 180.))
+    wrapped = np.remainder(a['scan']+np.pi, 2*np.pi)-np.pi
+    in_gate = np.where((a['t'] >= 0) & (wrapped >= lo_g) & (wrapped <= hi_g))[0]
+    if len(in_gate):
+        first = float(a['t'][in_gate[0]]); start = (a['t'] >= first) & ~after
+        steady = lambda e: e[reference].mean()
+        report['startup'] = dict(first_exposure_s=first, until_s=STARTUP_S, samples=int(start.sum()),
+                                 heave_error_max_m=float(abs(heave_error[start]).max()) if start.any() else 0.,
+                                 pitch_error_max_rad=float(abs(pitch_error[start]-steady(pitch_error)).max()) if start.any() else 0.,
+                                 roll_error_max_rad=float(abs(roll_error[start]-steady(roll_error)).max()) if start.any() else 0.,
+                                 note='settle pre-stress release; reported, not a pass/fail criterion')
     if compliance:
         if not logged:
             checks['wheel_compliance_logged'] = False
@@ -187,9 +178,9 @@ def validate(root, config, spec=None, world=None):
                 checks['wheels_always_loaded'] = bool(not unloaded.any())
             checks['static_deflection'] = bool(abs(static/deflection-1) < .02)
             report.update(static_deflection_m=float(static), load_ratio_range=[float(loads.min()), float(loads.max())])
-    if world:
-        match = rail_profile_matches_world(c, world)
-        checks['rail_profile_matches_truth'] = match['passed']; report['rail_profile'] = match
+    physical = physical_world_report(root, config, c, yaml.safe_load(spec_path.read_text()), world)
+    if physical is not None:
+        checks['physical_world_matches_truth'] = physical['passed']; report['physical_world'] = physical
     report = dict(passed=all(checks.values()), checks=checks, **report,
         limitation='straight-track quasi-static check of vertical and cross-level irregularity; not a derailment or curve certification')
     (root/'validation.json').write_text(json.dumps(report, indent=2)+'\n')

@@ -24,6 +24,7 @@ python3 "$mesa_wrapper" bash "$repo/tools/with_optix_runtime.sh" bash -c '
   source /opt/ros/jazzy/setup.bash
   source "$1/install/setup.bash"
   set -u
+  python3 -m ssb_tools.physical_world check --config "$SSB_CONFIG" --world "$SSB_WORLD" >/dev/null || { echo "physical world check failed; see: python3 -m ssb_tools.physical_world check --config $SSB_CONFIG --world $SSB_WORLD" >&2; exit 2; }
   export GZ_SIM_SYSTEM_PLUGIN_PATH="$1/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
   export GZ_GUI_PLUGIN_PATH="$1/install/ssb_gazebo/lib${GZ_GUI_PLUGIN_PATH:+:$GZ_GUI_PLUGIN_PATH}"
   # Manage server and GUI separately: closing the GUI must drain/stop the server

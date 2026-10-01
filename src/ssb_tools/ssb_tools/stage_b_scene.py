@@ -692,6 +692,9 @@ def make_world(out, config, spec, previews=None):
     apply_work_light_environment(world,spec)
     ET.indent(root)
     ET.ElementTree(root).write(out/'world.sdf', encoding='unicode', xml_declaration=True)
+    if config.get('contact',{}).get('enabled'):
+        from .physical_world import write_manifest
+        write_manifest(out/'world.sdf', config, spec)
 
 
 def make_joint(model, name, kind, parent, child, axis):
@@ -703,6 +706,20 @@ def make_joint(model, name, kind, parent, child, axis):
     limit = sub(node, 'limit')
     for tag, value in (('lower',-1e16),('upper',1e16),('effort',1e9),('velocity',1e9)):
         sub(limit, tag, value)
+
+
+LINING_MESHES = ('panels.obj', 'joints.obj', 'filler.obj', 'gap.obj')
+
+
+def lining_layout(config, spec):
+    """Everything that determines the lining meshes: tunnel, ring/segment layout, joint profile, seed."""
+    t, p = config['tunnel'], spec['panels']
+    keys = ('ring_width_m','angles_deg','alternating_stagger_deg','angular_step_deg','joint_chamfer_m',
+            'joint_groove_half_width_m','joint_depth_m','joint_contact_gap_m','joint_gap_depth_m','joint_edge_radius_m',
+            'joint_edge_fillet_steps','joint_edge_wiggle','joint_filler_recess_m','joint_states','joint_damage',
+            'joint_along_step_m')
+    return json.loads(json.dumps(dict(tunnel={k: t[k] for k in ('radius_m','axis_z_m','x_min_m','x_max_m')},
+                                      panels={k: p[k] for k in keys if k in p}, seed=spec['seed'])))
 
 
 def prepare(config_path, spec_path, output, surface_path=None):
@@ -735,7 +752,7 @@ def prepare(config_path, spec_path, output, surface_path=None):
     manifest = dict(schema='ssb.stage_b_geometry.v1', implementation='geometry_and_timing_foundation',
                     config=dict(path=str(Path(config_path).resolve()), sha256=digest(config_path)),
                     spec=dict(path=str(Path(spec_path).resolve()), sha256=digest(spec_path)),
-                    geometry=geometry, resource_plan=plan,
+                    geometry=geometry, resource_plan=plan, layout=lining_layout(config, spec),
                     assets={str(p.relative_to(output)):digest(p) for p in output.rglob('*') if p.is_file()},
                     preparation_seconds=time.monotonic()-start,
                     preparation_peak_rss_bytes=peak_rss_bytes(),

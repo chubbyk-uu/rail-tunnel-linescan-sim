@@ -70,6 +70,16 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       // Models after the vehicle in the SDF do not exist yet during Configure.
       try{
         CheckTrackAndWheels(car_,ecm,c_.source_text);
+        // Physical-world manifest beside the world: rails, wheel radii and springs as generated.
+        const char* world=std::getenv("SSB_WORLD");
+        if(!world)throw std::runtime_error("SSB_WORLD required for the physical-world check");
+        world_path_=world;
+        const auto manifest_path=world_path_.parent_path()/"physical_manifest.json";
+        if(!std::filesystem::exists(manifest_path))
+          throw std::runtime_error("physical-world manifest missing beside "+world_path_.string()+"; regenerate the world");
+        std::ifstream in(manifest_path);nlohmann::json manifest;in>>manifest;
+        images_=CheckPhysicalManifest(car_,ecm,c_.source_text,manifest);
+        SnapshotPhysical(world_path_,config_path_,images_,log_root_+"/evaluation/physical");
         // Encoder distance is relative: a world spawned elsewhere would scan the wrong place.
         if(std::abs(gz::sim::worldPose(base_.Entity(),ecm).Pos().X()-c_.start_x_m)>1e-3)
           throw std::runtime_error("vehicle start position differs between world and capture configuration");
@@ -86,7 +96,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     if(!started_){
       for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;zero_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_));}
       started_=true;
-      if(!dynamics_only_) {try {StartPipeline();} catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}}
+      if(!dynamics_only_) {try {StartPipeline();SnapshotPhysical(world_path_,config_path_,images_,session_+"/evaluation/physical");}
+        catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}}
     }
     double s=0;
     for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;
@@ -160,6 +171,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       {"wheel_angles", {position(rear_[0]), position(drive_[0]),
                          position(rear_[1]), position(drive_[1])}},
       {"measure_angles", {position(enc_[0]), position(enc_[1])}},
+      {"measure_slides", {position(slide_[0]), position(slide_[1])}},
+      {"suspension", [&]{nlohmann::json v=nlohmann::json::array();for(const auto& j:springs_)v.push_back(position(j));return v;}()},
       {"capture", pipeline_ ? pipeline_->Progress() : nlohmann::json::object()}};
     gz::msgs::StringMsg message; message.set_data(status.dump());
     status_pub_.Publish(message);
@@ -172,7 +185,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
   }
   ssb::Config c_;gz::sim::Joint enc_[2],drive_[2],slide_[2],rear_[2],scan_;gz::sim::Link base_;
   std::vector<gz::sim::Joint> springs_;
-  gz::sim::Model car_;bool world_checked_=false;  // rear-left, front-left, rear-right, front-right
+  gz::sim::Model car_;bool world_checked_=false;std::filesystem::path world_path_;std::vector<std::string> images_;  // rear-left, front-left, rear-right, front-right
   gz::transport::Node transport_;
   gz::transport::Node::Publisher status_pub_;
   std::chrono::steady_clock::time_point last_status_{};

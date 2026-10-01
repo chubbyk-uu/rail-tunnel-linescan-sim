@@ -37,6 +37,12 @@ def main():
     p.add_argument('--track-cross-level-mm',type=float,choices=(0.,2.,4.),default=0.,
                    help='cross-level tier: bounds left-right level difference and its 5 m twist (0 = none)')
     p.add_argument('--track-seed',type=int,default=20261001,help='rail irregularity random seed')
+    p.add_argument('--odo-truth-mm',type=float,nargs=2,metavar=('LEFT','RIGHT'),
+                   help='true measuring-wheel diameters (simulation truth; the world is built with them). '
+                        'Default: the nominal spec diameter')
+    p.add_argument('--odo-calibration-mm',type=float,nargs=2,metavar=('LEFT','RIGHT'),
+                   help='calibrated measuring-wheel diameters the controller and reconstruction use. '
+                        'Default: the nominal spec diameter')
     p.add_argument('--wheel-deflection-mm',type=float,default=.2,
                    help='realized polyurethane tread static deflection (assumption, >=0.15; 0 = rigid wheels)')
     a=p.parse_args();out=a.output.resolve()
@@ -68,10 +74,12 @@ def main():
             stiffness_n_m=result['stiffness_n_m'],damping_n_s_m=result['damping_n_s_m'],
             calibration=dict(realized_static_deflection_m=result['realized_static_deflection_m'],
                              nominal_stiffness_n_m=result['nominal_stiffness_n_m'],method=result['method']))
-    # Odometry runs on the spring-loaded measuring wheels; edit truth.odo_*_diameter_m in the
-    # generated capture.yaml (and regenerate the world) to simulate a diameter error.
-    for section in ['truth','calibration']:
-        c[section]['odo_left_diameter_m']=c[section]['odo_right_diameter_m']=spec['robot']['measuring_wheel']['diameter_m']
+    # Odometry runs on the spring-loaded measuring wheels. A diameter error is set here, never by
+    # editing the generated configuration: the world's wheel collision radii follow the truth.
+    nominal=spec['robot']['measuring_wheel']['diameter_m']
+    for section,values in (('truth',a.odo_truth_mm),('calibration',a.odo_calibration_mm)):
+        left,right=(v/1000 for v in values) if values else (nominal,nominal)
+        c[section]['odo_left_diameter_m'],c[section]['odo_right_diameter_m']=left,right
     source=Path(c['render']['optical_scene'])
     if not source.is_absolute():source=a.config.resolve().parent/source
     scene=json.loads(source.read_text())
@@ -87,10 +95,23 @@ def main():
     geometry=a.geometry.resolve() if a.geometry else None
     if geometry and not geometry.is_dir() and a.geometry!=p.get_default('geometry'):
         p.error(f'--geometry {a.geometry} does not exist')
-    meshes=[m for m in scene.get('meshes',[]) if geometry and (geometry/Path(m['file']).name).is_file()]
-    if meshes:
-        audit=json.loads((geometry/'mesh_audit.json').read_text())
+    meshes=scene.get('meshes',[])
+    if geometry and geometry.is_dir() and meshes:
+        # The whole lining is replaced, or nothing: a complete, audited, unmodified set built for
+        # this tunnel and panel layout.
+        from ssb_tools.stage_b_scene import LINING_MESHES, lining_layout
+        names=sorted(Path(m['file']).name for m in meshes)
+        if names!=sorted(LINING_MESHES):raise ValueError(f'source scene lining {names} is not the four lining meshes')
+        missing=[n for n in (*LINING_MESHES,'manifest.json','mesh_audit.json') if not (geometry/n).is_file()]
+        if missing:raise ValueError(f'replacement geometry {geometry} is incomplete; missing {missing}')
+        built=json.loads((geometry/'manifest.json').read_text());audit=json.loads((geometry/'mesh_audit.json').read_text())
+        for name in LINING_MESHES:
+            actual=digest(geometry/name)
+            if built['assets'].get(name)!=actual or audit.get('meshes',{}).get(name)!=actual:
+                raise ValueError(f'{geometry/name} differs from its geometry manifest or leak audit')
         if audit['leaks']['edges']:raise ValueError('replacement geometry has light leaks')
+        if built.get('layout')!=lining_layout(c,spec):
+            raise ValueError('replacement geometry was built for a different tunnel, panel layout or seed')
         for mesh in meshes:
             new=geometry/Path(mesh['file']).name
             replaced[mesh['file']]=str(new);mesh['file']=str(new);mesh['sha256']=digest(new)
@@ -107,13 +128,24 @@ def main():
     (out/'capture.yaml').write_text(yaml.safe_dump(c,sort_keys=False))
     prepare(a.world,out/'capture.yaml',out/'spec.yaml',out/'world','robot')
     world=out/'world/world.sdf';tree=ET.parse(world);w=tree.getroot().find('world')
+    # GUI visuals of the lining follow the same replacement, whatever folder the source world named.
+    lining={Path(new).name:new for new in replaced.values()}
     for uri in w.iter('uri'):
-        if uri.text in replaced:uri.text=replaced[uri.text]
+        if uri.text and Path(uri.text.strip()).name in lining:uri.text=lining[Path(uri.text.strip()).name]
     replace_track(w,out/'world',c,spec)
+    missing=sorted({u.text.strip() for u in w.iter('uri') if u.text and '://' not in u.text and not Path(u.text.strip()).is_file()})
+    if missing:raise ValueError(f'world references missing files: {missing[:5]}')
     ET.indent(tree);tree.write(world,encoding='unicode',xml_declaration=True)
     manifest=out/'world/manifest.json';report=json.loads(manifest.read_text())
     report['track_regenerated']=True;report['world_sha256']=digest(world)
     manifest.write_text(json.dumps(report,indent=2)+'\n')
+    # Physical assets (rails, wheels, springs) are recorded and the world checked against the truth.
+    from ssb_tools.physical_world import write_manifest, check
+    write_manifest(world,c,spec)
+    physical=check(c,spec,world)
+    if not physical['passed']:
+        raise ValueError('generated world differs from its configuration: '+
+                         ', '.join(n for n,v in physical['checks'].items() if not v['passed']))
     shutil.copyfile(REPO/'src/ssb_gazebo/worlds/stage_b_gui.config',out/'gui.config')
     if a.calibrate:
         env = dict(os.environ)

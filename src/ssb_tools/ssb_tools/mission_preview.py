@@ -131,6 +131,13 @@ class Preview:
         world[:3, :3] = Rotation.from_quat(base_pose[3:]).as_matrix()
         wheel_names = ['odometer_wheel', 'wheel_1', 'wheel_2', 'wheel_3']
         measure_names = ['measure_left_wheel', 'measure_right_wheel']
+        # Vertical slide displacements along the base z axis (sprung axles, measuring-wheel sliders).
+        lift = {}
+        for links, q in zip((('odometer_wheel_axle', 'odometer_wheel'), ('wheel_1_axle', 'wheel_1'),
+                             ('wheel_2_axle', 'wheel_2'), ('wheel_3_axle', 'wheel_3')), status.get('suspension') or []):
+            for link in links: lift[link] = q
+        for side, q in zip(('left', 'right'), status.get('measure_slides') or []):
+            for link in (f'measure_{side}_slider', f'measure_{side}_wheel'): lift[link] = q
         frames = []
         for link in self.car.findall('link'):
             name = link.get('name')
@@ -141,6 +148,8 @@ class Preview:
                 angle = (status['wheel_angles'][wheel_names.index(name)] if name in wheel_names else
                          status.get('measure_angles', [0., 0.])[measure_names.index(name)])
                 relative[:3, :3] = relative[:3, :3]@Rotation.from_rotvec([0, angle, 0]).as_matrix()
+            if name in lift:
+                relative[2, 3] += lift[name]
             values = pose_values(world if name == 'base' else relative)
             tf = TransformStamped(); tf.header.stamp = stamp
             tf.header.frame_id = 'world' if name == 'base' else 'sim_truth/base'

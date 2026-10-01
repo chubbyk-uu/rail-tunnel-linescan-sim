@@ -134,10 +134,12 @@ def main(argv=None):
                                 PASS if abs(world_x-source['motion']['start_x_m'])<1e-9 else FAIL,
                                 world_start_x_m=world_x,capture_start_x_m=source['motion']['start_x_m']))
             if prov['pose_source']=='gazebo_contact':
-                # Rail-top heightmaps must be exactly the configured truth profile (or absent if flat).
-                from .validate_contact import rail_profile_matches_world
-                match=rail_profile_matches_world(source,world_path)
-                checks.append(check('rail_profile_matches_truth',PASS if match['passed'] else FAIL,**match))
+                # Rails, wheels and springs of the archived world snapshot must be exactly the truth.
+                from .validate_contact import physical_world_report
+                from .physical_world import spec_for
+                match=physical_world_report(session.root,None,source,spec_for(world_path.parent.parent/'capture.yaml'),world_path)
+                failed=[n for n,v in match['checks'].items() if not v['passed']] if match else ['no physical-world snapshot']
+                checks.append(check('physical_world_matches_truth',PASS if match and match['passed'] else FAIL,failed=failed))
         poses=session.evaluation('pose_stream');row_truth=session.evaluation('row_truth')
         timing,rows,dropped=compare_timing(session,cfg,truth,poses);checks.extend(timing)
         checks.extend([accounting(rows,dropped),valid_region(source,poses,rows,row_truth,dropped),

@@ -9,6 +9,17 @@
 #include <gz/sim/components/JointAxis.hh>
 #include <gz/sim/components/Model.hh>
 #include <gz/sim/components/Name.hh>
+#include <gz/sim/components/Geometry.hh>
+#include <gz/sim/components/Pose.hh>
+#include <gz/sim/Link.hh>
+#include <sdf/Geometry.hh>
+#include <sdf/Heightmap.hh>
+#include <sdf/Sphere.hh>
+#include <sdf/Cylinder.hh>
+#include <filesystem>
+#include <map>
+#include <nlohmann/json.hpp>
+#include "ssb_core/sha256.hpp"
 
 namespace ssb_gazebo {
 // Truth options that change the physical world must be present in the loaded SDF, so a
@@ -41,5 +52,92 @@ inline void CheckTrackAndWheels(const gz::sim::Model& car,const gz::sim::EntityC
   }
   if(compliance && springs!=4)
     throw std::runtime_error("configuration has wheel compliance but the world lacks four sprung wheels");
+}
+
+// Loaded entities against the physical-world manifest written with the world (ssb_tools.physical_world):
+// every rail heightmap model (pose, size, image hash), wheel collision radii (truth diameters) and
+// spring joints. The Python launcher check also regenerates the profile from the configuration.
+inline std::string PathOfUri(std::string uri) {
+  if(uri.rfind("file://",0)==0) uri=uri.substr(7);
+  return uri;
+}
+inline const sdf::Geometry* CollisionGeometry(const gz::sim::EntityComponentManager& ecm,gz::sim::Entity model,
+                                              const std::string& link,const std::string& collision) {
+  const gz::sim::Model m(model);const gz::sim::Link l(m.LinkByName(ecm,link));
+  if(!l.Valid(ecm))return nullptr;
+  const auto c=l.CollisionByName(ecm,collision);
+  if(c==gz::sim::kNullEntity)return nullptr;
+  const auto* g=ecm.Component<gz::sim::components::Geometry>(c);
+  return g?&g->Data():nullptr;
+}
+// Returns the loaded heightmap image paths (for the snapshot).
+inline std::vector<std::string> CheckPhysicalManifest(const gz::sim::Model& car,const gz::sim::EntityComponentManager& ecm,
+                                                      const std::string& config_text,const nlohmann::json& manifest) {
+  std::vector<std::string> images;
+  auto fail=[](const std::string& what){throw std::runtime_error("physical world differs from its manifest: "+what);};
+  if(manifest.value("schema",std::string())!="ssb.physical_manifest.v1")fail("unsupported manifest");
+  std::map<std::string,nlohmann::json> listed;
+  for(const auto& r:manifest.at("actual").at("rails"))listed[r.at("name").get<std::string>()]=r;
+  std::size_t loaded=0;
+  ecm.Each<gz::sim::components::Model,gz::sim::components::Name>(
+    [&](const gz::sim::Entity& e,const gz::sim::components::Model*,const gz::sim::components::Name* name){
+      const std::string n=name->Data();
+      if(n.rfind("rail_surface_",0)!=0)return true;
+      ++loaded;
+      const auto found=listed.find(n);
+      if(found==listed.end())fail("unlisted rail heightmap "+n);
+      const auto& r=found->second;
+      const auto* pose=ecm.Component<gz::sim::components::Pose>(e);
+      const auto p=pose?pose->Data():gz::math::Pose3d();
+      const double got[6]={p.Pos().X(),p.Pos().Y(),p.Pos().Z(),p.Rot().Roll(),p.Rot().Pitch(),p.Rot().Yaw()};
+      for(int i=0;i<6;++i)if(std::abs(got[i]-r.at("pose")[i].get<double>())>1e-9)fail("pose of "+n);
+      const auto* g=CollisionGeometry(ecm,e,"top","rail_top");
+      if(!g||!g->HeightmapShape())fail("heightmap geometry of "+n);
+      const auto size=g->HeightmapShape()->Size();
+      const double want[3]={r.at("size")[0],r.at("size")[1],r.at("size")[2]};
+      if(std::abs(size.X()-want[0])>1e-9||std::abs(size.Y()-want[1])>1e-9||std::abs(size.Z()-want[2])>1e-9)fail("size of "+n);
+      const std::string path=PathOfUri(g->HeightmapShape()->Uri());
+      if(!std::filesystem::exists(path)||ssb::Sha256File(path)!=r.at("sha256").get<std::string>())fail("image of "+n);
+      images.push_back(path);
+      return true;});
+  if(loaded!=listed.size())fail("rail heightmaps missing ("+std::to_string(loaded)+" of "+std::to_string(listed.size())+")");
+  // Wheel collision radii: the truth diameters, not what the world happens to contain.
+  const YAML::Node truth=YAML::Load(config_text)["truth"];
+  auto radius=[&](const std::string& link,bool sphere)->double{
+    const auto* g=CollisionGeometry(ecm,car.Entity(),link,"tread_contact");
+    if(!g)fail("collision of "+link);
+    if(sphere){if(!g->SphereShape())fail(link+" is not a sphere");return g->SphereShape()->Radius();}
+    if(!g->CylinderShape())fail(link+" is not a cylinder");return g->CylinderShape()->Radius();};
+  for(const char* link:{"odometer_wheel","wheel_1","wheel_2","wheel_3"})
+    if(std::abs(radius(link,false)-truth["wheel_diameter_m"].as<double>()/2)>1e-12)fail("running wheel radius "+std::string(link));
+  for(const char* side:{"left","right"})
+    if(std::abs(radius(std::string("measure_")+side+"_wheel",true)-truth[std::string("odo_")+side+"_diameter_m"].as<double>()/2)>1e-12)
+      fail(std::string("measuring wheel radius (")+side+"): world and truth diameter differ; regenerate the world");
+  // Measuring-wheel slides as recorded (preload, rate, damping, travel).
+  for(const auto& [name,j]:manifest.at("expected").at("joints").items()) {
+    if(name.size()<6||name.substr(name.size()-6)!="_slide")continue;
+    const auto joint=car.JointByName(ecm,name);
+    const auto* axis=joint==gz::sim::kNullEntity?nullptr:ecm.Component<gz::sim::components::JointAxis>(joint);
+    if(!axis)fail("missing "+name);
+    const auto& a=axis->Data();
+    auto near=[](double x,double y){return std::abs(x-y)<=1e-9*std::max(1.,std::abs(y));};
+    if(!near(a.SpringStiffness(),j.at("stiffness"))||!near(a.Damping(),j.at("damping"))||!near(a.SpringReference(),j.at("reference"))||
+       !near(a.Lower(),j.at("lower"))||!near(a.Upper(),j.at("upper")))fail("spring of "+name);
+  }
+  return images;
+}
+
+// Archive the physical inputs with the run, so later validation does not depend on the demo folder.
+inline void SnapshotPhysical(const std::filesystem::path& world,const std::filesystem::path& config,
+                             const std::vector<std::string>& images,const std::filesystem::path& destination) {
+  namespace fs=std::filesystem;
+  fs::create_directories(destination);
+  auto copy=[&](const fs::path& from){if(fs::exists(from))fs::copy_file(from,destination/from.filename(),fs::copy_options::overwrite_existing);};
+  copy(world.parent_path()/"physical_manifest.json");copy(world);copy(config.parent_path()/"spec.yaml");copy(config);
+  for(const auto& image:images)copy(image);
+  if(!images.empty()) {
+    const fs::path track=fs::path(images.front()).parent_path();
+    copy(track/"rail_irregularity.json");copy(track/"rail_profile.npz");
+  }
 }
 }  // namespace ssb_gazebo

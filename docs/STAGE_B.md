@@ -58,6 +58,7 @@ python3 tools/prepare_contact_demo.py --output local_data/stage_b/NEW_DEMO \
 
 - `--track-chord-mm {0,2,5}`：竖向不平顺档位（10 m 弦最大矢度），0 为平直轨；`--track-seed` 设定随机种子。
 - `--track-cross-level-mm {0,2,4}`：左右差动（水平）档位，水平最大值和 5 m 三角坑都不超过该值；默认 0。会产生横滚和翘轮，见 §11。
+- `--odo-truth-mm 左 右`、`--odo-calibration-mm 左 右`：测量轮真实直径与标定直径（默认都为标称 80 mm），用于轮径误差实验。世界按真实直径生成；事后改配置不重建世界会被物理检查拒绝。
 - `--wheel-deflection-mm`：聚氨酯轮静压缩量，默认 0.2，不低于 0.15；0 为刚性轮。会在 DART 中自动标定刚度（需在已 `source /opt/ros/jazzy/setup.bash` 的环境中运行）。
 - 沿用现行演示的配置和标定时，光学签名不变（签名不含轨道和车轮），可直接复用标定，不必重新渲染标靶。
 
@@ -377,7 +378,7 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 - 剖面与高度场：`ssb_tools.rail_irregularity`；
 - 轨道生成：`stage_b_track.replace_track`；
 - 车轮弹簧与标定：`stage_b_robot.wheel_compliance`、`ssb_tools.wheel_stiffness`；
-- 一致性检查：插件 `world_check.hpp`、验收器 `validate_contact` 和 `validate_stage_b`。
+- 一致性检查：物理清单与检查 `ssb_tools.physical_world`（采集前、采集后），插件 `world_check.hpp`（启动时），验收器 `validate_contact` 和 `validate_stage_b`（用会话里的物理快照）。
 
 **生成内容**：`world/track/` 下有 `rail_profile.npz`（5 mm 网格剖面）、`rail_irregularity.json`（档位、种子、均方根、10 m 弦最大值、最大坡度、各段高度场哈希）和 `rail_top_{left,right}_XX.png`（每根钢轨每段一张 16 位高度场）。剖面文件存左右两根钢轨，记录中另有水平最大值、5 m 和 0.7 m 基长扭曲最大值。它们都是仿真真值，重建不得读取。
 
@@ -404,7 +405,7 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 - 车轮始终不卸载，所有工况都通过 `validate_contact` 的全部检查。
 - 车体响应对车轮刚度几乎不敏感：激励频率（几 Hz）远低于悬挂固有频率，车体基本按几何关系跟随轨面。
 - 参考值取刚性圆盘在剖面上的准静态位置（半径 0.1 m 的车轮会跨过短波谷底）。
-- 起步前 1.5 s 内偏差较大（最大约 1.3 mrad），原因是车体以平直姿态放到轨道上，静置时轮轨静摩擦锁住了一点预应力，开动后释放；首行曝光在此之后。
+- 起步阶段：车体以平直姿态放到轨道上，静置时轮轨静摩擦锁住一点预应力，开动后释放。稳定段判据从 1.5 s 起算；但首行曝光在约 1.05 s（扫描头进入门控时），1.05–1.5 s 的误差单独报告（`startup`），不作通过判据。刚性轮时这段偏差最大约 1.3 mrad；现行 0.2 mm 柔性下，升沉 16 µm、俯仰 6 µrad、横滚 13 µrad（默认演示）。
 - 编码器读的是轮轨接触点的走行，与后轴实际行程相差约 0.02%。
 - 19 m 行程（5 mm 档、0.2 mm）稳定：俯仰范围 12.2 mrad，编码器多计 0.45 mm，滑移 99% 分位 0.74 mm/s，车轮载荷为静载的 41%–124%。
 
@@ -418,7 +419,7 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 | 车体跟随轨面（有起伏时） | 起步后俯仰和横滚偏差都小于 1 mrad；有水平分量时，支撑高度和本项只取四轮都受载的时段 |
 | 车轮始终受载（有柔性、无水平分量时） | 悬挂压缩量始终大于零；有水平分量时改为报告各轮卸载比例和预测比例 |
 | 静压缩量（有柔性时） | 与目标值相差不超过 2% |
-| 钢轨剖面与真值一致 | 给出世界文件时，逐点比对高度场与重新生成的剖面 |
+| 物理世界与真值一致 | 在会话的物理快照上重做全部物理检查：两轨齐全并覆盖全长、位置姿态尺寸、文件哈希、逐段剖面（该段量化容差）、重叠区、车轮半径、弹簧 |
 | 测量轮贴轨（接触模式） | 测量轮中心与钢轨剖面上刚性圆盘的高度差小于 0.1 mm，滑块离行程限位至少 1 mm |
 
 ```bash
@@ -456,9 +457,10 @@ python3 -m ssb_tools.validate_contact SESSION_dynamics --config CAPTURE.yaml --w
 水平取 2 mm，与竖向档位同一依据（GB/T 50299 新线验收：高低、水平 ≤2 mm）；4 mm 是运营线综合维修限值，代表状态偏差的线路。3 m 演示路段轴距扭曲 0.59 mm，承重轮不卸载；19 m 行程会有约 16% 的时间一轮卸载，里程不受影响（见上表）。
 
 验收会话 `sessions/default_acceptance`：
-- 采集：284443 行，动力学实时率 1.00、成像实时率 0.994（无 GUI）。
-- 阶段 B 验收器 24 项全部通过，含二进制与源码一致、333 行批次重放逐字节一致。
-- 接触验收 15 项全部通过：编码器与行程相差 −0.11 mm，车体升沉 1.94 mm、俯仰 2.74 mrad、横滚 0.90 mrad，18 段钢轨高度场逐点核对通过。
+- 采集：284443 行，动力学实时率 1.00、成像实时率 0.993（无 GUI）。
+- 阶段 B 验收器 24 项全部通过，含二进制与源码一致、333 行批次重放逐字节一致、物理世界与真值一致（会话快照）。
+- 接触验收 15 项全部通过：编码器与行程相差 −0.11 mm，车体升沉 1.98 mm、俯仰 2.75 mrad、横滚 0.89 mrad，测量轮贴轨误差 67 µm（对角翻转瞬间），18 段钢轨高度场的物理检查 10 项通过，重叠区差 0.05 µm。
+- 起步段（首行曝光 1.054 s 至 1.5 s）单独报告：升沉 16 µm、俯仰 6 µrad、横滚 13 µrad。
 
 平直轨演示可用 `--track-chord-mm 0 --track-cross-level-mm 0 --wheel-deflection-mm 0` 重新生成。
 

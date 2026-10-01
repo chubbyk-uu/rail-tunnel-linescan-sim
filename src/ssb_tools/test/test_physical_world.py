@@ -1,0 +1,136 @@
+import copy
+import shutil
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+import numpy as np
+import pytest
+import yaml
+from PIL import Image
+
+from ssb_tools.physical_world import check
+from ssb_tools.stage_b_scene import load_spec, make_world
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(scope='module')
+def built(tmp_path_factory):
+    """A generated contact world with 2 + 2 mm rail irregularity, sprung and measuring wheels."""
+    config = yaml.safe_load((ROOT/'src/ssb_core/config/stage_b.yaml').read_text())
+    spec = load_spec(ROOT/'src/ssb_tools/config/stage_b_scene.yaml')
+    config['tunnel'].update(x_min_m=0., x_max_m=12.)
+    config['robot'] = {'base_reference_z_m': .3, 'scan_axis_height_m': 1.715}
+    config['contact'] = {'enabled': True, 'settle_s': .5}
+    config['motion']['start_x_m'] = 3.
+    for section in ('truth', 'calibration'):
+        config[section].update(odo_left_diameter_m=.08, odo_right_diameter_m=.08)
+    config['truth']['track_irregularity'] = dict(model='beijing_subway_vertical_v1', chord10_max_m=.002,
+                                                 cross_level_tier_m=.002, seed=20261001, band_m=[.5, 10.],
+                                                 common_mode=False)
+    config['truth']['wheel_compliance'] = dict(static_deflection_m=.0002, damping_ratio=.2,
+                                               stiffness_n_m=2.9e6, damping_n_s_m=3300.)
+    folder = tmp_path_factory.mktemp('world')
+    make_world(folder, config, spec)
+    return folder, config, spec
+
+
+def clone(built, tmp_path):
+    """Independent copy (world, manifest and heightmaps) so a test may tamper with it."""
+    folder, config, spec = built
+    copy_dir = tmp_path/'world'
+    shutil.copytree(folder, copy_dir)
+    world = copy_dir/'world.sdf'
+    world.write_text(world.read_text().replace(str(folder.resolve()), str(copy_dir.resolve())))
+    return copy_dir, copy.deepcopy(config), spec
+
+
+def failed(report):
+    return {name for name, c in report['checks'].items() if not c['passed']}
+
+
+def edit_world(folder, change):
+    tree = ET.parse(folder/'world.sdf'); change(tree.getroot()); tree.write(folder/'world.sdf')
+
+
+def test_generated_world_passes_every_check(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    report = check(config, spec, folder/'world.sdf')
+    assert report['passed'], failed(report)
+    assert report['checks']['rail_profile_matches_configuration']['count'] == 2*report['checks']['rail_coverage']['rails']['left']['spans']
+    assert report['checks']['rail_overlap_surfaces']['max_difference_m'] < 1e-7   # shared samples, own quantization
+
+
+def test_missing_rail_is_rejected(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    def drop_left(root):
+        world = root.find('world')
+        for m in list(world.findall('model')):
+            if m.get('name').startswith('rail_surface_left_'): world.remove(m)
+    edit_world(folder, drop_left)
+    assert {'rail_models_complete', 'rail_coverage', 'rail_files_match_manifest'} <= failed(check(config, spec, folder/'world.sdf'))
+
+
+def test_missing_middle_segment_is_rejected(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    edit_world(folder, lambda root: root.find('world').remove(root.find("world/model[@name='rail_surface_right_01']")))
+    assert {'rail_models_complete', 'rail_coverage'} <= failed(check(config, spec, folder/'world.sdf'))
+
+
+@pytest.mark.parametrize('index,delta,expected', [(1, .1, 'rail_placement'), (5, .01, 'rail_placement')])
+def test_moved_or_rotated_segment_is_rejected(built, tmp_path, index, delta, expected):
+    folder, config, spec = clone(built, tmp_path)
+    def move(root):
+        pose = root.find("world/model[@name='rail_surface_left_01']/pose")
+        values = [float(v) for v in pose.text.split()]; values[index] += delta
+        pose.text = ' '.join(map(str, values))
+    edit_world(folder, move)
+    result = failed(check(config, spec, folder/'world.sdf'))
+    assert expected in result and 'rail_files_match_manifest' in result
+
+
+def test_changed_seed_without_regeneration_is_rejected(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    config['truth']['track_irregularity']['seed'] = 7
+    assert {'manifest_matches_configuration', 'rail_profile_matches_configuration'} <= failed(check(config, spec, folder/'world.sdf'))
+
+
+def test_edited_heightmap_image_is_rejected(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    path = folder/'track/rail_top_right_02.png'
+    data = np.asarray(Image.open(path)).copy(); data[:, 40] = np.minimum(data[:, 40].astype(int)+3000, 65535)
+    Image.fromarray(data.astype(np.uint16), mode='I;16').save(path)
+    assert {'rail_files_match_manifest', 'rail_profile_matches_configuration'} <= failed(check(config, spec, folder/'world.sdf'))
+
+
+def test_changed_wheel_diameter_without_regeneration_is_rejected(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    config['truth']['odo_left_diameter_m'] = .081
+    assert {'manifest_matches_configuration', 'wheel_radii_match_truth'} <= failed(check(config, spec, folder/'world.sdf'))
+
+
+def test_changed_spring_is_rejected(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    edit_world(folder, lambda root: root.find(".//joint[@name='measure_right_slide']/axis/dynamics/spring_stiffness")
+               .__setattr__('text', '2500'))
+    assert 'springs_match_configuration' in failed(check(config, spec, folder/'world.sdf'))
+
+
+def test_flat_world_for_an_irregular_configuration_is_rejected(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    def drop_rails(root):
+        world = root.find('world')
+        for m in list(world.findall('model')):
+            if m.get('name').startswith('rail_surface_'): world.remove(m)
+    edit_world(folder, drop_rails)
+    result = failed(check(config, spec, folder/'world.sdf'))
+    assert {'rail_models_complete', 'rail_coverage', 'rail_profile_matches_configuration'} <= result
+
+
+def test_partial_range_heightmap_is_rejected(built, tmp_path):
+    # gz stretches each image's own pixel range over the size height: a partial range moves the rail.
+    folder, config, spec = clone(built, tmp_path)
+    path = folder/'track/rail_top_left_01.png'
+    data = np.asarray(Image.open(path)).astype(float)
+    Image.fromarray(np.rint(5000+data*.5).astype(np.uint16), mode='I;16').save(path)
+    assert 'rail_profile_matches_configuration' in failed(check(config, spec, folder/'world.sdf'))
