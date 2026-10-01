@@ -30,9 +30,13 @@ TWIST_BASE_M = 5.         # DB11/T 718-2016 static twist base
 INSPECTION_SPEED_M_S = 12.5
 CHORD_M = 10.
 GRID_M = .005             # fine synthesis grid
-SEGMENT_MAX_M = 12.5      # one native heightmap per segment; tunnel length only adds segments
+# Heightmaps must be square 2^n+1 images, so the rows across the 73 mm rail head equal the
+# columns along it. Collision cost scales with the cells under each wheel: 513-sample, 12 m
+# segments cost ~0.45 ms per 1 ms step (6 wheels); 129-sample, 3 m segments keep the same
+# ~23 mm spacing along the rail at about a fifth of the cost. Length only adds segments.
+SEGMENT_MAX_M = 3.0       # one native heightmap per segment
 SEGMENT_OVERLAP_M = .5    # identical heights in the overlap, so the wheel sees no seam
-SEGMENT_SAMPLES = 513     # 2^n+1 square image required by gz-physics/DART
+SEGMENT_SAMPLES = 129     # 2^n+1 square image required by gz-physics/DART
 # gz-physics/DART spreads the N samples over size*(N-1)/N, not size (measured: a 513-sample,
 # 10 m ramp reports a +/-4.99025 m AABB and heights match x*513/512). SDF sizes are stretched by
 # N/(N-1) so the physical sample spacing is the intended span/(N-1).

@@ -85,7 +85,7 @@ to `SESSION/processed/optical/` without changing the raw data.
 Optional rail irregularity — vertical (flat / 2 mm / 5 mm, Beijing Subway spectrum shape) and
 cross-level/twist (0 / 2 / 4 mm) — and polyurethane wheel compliance are generated into the world with
 `tools/prepare_contact_demo.py` (`--track-chord-mm`, `--track-cross-level-mm`, `--wheel-deflection-mm`);
-the default demo uses the 2 mm vertical tier, no cross-level, and 0.2 mm wheel deflection.
+the default demo uses the 2 mm vertical and 2 mm cross-level tiers and 0.2 mm wheel deflection.
 In contact mode the odometry encoders sit on two spring-loaded 80 mm measuring wheels behind the rear axle
 (one per rail), so running-wheel lift on a twisted track does not reach the odometer.
 Details, asset regeneration, replay and validation: [docs/STAGE_B.md](docs/STAGE_B.md).

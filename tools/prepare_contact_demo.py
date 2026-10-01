@@ -28,9 +28,10 @@ def main():
     p.add_argument('--output',required=True,type=Path)
     p.add_argument('--calibrate',action='store_true',help='render independent targets and fit this demo rig')
     p.add_argument('--calibration',type=Path,help='reuse a compatible measured calibration')
-    p.add_argument('--geometry',type=Path,
-                   help='replace the optical/GUI lining meshes with this prepare_stage_b_scene output (same layout); '
-                        'optical settings, key and calibration are kept (meshes are not part of the optical signature)')
+    p.add_argument('--geometry',type=Path,default=REPO/'local_data/stage_b/geometry_b2_v5',
+                   help='lining meshes (prepare_stage_b_scene output, same layout) replacing those the source scene and '
+                        'world name; optical settings, key and calibration are kept (meshes are not in the optical '
+                        'signature). Default: the watertight geometry_b2_v5')
     p.add_argument('--track-chord-mm',type=float,choices=(0.,2.,5.),default=0.,
                    help='vertical rail irregularity tier: max 10 m mid-chord offset (0 = flat rails)')
     p.add_argument('--track-cross-level-mm',type=float,choices=(0.,2.,4.),default=0.,
@@ -83,10 +84,14 @@ def main():
             for child in node:resolve(child)
     resolve(scene)
     replaced={}
-    if a.geometry:
-        geometry=a.geometry.resolve();audit=json.loads((geometry/'mesh_audit.json').read_text())
+    geometry=a.geometry.resolve() if a.geometry else None
+    if geometry and not geometry.is_dir() and a.geometry!=p.get_default('geometry'):
+        p.error(f'--geometry {a.geometry} does not exist')
+    meshes=[m for m in scene.get('meshes',[]) if geometry and (geometry/Path(m['file']).name).is_file()]
+    if meshes:
+        audit=json.loads((geometry/'mesh_audit.json').read_text())
         if audit['leaks']['edges']:raise ValueError('replacement geometry has light leaks')
-        for mesh in scene['meshes']:
+        for mesh in meshes:
             new=geometry/Path(mesh['file']).name
             replaced[mesh['file']]=str(new);mesh['file']=str(new);mesh['sha256']=digest(new)
         scene['geometry_replacement']=dict(folder=str(geometry),manifest_sha256=digest(geometry/'manifest.json'),

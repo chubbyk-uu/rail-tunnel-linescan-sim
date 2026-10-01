@@ -8,7 +8,8 @@ import pytest
 import yaml
 
 from ssb_tools.rail_irregularity import (chord_offsets, cross_shape, decode_heightmap, profile, rails, segments,
-                                         settings, shape, twist, SEGMENT_MAX_M, SEGMENT_OVERLAP_M)
+                                         settings, shape, twist, SDF_SIZE_FACTOR, SEGMENT_MAX_M,
+                                         SEGMENT_OVERLAP_M)
 from ssb_tools.stage_b_scene import load_spec
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -102,7 +103,7 @@ def test_segments_overlap_and_stay_bounded(length):
     for (a0, a1), (b0, b1) in zip(parts, parts[1:]):
         assert a1-b0 == pytest.approx(SEGMENT_OVERLAP_M)
     assert max(b-a for a, b in parts) <= SEGMENT_MAX_M+1e-9
-    assert len(parts) == (2 if length == 23 else 5)
+    assert len(parts) == (9 if length == 23 else 21)
 
 
 def _with(config, **values):
@@ -118,7 +119,7 @@ def test_track_heightmaps_match_profile_and_lower_guide_faces(tmp_path, inputs):
     world = ET.Element('world'); ET.SubElement(world, 'model', name='track')
     replace_track(world, tmp_path, c, spec)
     surfaces = [m for m in world.findall('model') if m.get('name').startswith('rail_surface_')]
-    assert len(surfaces) == 4 and len(world.findall("model[@name='track']")) == 1
+    assert len(surfaces) == 2*len(segments(c['tunnel']['x_min_m'], c['tunnel']['x_max_m'])) and len(world.findall("model[@name='track']")) == 1
     x, left, right, _ = rails(c)
     z = np.minimum(left, right)
     record = yaml.safe_load((tmp_path/'track/rail_irregularity.json').read_text())
@@ -135,8 +136,8 @@ def test_track_heightmaps_match_profile_and_lower_guide_faces(tmp_path, inputs):
         assert model.get('name') == f"rail_surface_{entry['rail']}_{entry['file'][-6:-4]}"
         assert np.sign(py) == (1 if entry['rail'] == 'left' else -1)
         # DART spreads N samples over size*(N-1)/N: the SDF size is stretched to compensate.
-        assert px == pytest.approx(sum(entry['x_m'])/2) and sx*512/513 == pytest.approx(entry['x_m'][1]-entry['x_m'][0])
-        assert pz == pytest.approx(entry['z_m'][0]) and sy*512/513 == pytest.approx(spec['track']['head_width_m'])
+        assert px == pytest.approx(sum(entry['x_m'])/2) and sx/SDF_SIZE_FACTOR == pytest.approx(entry['x_m'][1]-entry['x_m'][0])
+        assert pz == pytest.approx(entry['z_m'][0]) and sy/SDF_SIZE_FACTOR == pytest.approx(spec['track']['head_width_m'])
         assert model.findtext('link/collision/geometry/heightmap/pos') == '0 0 0'
     # The validator decodes both rails from the world alone; swapped rails are detected.
     from ssb_tools.validate_contact import rail_profile_matches_world

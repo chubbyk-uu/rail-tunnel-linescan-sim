@@ -34,7 +34,7 @@ tools/run_gz_gui.sh SESSION path/to/capture.yaml   # 其他演示目录，世界
 
 1. 启动前用 `ssb_optical_identity` 检查配置与标定的光学身份，不匹配就不启动 Gazebo。可用 `SSB_OPTICAL_CALIBRATION` 指定另一份标定。
 2. 服务器和 GUI 分别启动，初始暂停，点击 Play 开始。
-3. 先静置 2 s，然后车体从 x=3 m 按缓起停剖面行驶 3 m（0.2 m/s、20 rpm、28.444 kHz）。轨道带 2 mm 档竖向起伏，车轮带 0.2 mm 静压缩量的聚氨酯柔性（§11）。
+3. 先静置 2 s，然后车体从 x=3 m 按缓起停剖面行驶 3 m（0.2 m/s、20 rpm、28.444 kHz）。轨道带 2 mm 档竖向起伏和 2 mm 档水平（差动）分量，车轮带 0.2 mm 静压缩量的聚氨酯柔性，测量轮编码（§11）。
 4. 关闭 GUI 后，脚本停止服务器、等待数据全部落盘，用 `tools/check_session.py` 检查完整性，只保留原始图像；畸变校正和平场补偿在拼接前另行执行（§6）。
 
 日志在 `local_data/gui_logs/<时间>/`。WSL 下需要私有 Mesa（`SSB_MESA_PREFIX`，默认 `~/opt/agv-mesa-25.2.8/install`），启动器是 `tools/with_mesa_runtime.py`。
@@ -82,7 +82,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
 | 相机 | 4096 像素、7.04 μm，90 mm 镜头对焦 2.75 m，视场 0.852 m；8 μs 曝光；k1=0.006 枕形畸变 | `capture.yaml` |
 | 采样档位 | 背景走解析路径，3 个曝光时刻，2×2 纹理足迹积分；临界几何每时刻 16 条 N 车射线；复杂裂缝每时刻 64 条（可选 32 性能档）；自适应关闭 | `stage_b_optics --integrated --area-samples 16 --area-pattern rooks --time-samples 3` |
 | 机器人 | 120 kg；前驱、后轮从动，两个测量轮（80 mm，竖直滑轨，预压 30 N）带编码器，四个导向轴承；底座 0.3 m、轴高 1.715 m | `capture.yaml` 的 `robot`、`contact`；`world.sdf` |
-| 轨道起伏 | 现行演示为 2 mm 档北京地铁谱竖向起伏（种子 20261001）；可选平直或 5 mm，以及 2 / 4 mm 水平分量（§11） | `capture.yaml` 的 `truth.track_irregularity`；`world/track/rail_top_*.png` |
+| 轨道起伏 | 现行演示为 2 mm 档北京地铁谱竖向起伏加 2 mm 档水平分量（种子 20261001）；竖向可选平直或 5 mm，水平可选 0 或 4 mm（§11） | `capture.yaml` 的 `truth.track_irregularity`；`world/track/rail_top_*.png` |
 | 车轮柔性 | 现行演示为聚氨酯轮柔性，静压缩量 0.2 mm（标定 SDF 刚度 2.86×10⁶ N/m）；可选 0.15/0.4 mm 或刚性轮（§11） | `capture.yaml` 的 `truth.wheel_compliance` |
 | 纹理预算 | OptiX GPU 2 GiB、CPU 1 GiB；GUI 1280 MiB（现行 140 块约 746 MiB） | `stage_b_scene.yaml` 的 `resources` |
 | GUI 预览 | 同源 Concrete034 分块底色（x=3–6 m 处 1 mm，其余 2 mm），裂缝 4 倍子像素预览；环境散光 0.6；工作灯和条光见 DESIGN §7.5 | `gui_c034_v1`、`gui_strip_shadow_final_v10` |
@@ -134,7 +134,7 @@ python3 tools/prepare_contact_demo.py --world $OUT/NEW_GUI_LIGHT/world.sdf \
 说明：
 
 - 第 3 步生成网格后自动做漏光审计（`ssb_tools.mesh_audit`，结果写入 `mesh_audit.json`）：全部板缝已填时，只要有一处从隧道内能看到背衬就判失败。
-- 只换衬面网格、保留光学设置和标定时，给第 6 步加 `--geometry $OUT/NEW_GEOMETRY`（网格不在光学签名内）。现行默认演示就是这样从 `geometry_b2_v5` 派生的。
+- 第 6 步的 `--geometry` 默认为 `geometry_b2_v5`：源场景和源世界里引用的衬面网格会被替换，光学设置和标定保留（网格不在光学签名内）。换新几何时指向 `$OUT/NEW_GEOMETRY`。旧网格 `geometry_b2_v4` 已删除，`gui_optics_v11` 和 `gui_strip_shadow_final_v10` 里对它的引用只能经由这个替换使用。
 - 新生成的裂缝索引用 double 端点格式（`xq64_radius32_le`，20 m 场景约 35 MB，预算 64 MiB）。现行 `defects_dev_v5` 是旧 float 格式，3 m 演示精度足够。
 - 重新生成会得到新的资产哈希和新的光学密钥，旧标定随之失效，必须重新标定。
 - 重复度可独立测量：`python3 -m ssb_tools.stage_b_repetition --surface SURFACE.json --area 0 21 -6 6 --size 3 --windows 150`。
@@ -195,7 +195,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply --sessio
 
 ## 7. 当前验收结果（2026-10-01）
 
-最终采集 `sessions/review_portable_gui_final`，用的是移动到新目录后的可移植资产包，GUI 开启、光晕关闭：
+最终采集 `sessions/review_portable_gui_final`（原始数据已于第二次清理删除，见 §10.1），用的是移动到新目录后的可移植资产包，GUI 开启、光晕关闭：
 
 | 项目 | 结果 |
 |---|---|
@@ -275,7 +275,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_review \
 - 车载工作灯只在 GUI 中照明，采集中只以 0.002 弱补光近似；没有多次反射，没有绝对光度标定。
 - 没有镜头 MTF、离焦和噪声；暗场为零。
 - 背景只有一块 0.57 m² 素材，重复只能控制、不能消除。全区 4200 个窗口的高通互相关中位数 0.20，>0.8 的占 0.4%，拼接端需要做峰值唯一性防护。
-- 衬面网格的漏光问题已修复（2026-10-01）。旧网格 `geometry_b2_v4` 审计出 59409 条漏光边，缝宽在 30 µm 以内，分为四类：管片与环缝倒圆角之间的 T 形接点、砂浆边缘与折线侧壁之间的缝、纵缝与环缝交汇补片的接口，以及少量管片与纵缝倒圆角的接口。漏过的子射线平时打在背衬上；碰上渲染器 2 m 分块接缝时会完全打空，导致整批拒绝。修复内容：
+- 衬面网格的漏光问题已修复（2026-10-01）。旧网格 `geometry_b2_v4`（已删除）审计出 59409 条漏光边，缝宽在 30 µm 以内，分为四类：管片与环缝倒圆角之间的 T 形接点、砂浆边缘与折线侧壁之间的缝、纵缝与环缝交汇补片的接口，以及少量管片与纵缝倒圆角的接口。漏过的子射线平时打在背衬上；碰上渲染器 2 m 分块接缝时会完全打空，导致整批拒绝。修复内容：
   - 管片按相邻倒圆角的实际顶点三角化；
   - 砂浆按侧壁实际折线定宽，并伸入侧壁后 50 µm；
   - 交汇补片的接缝下铺隐藏衬垫；
@@ -289,7 +289,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_review \
 
 1. 阶段 C：完整 20 m 采集，包括覆盖图、资源和吞吐报告，以及 20 m 场景的 double 格式裂缝索引。
 2. 阶段 D：展开、重叠匹配、全局优化、分块重采样。
-3. 隧道加长到 50 m：高度场已按段生成（50 m 约 5 段），其余资产需重新生成并复测资源与实时率。
+3. 隧道加长到 50 m：高度场已按段生成（50 m 每根钢轨约 21 段），其余资产需重新生成并复测资源与实时率。
 4. 按需加入：裂缝几何凹陷参考、机器人遮挡、镜头退化、未填/破损板缝的新模型、弯轨、轨向不平顺。
 
 ## 10. RViz 与任务控制
@@ -348,7 +348,17 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 
 ### 10.1 临时测试数据清理（2026-10-01）
 
-本轮已清理临时任务原始图像、重放副本、过期任务输入和日志，以及 560 个未被现行世界引用的 RViz 缓存文件，释放约 86.04 GiB 已分配磁盘空间。保留现行 `contact_demo` 及标定、已接受的画质基线 `sessions/review_portable_gui_final` 和当前 280 个缓存文件。测试报告、必要截图和会话元数据归档到 `local_data/evaluation/mission_ui_20261001_cleanup/`，删除清单见其中 `cleanup.json`；归档不含这些临时任务的原始图像，重放需要重新采集。该本地归档含生成端私有配置，不纳入 Git，也不作为盲重建输入。
+本轮已清理临时任务原始图像、重放副本、过期任务输入和日志，以及 560 个未被现行世界引用的 RViz 缓存文件，释放约 86.04 GiB 已分配磁盘空间。保留现行 `contact_demo` 及标定、已接受的画质基线 `sessions/review_portable_gui_final` 和当前 280 个缓存文件（该基线会话后来在第二次清理中删除，见下）。测试报告、必要截图和会话元数据归档到 `local_data/evaluation/mission_ui_20261001_cleanup/`，删除清单见其中 `cleanup.json`；归档不含这些临时任务的原始图像，重放需要重新采集。该本地归档含生成端私有配置，不纳入 Git，也不作为盲重建输入。
+
+**第二次清理（2026-10-01，用户确认）**：删除旧车型和旧衬面网格时期的数据，共约 15.6 GB：
+- 最终采集 `review_portable_gui_final` 及其重放、动力学记录，可移植资产包 `review_portable_relocated`；
+- 竖向起伏试验 `irr_trials_v2` 及其资产；
+- 默认演示验收的重放副本；
+- 旧车型的任务会话 `sessions/mission` 和 `local_data/mission_runs`；
+- 任务回执回归采集 `mission_audit_fix/capture_regression`；
+- 旧衬面网格 `geometry_b2_v4`。
+
+画质基线以复核页 `final_review_20261001`（含原像素对照图）为准。现存：阶段 A 基线 `sessions/gz_a`、默认演示验收 `sessions/default_acceptance`、测量轮试验 `sessions/measuring_trials`，以及现行演示的全部输入。
 
 ### 10.2 任务数据保留
 
@@ -358,7 +368,7 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 
 132 项 Python 测试通过，包含 1/1.2/3/20 m 的名义验收区、多种初始相位、区内缺行拒绝、畸形输入和满队列回执。真实 Gazebo＋OptiX 的 1 m 暂停/继续和 3 m 完整任务，各经独立重放后通过阶段 B 验收器全部 22 项检查。1 m 任务有效区 [2.11,2.79] m 有 68282 行、零缺行；3 m 任务有效区 [3.11,5.79] m 有 267393 行、零缺行，总行数仍为 284445。起停缓冲区内丢行继续如实报告。
 
-实际 RViz 面板验证了接收端缺失、拒绝回执、管理器断连/重连，以及实际等待 90 s 无回执后重新操作；测试在 91.29 s 检查时已恢复按钮，下一条命令成功接收并回执。报告位于 `local_data/evaluation/mission_audit_fix/capture_regression/report.json` 和 `local_data/evaluation/mission_audit_fix/panel_regression_final/report.json`。回归临时原始数据/重放副本及其私有输入已清理约 4.23 GiB，保留小型配置、报告和必要截图。用户观看的历史会话 `sessions/mission/20261001_145804_982cf426` 保持原配置与哈希，其中原有 [3,6] m 验收区不会追溯修改；修正后的区间用于新生成任务。
+实际 RViz 面板验证了接收端缺失、拒绝回执、管理器断连/重连，以及实际等待 90 s 无回执后重新操作；测试在 91.29 s 检查时已恢复按钮，下一条命令成功接收并回执。报告位于 `local_data/evaluation/mission_audit_fix/panel_regression_final/report.json`（`capture_regression` 已于第二次清理删除）。回归临时原始数据/重放副本及其私有输入已清理约 4.23 GiB，保留小型配置、报告和必要截图。用户观看的历史会话 `sessions/mission/20261001_145804_982cf426`（已于第二次清理删除）保持原配置与哈希，其中原有 [3,6] m 验收区不会追溯修改；修正后的区间用于新生成任务。
 
 ## 11. 轨道不平顺与车轮柔性
 
@@ -441,10 +451,16 @@ python3 -m ssb_tools.validate_contact SESSION_dynamics --config CAPTURE.yaml --w
 
 **高度场长度修正**：gz-physics/DART 把 N 个采样铺在 size×(N−1)/N 的长度上，未补偿时每段两端错位约 11 mm。生成器已按 N/(N−1) 放大 SDF 尺寸（DESIGN §6.1）。本节前面的竖向起伏实测和下面的旧默认演示验收都是在这两项修正和测量轮之前做的。
 
-**默认演示（2026-10-01 起）**：`local_data/stage_b/contact_demo` 为 2 mm 档竖向起伏、无水平分量，0.2 mm 车轮柔性，测量轮编码，衬面网格 `geometry_b2_v5`。它沿用原演示的光学设置、密钥和标定（光学签名不变），用 `--geometry` 换入新网格。验收会话 `sessions/default_mw_acceptance`：
-- 采集：284443 行，成像实时率 0.91、动力学实时率 0.91（无 GUI；换网格和测量轮之前为 0.99，原因未单独测量）。
-- 阶段 B 验收器 24 项全部通过，含二进制与源码一致、333 行批次重放逐字节一致。
-- 接触验收 16 项全部通过：编码器与行程相差 −0.13 mm，测量轮贴轨误差 0.9 µm，车体升沉范围 1.94 mm、俯仰 2.78 mrad。
+**默认演示（2026-10-01 起）**：`local_data/stage_b/contact_demo` 为 2 mm 档竖向起伏加 2 mm 档水平分量，0.2 mm 车轮柔性，测量轮编码，衬面网格 `geometry_b2_v5`。它沿用原演示的光学设置、密钥和标定（光学签名不变），用 `--geometry` 换入新网格。
 
-旧验收会话 `sessions/default_2mm_acceptance*` 对应换网格和测量轮之前的演示，已删除。平直轨演示可用 `--track-chord-mm 0 --wheel-deflection-mm 0` 重新生成。
+水平取 2 mm，与竖向档位同一依据（GB/T 50299 新线验收：高低、水平 ≤2 mm）；4 mm 是运营线综合维修限值，代表状态偏差的线路。3 m 演示路段轴距扭曲 0.59 mm，承重轮不卸载；19 m 行程会有约 16% 的时间一轮卸载，里程不受影响（见上表）。
+
+验收会话 `sessions/default_acceptance`：
+- 采集：284443 行，动力学实时率 1.00、成像实时率 0.994（无 GUI）。
+- 阶段 B 验收器 24 项全部通过，含二进制与源码一致、333 行批次重放逐字节一致。
+- 接触验收 15 项全部通过：编码器与行程相差 −0.11 mm，车体升沉 1.94 mm、俯仰 2.74 mrad、横滚 0.90 mrad，18 段钢轨高度场逐点核对通过。
+
+平直轨演示可用 `--track-chord-mm 0 --track-cross-level-mm 0 --wheel-deflection-mm 0` 重新生成。
+
+**实时率**：加测量轮后物理每步约 0.95 ms，接近 1 ms 步长，采集实时率降到 0.91。原因是钢轨高度场太密：高度场必须是 2ⁿ+1 的正方形，513 点、12 m 一段时，73 mm 宽的轨头上也有 513 行，每个车轮每步要检查几千个格子。改为 129 点、3 m 一段（沿轨仍约 23 mm）后，每步降到 0.49 ms。同一路段离线重放，v5 网格只比 v4 慢约 2%。再降采样收益很小：在默认演示世界中（不含插件），129 点每步 0.36 ms，65 点 0.34 ms，33 点 0.34 ms，平直轨（无高度场）0.16 ms。剩余开销来自车轮与高度场的接触处理，与采样密度无关；65 点以下段数成倍增加，所以保持 129 点。
 
