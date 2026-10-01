@@ -1,12 +1,26 @@
 # Subway scan bot simulation
 
-Tunnel inspection robot with a rotating line-scan camera: Gazebo dynamics, OptiX line
-imaging, and reconstruction of the unrolled tunnel wall. Design and status: [DESIGN.md](DESIGN.md).
+Simulation of a tunnel inspection robot with a rotating line-scan camera. Gazebo runs the
+vehicle dynamics, a custom OptiX backend images every encoder-triggered line, and later
+stages reconstruct the unrolled tunnel wall.
+
+Status (2026-10-01): stage A (geometry and timing) is accepted. Stage B (scene,
+lighting, rail contact, lens calibration) has a validated 3 m capture. The full 20 m
+capture, stitching and the RViz mission UI are not implemented yet.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [DESIGN.md](DESIGN.md) | Design specification: goals, parameters, geometry, timing, optics, reconstruction, stage plan |
+| [docs/STAGE_B.md](docs/STAGE_B.md) | Current stage B scene and assets, commands, calibration, acceptance results, known limits |
+| [docs/DEVELOPMENT_RULES.md](docs/DEVELOPMENT_RULES.md) | Development rules learned from the neighbouring projects |
+| [docs/history/](docs/history/README.md) | Archived development logs, texture study, quality plan, review record, design v0.8 |
 
 ## Build and test
 
-Requires ROS 2 Jazzy (Gazebo Harmonic), CUDA 12.8, OptiX SDK 9.1 at `~/opt/optix-sdk-9.1.0`
-and, on WSL, the isolated OptiX runtime described in 4WIDS_agv `docs/OPTIX_SETUP.md`.
+Requires ROS 2 Jazzy (Gazebo Harmonic), CUDA 12.8, OptiX SDK 9.1 at `~/opt/optix-sdk-9.1.0`,
+and on WSL the isolated OptiX runtime described in 4WIDS_agv `docs/OPTIX_SETUP.md`.
 The OptiX backend is mandatory; configuration fails without it.
 
 ```bash
@@ -17,8 +31,11 @@ colcon build && colcon test && colcon test-result --all
 
 GPU tests run through `tools/with_optix_runtime.sh`, which drops the inherited
 `LD_LIBRARY_PATH`; anything ROS-dependent must be sourced inside the wrapped command.
+The real Gazebo server regression (both plugins, stage A default command, assembly
+mismatch rejection) runs separately:
+`python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression_NEW`.
 
-## Stage A runs
+## Stage A
 
 ```bash
 # Gazebo, headless; the process exits after every row is on disk.
@@ -36,79 +53,26 @@ source install/setup.bash
 ros2 run ssb_tools validate_stage_a sessions/gz_a --compare sessions/rerender
 ```
 
-A stage A session is about 0.9 GB (`sessions/` is not tracked).
-Its explicit assembly heights match `stage_a.sdf`: base 0.25 m, scan axis 1.72 m
-above the base, keeping the optical centre at 1.97 m. The actual default command is
-covered by `python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression`
-(use a new output directory).
+A stage A session is about 0.9 GB. Stage A has no persistent `truth.optical_key`, so its
+`optical_signature` changes on every run and cannot be compared across runs (DESIGN §8.4).
 
-Stage A's analytic baseline has no persistent `truth.optical_key`: each parse
-generates a fresh private key, so its `optical_signature` is a per-run identity,
-not a cross-run optical-condition identifier. Replay acceptance compares raw data,
-not this signature. If stable signatures or reusable optical calibration are needed,
-generate a random key once with `ssb_tools.optical_identity.ensure_optical_key` and
-save it in a private configuration copy; keep that same key for all associated runs.
-
-## Stage B development
-
-The OptiX backend now traces the prepared tunnel triangles with tiled concrete,
-sparse metric cracks, moving strip illumination and pixel/exposure integration.
-The operating speed is 0.2 m/s (20 rpm, 28.444 kHz triggers). The GUI imaging target
-is RTF >= 0.6; improve precision within that constraint. Texture budgets are 2 GiB
-on GPU and 1 GiB on CPU, plus a separate 1280 MiB GUI texture allowance.
-Bind an optical scene with `stage_b_optics --integrated` before capture.
-Commands and remaining Stage B acceptance work: [docs/STAGE_B.md](docs/STAGE_B.md).
-The accepted Concrete034 runtime surface, refined cracks and filled joints are retained.
-The current demo uses rigid wheel/rail friction contact, two front motors, two rear
-encoders and four side guide bearings. Scanning follows estimated rear-wheel travel,
-so calibrated wheel diameter errors change the real scan pitch. Four chassis work lights, offset sideways/down by 15 degrees with 90-degree
-full cones, cast shadows and avoid the nominal instantaneous camera stripe; reflected acquisition light is an explicit weak approximation.
-The scanner preview uses 17 overlapping narrow shadow-casting spots to form the strip,
-so the cradle receives light and blocks the beam. This approximates the custom lens;
-OptiX acquisition retains its separate illumination model.
-The work lamp faces and scanning COB lens emit warm white in the preview. A GUI-only
-lens flare can be enabled with the top-left switch (off at startup) and follows the
-strongest visible source, with direction and occlusion checks;
-it does not change OptiX illumination or raw images.
-
-Prepare a calibrated 3 m demo from the accepted local assets:
-`python3 tools/prepare_contact_demo.py --output local_data/stage_b/contact_demo --calibrate`.
-Then open it with `tools/run_gz_gui.sh` (paused initially).
-Play includes 2 s of settling before capture. Configuration, world and calibration
-are selected together from `local_data/stage_b/contact_demo/`; for another generated
-directory, pass its `capture.yaml` as the second argument (the world and calibration
-are inferred beside it). `SSB_OPTICAL_CALIBRATION` can override the calibration.
-An incompatible or missing calibration fails before Gazebo starts.
-Generated configurations carry a private random HMAC key in `truth`; do not publish
-that section as reconstruction input. Legacy unsigned optical configurations need
-regeneration and recalibration. Historical sessions are retained without alteration.
-
-Large textures and generated assets are not tracked by Git. A fresh checkout needs
-an asset bundle; the preparation command above assumes the accepted historical
-assets are already present on the development machine. Export a self-contained copy:
+## Stage B demo
 
 ```bash
-PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
-  --demo local_data/stage_b/contact_demo --output /tmp/subway_demo_bundle
+tools/run_gz_gui.sh            # opens local_data/stage_b/contact_demo, paused; press Play
 ```
 
-After building a new checkout, copy that directory to
-`local_data/stage_b/contact_demo` and run `tools/run_gz_gui.sh`.
-The bundle includes the calibrated simulation rig and runtime assets with relative
-references and updated dependency hashes. Raw source image names remain provenance
-labels; normalized texture payloads are the runtime inputs. Its `capture.yaml` includes
-private generation truth (including the HMAC key and lens distortion). Sharing this
-bundle shares that truth; it is for generating captures, not for blind reconstruction
-evaluation. Reconstruction should receive only the session's observable inputs.
-On WSL, the private Mesa
-installation is still required (`SSB_MESA_PREFIX`, default
-`~/opt/agv-mesa-25.2.8/install`); the launcher itself is now in this repository.
-OptiX SDK/runtime and ROS remain system prerequisites.
+The demo is a 3 m run on rigid wheel/rail contact (2 s settling, then 0.2 m/s, 20 rpm,
+28.444 kHz line triggers). The launcher checks the optical calibration before starting
+Gazebo. After the GUI closes, it waits for all rows to reach disk, checks the session,
+and writes the dark/flat/geometric correction to `SESSION/processed/optical/`.
+Details, asset regeneration, replay and validation: [docs/STAGE_B.md](docs/STAGE_B.md).
 
-The final GUI run at 0.2 m/s and 64 crack samples achieved imaging RTF 0.994,
-284445 rows over 3 m, no missing rows in the valid region and byte-identical replay.
-A separate 20 m contact-only run passed stability checks; full 20 m reconstruction
-is still subsequent work. See [the acceptance record](docs/STAGE_B.md).
+## Data
 
-镜头畸变与离线校正：Stage B新模板采用假设的+0.6%枕形畸变，使用OptiX标靶影像估计平场和几何映射。
-操作命令、标定结果和输出格式见[Stage B光学校正](docs/STAGE_B.md)。原始Mono8始终保留，校正结果另存。
+`local_data/` (assets) and `sessions/` (captures) are not tracked by Git. A fresh checkout
+needs the demo bundle exported with `ssb_tools.demo_bundle` (docs/STAGE_B.md §2).
+Generated `capture.yaml` files and bundles contain private simulation truth (the HMAC
+optical key and lens distortion): use them to generate captures, never as reconstruction
+input. On 2026-10-01 unused data was removed; the list is in
+`local_data/data_inventory_2026-10-01.tsv`.

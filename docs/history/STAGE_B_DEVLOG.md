@@ -1,0 +1,558 @@
+# 阶段 B 开发记录
+
+阶段 B 已接入实际纹理光学采集，尚未完成本阶段全部验收。20 m 场景已生成；短程采集和离线重放用于检查管线，不能替代完整 20 m 采集及后续拼接优化。
+
+2026-09-29 外观复核发现：GUI 偏暗、GUI 与采集背景细节不足、裂缝折线与均匀暗线感、板缝深槽暗边过强。修正计划见 [STAGE_B_QUALITY_PLAN.md](STAGE_B_QUALITY_PLAN.md)，设计基线更新至 [v0.7](DESIGN_v0.8.md)。2026-09-30 初选 Wall 04 原生 16K 单一主背景；用户查看 B1 样块后反馈仍模糊，要求排查并下载 Concrete030 8K 对照。分级排查和新对照见 [纹理清晰度调查](STAGE_B_TEXTURE_AUDIT.md)。2026-10-01 B1 定稿：只用 Concrete034 作主背景，0.1 mm 生成网格加 2×2 纹理足迹积分，并做重复控制（同方向重合约束、4 种方向、大尺度明暗层），用户认为重复感可以接受；GUI 成像实时率 0.994（`sessions/b_c034_DC4_g10_v1`）。下述“当前实现”的 2K/1 mm 资产、0.35 环境光及未填槽均是当前实现记录，不是新版质量验收结果。
+
+### B1 高清背景样块（2026-09-30，Wall 04 阶段；已被 Concrete034 取代，定稿见纹理清晰度调查）
+
+B1 的 Concrete034 背景已由用户复核；B2 板缝、裂缝及后续审核修正已实现。现行裂缝模型为 `cavity_v2`，有效深度整体乘 0.8。GUI 默认采集入口为 `optics_b3_quality64`；已接入同源Concrete034分块底色和裂缝预览，环境散光提高到1.0。B3联合性能与外观复核尚待完成。以下旧参数和旧性能数据按历史版本解读。
+
+- 经环境代理下载 Wall 04 的底色、NormalGL 和粗糙度，均为 16384²、16 位原生 PNG，总下载约 2.626 GB，约 71.8 s；底色/法线原文件带 alpha，准备时使用 RGB 内容，不改变物理映射尺度。逐通道 libvips 顺序解码、128 行浮点处理、磁盘映射输出，源打包 2 GiB，准备主进程 RSS 峰值约 519 MiB、耗时约 144.6 s。默认准备工作集上限 4 GiB，解码子进程另有 64 MiB libvips 缓存限制。
+- 新 `stage_b_runtime_surface` 输出 `ssb.surface_runtime.v1`：原生源、固定裁片布局及混合掩码。`SurfaceRecipe` 提供 CPU 参考，`CudaSurfaceRecipe` 在 GPU 生成当前曝光需要的 1024 核心块，接入原有有界缓存，保持反照率16/粗糙度8/双分量法线16的格式。源及配方单独占约 2.002 GiB 显存，局部块另计，不与 2 GiB 生成块预算混算。源码位于 `ssb_core/src/surface_recipe.cpp` 和 `ssb_core/src/optix/surface_recipe.cu`。
+- 背景网格仍覆盖 23 m 全圆周，虚拟纹理间距约 0.2 mm、113×85 个逻辑块（2026-09-30 起改为等于源纹素间距约0.1953 mm、115×87 块，见[原生对齐生成网格](STAGE_B_TEXTURE_AUDIT.md#原生对齐生成网格2026-09-30)）；**没有物化保存这 9605 个高清块**。布局约 0.8 m 裁片、0.2 m 重叠，5 m 复用距离内拒绝原生裁片中心小于 0.08 m 的重用；这是单来源布局的初始约束，不是已通过全局特征重复度验收。20 mm 引导图用于拼接布局及混合遮罩；底色/法线/粗糙度的细节从原生16K源采样。后续排查发现遮罩羽化尺度约13 mm，局部混合过宽，须另行修正，不能因通道数值一致就认为视觉质量通过。
+- 六个首尾/中部块经 C++ CPU 与独立 NumPy float64 对照，GPU 各通道最多差 1 个量化单位；部分末块、周期冗余正确，未混合单片底色对原生插值误差约 0.027/65535。GPU 单块生成约 0.59–1.84 ms（本次短测）。合成夹具另验证八种方向、法线变换、源哈希拒绝、逐出重建及不同分批结果。
+- 0.2 m/s、20 rpm、28.444444 kHz、8 μs 曝光，以平滑曲面和相同条光生成三档底色样块，每档4096×5927像素，周向约1.2 m、每行轴向约0.852 m；该运动使图像保持螺旋行排列。原亮度/×0.8/×0.65 的平均灰度约190.2/152.2/123.6；后两档无饱和。亮度变化用对已打包×0.8底色的等效、截断前增益实现，未做网页增强。源材质自带的痕迹是背景，不含人工裂缝宽度真值。
+- 同一16K源、同一布局和同一照明的1 mm间距对照显示明显软化；与三源2K旧场景不同，不能称为逐像素相同内容的2K对照。实际样块改为333行批次后，图像与交点文件逐字节一致。完整无人工缺陷曲面短探测约5.7–6.0万行/秒；统计从初始化后开始，不含Gazebo/GUI/完整编码器会话，不当作全链RTF验收。
+
+结果 `local_data/stage_b/b1_wall04_16k/b1_results.json`，原生源哈希 `source/downloads.json`，块对照 `recipe_validation/`，原始PGM与参数 `optical_samples/`，查看页 `review/index.html`。未锐化/去噪，100%原始行与完整PNG可查看。准备命令：
+
+```bash
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_runtime_surface fetch \
+  --resolution 16k --output local_data/stage_b/b1_wall04_16k/source
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_runtime_surface prepare \
+  --downloads local_data/stage_b/b1_wall04_16k/source/downloads.json \
+  --config src/ssb_core/config/stage_b.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --brightness 0.8 --texel-m 0.0002 \
+  --output local_data/stage_b/b1_wall04_16k/runtime_surface
+bash tools/with_optix_runtime.sh install/ssb_core/lib/ssb_core/ssb_recipe_probe \
+  --surface local_data/stage_b/b1_wall04_16k/runtime_surface/surface.json \
+  --tiles 0,112,9492,9604,4999,5000 \
+  --output local_data/stage_b/b1_wall04_16k/recipe_validation
+```
+
+以上输出已存在时拒绝覆盖；复现实验使用新目录。光学样块的准备和运行脚本在该结果目录中，分别为 `prepare_samples.py` / `run_samples.py`。B1不代表全隧道视觉随机性、人工缺陷自然程度或完整20 m性能通过，后续仍按计划推进。
+
+## 当前实现
+
+- 轨道车约 120 kg，四个轮轴、理想直线导向；相机光心位于半径 2.75 m 的隧道轴上。底盘保留双侧驱动盒、轮毂电机、双横梁和电子仓，上部以用户 2026-09-29 补充的新版真机图片为准：近直双立柱、紧凑 U 形架，沿旋转轴依次为光源、相机、滑环。两侧地面相机及其立柱不建模。轮径仍估计为 200 mm，场景 x∈[-1.5,21.5] m、目标区 [0,20] m。DART 轮轨接触叠加导向约束曾引起位置跳变，因此当前采用轮轴速度控制和理想滚动关系，不验收真实轮轨接触动力学。
+- 内壁、板缝、裂缝不设置动力学碰撞体。OptiX 独立使用实际三角网格追踪光学交点与遮挡。现行板缝为 3 mm 倒角、10 mm 槽宽、全部填砂浆，带圆角和连通交叉；现行网格 641773 个三角形；管片角度步长 0.5°，弦高小于 0.027 mm。板缝后方有连续不透光背衬，防止不同分段曲面在接缝交会处产生漏光。
+- 相机 4096 像素、90 mm 镜头，对焦距离 2.75 m；有效投影距离 93.045112782 mm、轴向视场 0.852259271 m。旋转编码器 2500 线、四边沿计数、×128÷15，每圈前进 0.6 m。当前车速 0.2 m/s、转速 20 rpm、触发行频 28.444444 kHz，每圈 3 s。50 kHz 保留为相机暂定上限。轴向像素间距 0.208071 mm、周向行距 0.202485 mm，降速不改变空间间距；8 µs 曝光内周向运动约 0.046077 mm。底部 120° 停止采集，顶部 240° 由编码器逐行触发；超限时速度与旋转同步降低。
+- （历史开发背景）三款 CC0 背景 Wall 04、Concrete030、Wall 03 在线性光域统一色调，初版采用 ×0.8 亮度；正式背景已改为 Concrete034，见 `stage_b_material_set.yaml`。原亮度、×0.8、×0.65 的比较仍保留，亮度属于待确认的工程参数。Concrete030 的 2 m 映射宽度为工程假设；Wall 04 的 3.2 m、Wall 03 的 4 m 有官方页面尺寸依据。
+- 多源裁片按物理尺度铺排，采用旋转/镜像、重叠区域最小割和统一混合权重，底色、粗糙度、法线共享布局，法线随变换正确转向。5 m 纵向复用约束目前针对同一来源的相近裁片中心，不等价于所有视觉特征都不重复；整体相似度验收尚未完成。
+- 背景分块烘焙后添加稀疏矢量裂缝，物理宽度独立于生图素材像素宽度。初版 60 个实例，细长 48、细短 9、网状 3，符合 80%/15%/5%；细长、细短内部少量分叉。主体宽度服从截断正态分布，均值 0.4 mm、标准差 0.1 mm，范围 0.2–0.6 mm，沿路径平滑变化并在自由尖端收口。第一条主干原始标定弧长为 10 m，细化后约 11.22 m，分叉长度不计入主干。密度与其余长度分布是可调工程参数。
+- 裂缝走势来自生图素材骨架，保存原连通拓扑，拒绝断裂主干，不使用短片段重复拼出 10 m。B2 起路径经细化、腔内和边缘带按外观假设着色（见下方“B2 裂缝”）；已有合成有效深度用于腔内反照率，几何凹陷和内部自遮挡仍未实现。含有效深度的稀疏索引约 27.9 MiB，与背景分辨率独立。
+- 光源采用用户确认的 20×20 mm COB、80×80 mm 散热器，附风扇和特制凸透镜；尺寸不是 30 cm 灯条。OptiX 用 2×2 高斯点近似等效有限发光面，考虑距离衰减、粗糙漫反射及遮挡；同一光源位置函数用于正常着色与板缝可见性检查。透镜以壁面半高宽 1.2 m×0.12 m 的等效光束表示，不模拟折射；COB 面积与实测透镜出瞳不等价，绝对照度、增益、光度曲线待标定。
+- 当前采用 `--integrated --area-samples 16 --area-pattern rooks --time-samples 3`：只有单线段包含整个空间/曝光足迹时才使用稳定解析积分；分叉、多线段、折点和有限端部回退到每时刻64条 N 车射线（`crack_area_samples`，可选32性能档），共192条，按点级几何并集求覆盖。背景照明仍使用三个曝光时刻和 2×2 纹理足迹积分。关键几何边缘、板缝遮挡变化保留每时刻 16 条 N 车射线。自适应另为显式可选项，当前关闭。局部裂缝测试采用相位偏移合成的 64×64/16 射线参考；常规 16×16/16 参考在静止、平行于像素轴的边缘处存在较粗的空间量化。
+
+相机安装以 **等效投影中心位于旋转轴** 为理论基线。`camera_optical` 为头部原点，`camera_sensor` 位于后方约 93.045 mm，`camera_front_glass` 位于前方暂估 35 mm；镜筒跨过旋转轴，机壳细白线标示内部传感器平面。后方距离按当前薄透镜模型的成像常数推导，前玻璃和壳体外形是工程估计，不能解释为实际镜头内部光学结构。该外观修正保持原 OptiX 投影中心、视场、采样和灯光参数。
+
+固定 U 架底边中心距旋转轴 215 mm（下移 10 mm），斜角连接板与底部电机支座相应衔接；托盘全周最小几何间隙约 18.12 mm。两根立柱中部新增交错斜撑：按车体 +x 前进、+y 为左，前立柱连前横梁左侧，后立柱连后横梁右侧；锚点落在结构横梁上，避开电子仓盖。斜撑暂取直径 24 mm，仅作为底座刚体的固定结构，未引入弹性刚度或结构强度验算。
+
+当前橙白车模采用约 0.56 m 长 U 形架（此前为 0.72 m）、顶部间距 0.62 m 的近直立柱；光源、相机随共同转轴旋转，右侧滑环区分固定外壳和转子。U 形架斜角底边、镜头、散热片、风扇与管夹为可视几何，仍保持 6 个动力学刚体和 2 个底盘碰撞体，不新增纹理贴图或细节碰撞体。散热器平面与 COB 尺寸已确认；透镜直径、组件高度、支架和传动外形尚按照片比例估计。
+
+光源位于相机轴向 −115 mm，切向/径向偏移及内倾角均为 0。按 852.259 mm 相机视场、1200 mm 光斑计算，最大允许中心间距 173.870 mm；当前较紧一端仍有 58.870 mm 覆盖余量。软件半高宽不代表光斑内照度完全均匀，后续可用平场校正及实测配光标定。GUI 早期用附着在扫描头上的 Ogre2 projector 显示条光（已被本文末尾的带阴影光束替换）：轴向/周向半高宽 1.2 m×0.12 m，沿用 OptiX 的八次超高斯包络，单张 1280×128 RGBA 纹理约 0.63 MiB。投影体只覆盖内壁附近 20 cm 径向范围，不增加固定点光源。Ogre2 将其实现为矩形发光贴花体，因此只用于检查光斑位置与同步扫掠，不用于验证逆平方照度、机器人遮挡或镜头折射；实际成像使用 OptiX 光照。环境散光调为 0.35 以便观察光斑。
+
+## 资源与精度优先级
+
+按当前要求，先满足车速 0.2 m/s、GUI 成像实时率 ≥0.6，再在此范围内提高精度，不跳过编码器触发的行。物理曝光时间、空间采样间距与计算消耗的墙钟时间分开处理。
+
+`src/ssb_tools/config/stage_b_scene.yaml` 的 GPU 纹理预算为 **2 GiB**，CPU 纹理预算为 **1 GiB**。缓存采用 LRU、按需分配；每块 1024² 核心、四周 4 像素冗余，实际格式是反照率 16 位、粗糙度 8 位、缺陷保护标记 8 位、双分量法线各 16 位，共 8 字节/像素，约 8.13 MiB/块。当前不含 mip 链。两项预算最多容纳约 252/126 块，不包含网格、驱动、CUDA 上下文、图像队列等其他开销。
+
+光学配置中的预算覆盖烘焙时记录的旧缓存预算，因此提高缓存无需重烘焙背景。GPU 根据实际批次射线覆盖范围加载；覆盖超过预算时拆批并保留每行。CPU 在读入新块前逐出旧块，避免临时越过纹理预算。记录缓存峰值、命中次数、加载耗时以及进程 VmHWM，不能仅用纹理分配量代替进程总内存/显存。
+
+素材准备工作集仍为 512 MiB，写盘队列 128 MiB，最多 4 个待处理批次，每批 1024 行。当前 2K 开发背景按 1 mm 烘焙，391 块、约 3.10 GiB，准备峰值约 486 MiB；源纹理的物理细节约 0.98–1.95 mm。它用于检查纹理、光学与采集流程，**不能声称具备 0.2 mm 背景细节**。0.2–0.6 mm 裂缝则由独立物理矢量和像素覆盖积分呈现。最终背景必须使用原生高清来源和有界解码/采样流程，插值放大不能补出真实细节。
+
+## 准备与运行
+
+构建后执行以下流程。准备输出已存在时拒绝覆盖；失败输出标记 `FAILED`。下载来源、色调配方、几何、纹理块、裂缝与最终光学配置都保存哈希。
+
+```bash
+source install/setup.bash
+ros2 run ssb_tools stage_b_materials fetch \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --output local_data/stage_b/material_sources_2k
+ros2 run ssb_tools stage_b_materials preview \
+  --sources local_data/stage_b/material_sources_2k/sources.json \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --output local_data/stage_b/colour_preview
+ros2 run ssb_tools stage_b_surface \
+  --config src/ssb_core/config/stage_b.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --sources local_data/stage_b/material_sources_2k/sources.json \
+  --recipe local_data/stage_b/colour_preview/colour_recipe.json \
+  --texel-m 0.001 --brightness 0.8 --output local_data/stage_b/surface
+ros2 run ssb_tools stage_b_defects \
+  --config src/ssb_core/config/stage_b.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --long-catalog assets/cracks/generated/long_crack_candidates_v1.catalog.json \
+  --short-catalog assets/cracks/generated/crack_candidates_v1.catalog.json \
+  --output local_data/stage_b/defects
+ros2 run ssb_tools prepare_stage_b_scene \
+  --config src/ssb_core/config/stage_b.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --surface local_data/stage_b/surface/surface.json \
+  --output local_data/stage_b/geometry
+ros2 run ssb_tools stage_b_optics \
+  --config src/ssb_core/config/stage_b.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --geometry local_data/stage_b/geometry \
+  --surface local_data/stage_b/surface/surface.json \
+  --defects local_data/stage_b/defects/defects.json \
+  --integrated --area-samples 16 --area-pattern rooks --time-samples 3 \
+  --output local_data/stage_b/optical
+SSB_WORLD=$PWD/local_data/stage_b/geometry/world.sdf \
+  tools/run_gz.sh sessions/b_capture local_data/stage_b/optical/capture.yaml
+
+# 改变批大小离线重放，检查原始图像和元数据逐字节一致。
+bash tools/with_optix_runtime.sh install/ssb_core/lib/ssb_core/ssb_render \
+  --config local_data/stage_b/optical/capture.yaml --session sessions/b_replay \
+  --poses sessions/b_capture/evaluation/pose_stream.bin --batch-rows 333
+ros2 run ssb_tools validate_stage_b_smoke sessions/b_capture --compare sessions/b_replay
+```
+
+`stage_b.yaml` 自身仅是几何/时序基线；必须使用 `stage_b_optics` 输出的配置启用纹理光学后端。Gazebo 预览直接读取哈希校验后的实际烘焙底色，以约 2 mm/像素为每个管片生成独立贴图，采用完整 OBJ 法线；旧版缺少法线会导致 Ogre2 材质构建失败。已停用 20 mm quilting 引导图作为 GUI 底色。GUI 贴图 RGBA8+mip 保守估计约 499 MiB，预算 768 MiB，准备实测峰值约 211 MiB。GUI 预览不用于线阵成像，矢量裂缝目前仍只在 OptiX 采集层呈现。
+
+本机现行入口是 `tools/run_gz_gui.sh`，默认加载 `gui_strip_shadow_final_v10/world/world.sdf` 与同目录的 `capture.yaml`：使用优化后的 B2 几何，车体从 x=3 m 起步，3 m 短程采集，光学层为 Concrete034、修正后的裂缝和 0.8 有效深度。初始暂停，点击 Play 开始采集；结束后后台完成落盘和摘要。GUI墙面已更新为Concrete034配方预览；预览为1–2 mm纹素，采集仍为0.1 mm生成网格，两者用途不同。相邻 4WIDS_agv 的私有 Mesa 启动器可由 `SSB_MESA_WRAPPER` 指定。其他输出通过 `tools/run_gz_gui.sh SESSION CONFIG WORLD` 指定，旧 `geometry_light_v1`/`optical_light_v1` 仅作历史对照。
+
+`ssb_probe` 用于指定姿态的光学检查和吞吐测量，不代表编码器采集验收。`stage_b_tag_cracks` 可在背景烘焙后加入保守保护标记，再以 `stage_b_optics --adaptive` 显式开启自适应加速；当前解析覆盖档不需要这一步。
+
+采集的评估目录归档场景、背景、裂缝真值，供验收使用；重建输入仅保留可观测信号、相机参数和后端身份哈希，后续拼接不得读取缺陷真值。
+
+## GUI 验证
+
+Concrete034 背景（`sessions/b_c034_DC4_g10_v1`）：运动计划与下方 2K 背景演示相同。共 284445 行，**GUI 成像实时率 0.994**，动力学结束后 0.1 s 完成落盘；21 项独立检查及 333 行批次重放全部通过。优化过程和逐项耗时见[纹理清晰度调查](STAGE_B_TEXTURE_AUDIT.md#实时率优化裂缝索引网格2026-10-01)。Gazebo GUI 的墙面预览仍是旧的 2K 贴图（属 B3），高清背景只进入 OptiX 采集。
+
+2K 开发背景（历史）：
+
+最新光斑展示与采集：`sessions/b_light_demo_v2` 的 16.3 s 计划中车体 x=3→6 m，共前进 3 m、扫描头旋转 5 圈，保存 284445 行，形成 5 段 4096×56889 的逻辑条带；GUI 成像实时率约 **0.880**。20 项独立检查及与 333 行批次离线重放的对比通过，报告 `sessions/b_light_demo_v2/evaluation/reports/stage_b_smoke.json`。行位置验收区为 [3.1,5.7] m，不是全角度覆盖承诺；原始条带尚未拼接。查看页位于 `local_data/stage_b/light_demo_v2/review/`。该会话仍用 2K/1 mm 背景，视觉质量未通过用户复核；这些性能与完整性结论不能外推到计划中的高清材质和新缺陷光学模型。
+
+新版紧凑扫描架 + 20×20 mm COB 等效光源复测：0.2 m/s、28.444 kHz、1280×720 GUI 下，9.4 s 仿真保存 171147 行，成像实时率 **0.775**、动力学实时率约 1，停止后约 2.72 s 全部落盘。59 项测试结果通过；20 项独立检查和 333 行批次重放通过，有效区域无缺行。报告 `sessions/b_robot_v4_gui/evaluation/reports/stage_b_smoke.json`，模型展示 `local_data/stage_b/robot_review_v4/`。仍为短程结果，不代表完整 20 m 稳态性能或实物光度标定。
+
+橙白车模、纯环境散光的复测：9.4 s 仿真保存 171147 行，GUI 成像实时率 0.841、动力学实时率约 1，停止后约 1.78 s 全部落盘。20 项独立检查和 333 行批次重放通过，报告位于 `sessions/b_robot_v3_gui2/evaluation/reports/stage_b_smoke.json`。车模展示目录为 `local_data/stage_b/robot_review_v3/`。这仍是短程性能结果。
+
+前次灰白车模加载全部管片预览、GUI 为 1280×720，0.2 m/s 下运行 9.4 s、多圈扫描保存 171147 行，最终验证成像进度实时率 **0.782**、动力学实时率约 1，之前同设置短测约 0.73。完整计算和落盘包括停止后的滞后；此值是短程验证，不能承诺整个 20 m 相同。20 项独立检查及 333 行批次重放均通过，报告见 `sessions/b_gui_final_v2/evaluation/reports/stage_b_smoke.json`。
+
+用 Gazebo `/gui/screenshot` 服务确认真实渲染图，而非仅检查 PNG 存在。入口验证截图在 `local_data/stage_b/gui_preview_check_v1/`；修复前后与最终 GUI 采集截图在 `local_data/stage_b/sampling_comparison_v1/`。实际进程映射确认私有 Mesa 的 D3D12/NVIDIA 路径，OptiX 使用 RTX 5080。
+
+0.2 m/s 下，长裂缝、分叉和网状裂缝局部与 16×16/16 参考比较，最大分别差 1、3、3 个灰度值；板缝区域最大差 14，局部 99 分位为 6，仍需加强板缝边缘收敛。报告 `sampling_comparison_v1/quality_speed020_v1/comparison.json`。独立均匀底色夹具对 0.2–0.6 mm 裂缝测试 16 个亚像素相位，静止/运动的对比度积分等效宽度最坏误差约 6.2 µm；这不是镜头 MTF 或实物宽度测量验收。报告 `sampling_comparison_v1/width_fixture_speed020_v1/comparison.json`。
+
+## 早期 50 kHz、高采样实测（历史基线）
+
+RTX 5080 上，高精度档的 4096 行名义运动探测约 483 行/秒；一次含完整门控进入/退出的短程 Gazebo 采集保存 56883 行，约 595 行/秒，动力学实时率约 1，成像进度实时率 0.0167。图像计算在动力学结束后继续约 94 s，全量落盘。两次门控事件与独立参考相符，有效测试区 [7.85,8.20] m 的 49778 行无缺失；区外 6 条初始化丢行有明确记录。GPU/CPU 纹理分配峰值各 221524992 字节（约 211 MiB）。这些数值不是完整 20 m 负载结论，也不包含其他显存分配。
+
+`b_precision_gate_smoke_v1` 与改变批大小至 333 行的 `b_precision_gate_replay_v1` 通过 20 项会话检查，24 个原始图像/元数据/评估数据文件逐字节一致；64 个独立 CPU 参考射线的最坏交点误差约 0.468 µm。报告位于 `sessions/b_precision_gate_smoke_v1/evaluation/reports/stage_b_smoke.json`。
+
+名义车速/转速下，裂缝局部的 8 档与 16 档参考比较，最大差 2 个灰度值；99% 的局部像素一致。板缝边缘探测仍有最大 14 个灰度值差异，不能据裂缝局部收敛就认定全部场景已收敛，后续需加强边缘积分检查。自适应 8 档在同一段约 210° 的扫描中约 2275 行/秒，99% 以上像素一致，但极少数像素最大差 8，暂保留为可选加速档。最终质量优先的默认仍关闭自适应。
+
+比较结果保存在 `local_data/stage_b/optical_quality_nominal_convergence_v1.json`、`optical_quality_joint_convergence_v1.json` 与 `optical_adaptive_quality_comparison_v1.json`。这些是当前工作点调整前的历史基线；纹理载入耗时较小，主要成本是光学积分，扩大缓存不能直接消除这一成本。
+
+## 验证与剩余工作
+
+自动检查包括 0.2–0.6 mm 裂缝宽度积分、曝光积分、条光足迹、分块重采样一致性、法线变换、接缝不漏光、缓存逐出/拆批不改变图像、资产被修改时拒绝采集，以及已有阶段 A 时序回归。短程会话验证器独立检查编码器/门控、源代码与二进制身份、全部资产哈希、CPU 三角形交点、CPU/GPU 纹理预算及离线重放一致性；它不是完整光度或镜头分辨率验收。
+
+仍需完成原生高清背景及整体重复纹理检查、填充/损伤板缝和手孔、镜头模糊/离焦/噪声与光度标定、标定尺寸下裂缝自然程度审查、完整 20 m 负载测量。本阶段的短程采集不代表已输出 20 m 隧道全图；完整采集覆盖、拼接和全局优化继续按阶段 C/D 推进。
+
+GUI 投影语义参考本机 Ogre2Projector 实现及 [Gazebo Rendering 源码](https://github.com/gazebosim/gz-rendering/blob/gz-rendering8/ogre2/src/Ogre2Projector.cc)。
+
+## B2 板缝（2026-10-01）
+
+- **几何**：`stage_b_scene` 生成 `panels.obj`（含倒角）、`joints.obj`（槽侧壁和槽底）、`filler.obj`（砂浆）和 `gap.obj`（接触缝后的止水垫），共约30万个三角面，预算为60万。环缝按下一环的分块分段，纵缝按环分段，每段的状态与缺失区段记入 `geometry.joints`。
+- **材质**：0 号为墙面和倒角；1 号为槽内混凝土（反照率 0.12、低对比细节、坐标错开）；2 号为砂浆（`prepare-filler`，grey_plaster 去掉 10 mm 以上色调、对比度 0.35、均值 0.15，最初为 0.17）；3 号为止水垫（0.02）。全部为外观假设。
+- **入口**：`stage_b_runtime_surface prepare-filler`；`stage_b_optics --filler`，有 `filler.obj` 时必须提供。验收工具会校验砂浆纹理的哈希。
+- **尺寸**：倒角 3 mm、槽宽 10 mm，从墙面看缝区总宽 16 mm（用户确认）；最初的 5 mm 倒角、15 mm 槽宽版本总宽 25 mm，偏宽。三种宽度的对比图在 `local_data/stage_b/b2_run/joints_widths_1to1.png`。
+- **结果**：`sessions/b_b2_joints_v2`，GUI 成像实时率 0.982（加缝前 0.994），21 项检查及 333 行批次重放全部通过。
+- **定稿（`geometry_b2_v3`，`sessions/b_b2_joints_v3`）**：全部已填；倒角两侧 1 mm 圆角、内缘轻微起伏；T 形交叉用高度场连通，交界沿用环缝砂浆边的折线以保证不漏光，砂浆面在交叉内平滑过渡。约 78 万个三角面（预算 80 万）。GUI 成像实时率 0.981，21 项检查及重放全部通过。图在 `local_data/stage_b/b2_run/joints_final_1to1.png`、`b2_probe/junction_zoom3x_v4.png`。崩角样块（`chip_sample/`）不自然，代码未保留。前后对比图在 `local_data/stage_b/b2_run/joints_before_after_1to1.png`；三种状态的探针图、暗边拆解和灯光换边图在 `local_data/stage_b/b2_probe/`。
+
+## B2 裂缝
+
+- **路径与宽度**：`stage_b_defects --refine`（参数在 `stage_b_scene.yaml` 的 `cracks.refine`）。按 0.5 mm 重采样，σ=5 mm 高斯平滑去掉源骨架约 4.8 mm 像素的阶梯；叠加 0.5–20 mm 自仿射摆动（10 mm 波长幅值 0.5 mm，H=0.75），在分叉共用端点 10 mm 内渐隐，连通性不变；宽度沿程双尺度对数起伏（σ 0.18/0.08），限制在 0.2–0.6 mm。均为合成细节，已记入缺陷真值。现行开发缺陷集为 `local_data/stage_b/defects_dev_v5`；审核后的宽度、端点和主路径真值修正见下方记录。
+- **覆盖积分（历史）**：旧版以线段带状解析覆盖率最大值近似并集，曾与 8×8×3 参考比较得到 RMSE 1.28 DN。审核发现这不能正确处理分叉、交叉和端部，现已改为单段解析与局部 64 N 车/3 时刻采样；该历史 RMSE 不作为现行验收。
+- **着色（最初）**（场景 `crack_optics`，平底）：腔内反照率为所在墙面的 0.2 倍，带 ±35% 类碎屑变化；两侧 0.25 mm 边缘带压暗 15%。原尺寸复核时像墨线：10 m 长裂缝沿程每列最暗处都是背景的 18–23%，几乎没有起伏，边缘也很硬。没有 `crack_optics` 的旧场景仍用固定反照率 0.035。
+- **着色（历史 cavity_v1，V 形截面）**：`stage_b_defects --depth` 为每个顶点生成合成的有效可见深度 D=深宽比×局部宽度，深宽比沿程取对数正态（中位 0.9、σ 0.5、波长 5–40 mm），每米约 6 段、长 3–15 mm 的浅段（深宽比 0.15，代表灰尘填塞）；深度写入 `depths.bin` 并记入真值。渲染按朗伯槽口公式计算腔内反照率：ρf/(1−ρ(1−f))，f=w/(w+2D)；横截面为 V 形（半宽 1、2/3、1/3 的三层嵌套带各占三分之一），中心最暗、两侧渐浅。开发缺陷集 `defects_dev_v3`：有效深度中位 0.35 mm（5–95% 为 0.12–0.88 mm），墙面反照率 0.3 时中心腔内为墙面的 0.26–0.68 倍。同位置重渲染后，长裂缝沿程每列最暗处是背景的 0.29–0.56 倍（中位 0.44）；对比图在 `local_data/stage_b/b2_run/cracks_1to1/*_old_vs_cav1.png`。均为外观假设；没有几何凹陷、真实自遮挡和随灯光方向的明暗不对称。
+- **宽度**：由图像暗度积分估计的宽度比几何真值平均宽 0.114 mm，其中约 0.094 mm 来自边缘带；因背景纹理噪声，逐窗口相关性较低。几何宽度真值与图像暗线宽度分开报告。
+- **结果**：平底版为 `sessions/b_b2_cracks_v1`；空腔版为 `sessions/b_b2_cavity_v1`（`optics_b2_v8`），GUI 成像实时率 0.995，渲染 6.67 s，21 项检查及 333 行批次重放全部通过。平底场景经重构后重放逐字节不变。
+- **细缝台阶**：0.23 mm 细缝放大后呈横竖台阶。检查路径几何，各段走向均匀分布，接近坐标轴方向的只占 11–12%，与随机情况一致，所以台阶不在几何里；它来自亚像素宽斜线的方形像素积分，现在没有镜头模糊。降低对比后已不明显。是否加入镜头点扩散另行决定，因为这会影响整幅图的清晰度。
+
+## 统一性能优化
+
+离线基准：`b_b2_cracks_v1` 的位姿流、1024 行批次、无 GUI（`local_data/stage_b/b2_run/bench.sh`）。
+
+| 步骤 | 渲染 s | 内核 s | 生成块 s | 足迹 s |
+|---|---:|---:|---:|---:|
+| 起点 | 12.24 | 7.00 | 3.91 | 0.99 |
+| 足迹块范围改为按周期直接算区间 | 11.38 | — | — | 0.41 |
+| 交叉处三角面 78 万→64 万（`geometry_b2_v4`，3 倍放大图无可见差异） | 11.68 | 7.01 | 3.92 | 0.40 |
+| 块生成：行/列分离的坐标计算、每批一次启动 | 8.04 | 6.81 | 0.51 | 0.40 |
+| 完整射线像素改为 N 车 16 条/时刻（`optics_b2_v7`） | 5.93 | 4.72 | 0.51 | 0.40 |
+
+- 块生成前后，40 个探针块和整次重放都逐字节相同。块生成从每块 0.94 ms 降到 0.09 ms；原先耗时主要来自每次调用的固定开销和逐纹素的双精度坐标计算。
+- 完整射线像素只占 0.85%，但每个要追 192 条主射线，再加每条 4 条阴影射线，此前占内核时间约 40%。以 16×16×3 网格为参考，在这 990 万个像素上比较：旧 8×8 网格 RMSE 1.12 DN，p99 为 6 DN，超过 4 DN 的占 1.5%；N 车 16 条/时刻 RMSE 0.85 DN，p99 为 3 DN，超过 4 DN 的占 0.10%。射线减到四分之一，误差反而更小，因为板缝边缘近似平行于像素轴，网格每轴只有 8 档，N 车的 3 个时刻合起来有 48 档。只把临界边距离改为按像素足迹计算的试验反而更慢：回退像素沿缝成片，同一线程束仍要等其中最慢的像素，因此未采用。
+- 同位姿逐像素对比：只有完整射线像素有变化（占 0.38%），其余像素逐字节不变。对比图在 `local_data/stage_b/b2_run/opt_grid8_vs_rooks16_1to1.png`（左旧、中新、右为差值×8）。
+- 全链路：`sessions/b_b2_opt_v1`，GUI 成像实时率 0.995，渲染累计 6.61 s（墙钟 16.38 s），队列峰值 1 批（此前满 4 批），21 项检查及 333 行批次重放全部通过。实时率受 Gazebo 实时步进限制，上限约为 1；渲染余量约 2.5 倍。
+
+## B2 审核修正与裂缝浅化
+
+该轮32档审核资产为 `defects_dev_v5`、`geometry_b2_v4`、`optics_b2_v12`（v11 加 `crack_area_samples: 32`）；当前默认入口的64档见文末；Concrete034 配方 `c034_DC4` 保持不变。修正后的 348799 个非尖端主体顶点宽度均在 0.2–0.6 mm；所有主路径顶点均属于实际细化路径，旧版最大约 3 mm 的偏离已消除。另修正很短的图边两端平滑区互相干扰的问题，恢复其源图共用端点；250 个端点过渡顶点有调整，主体路径保持原位置。源配置、基础规范及每次细化/深度规范保存哈希快照，完整索引范围一起校验，渲染也拒绝损坏快照或不匹配的范围。含深度索引约 27.9 MiB，C++ 预算检查包含深度数组。
+
+生产单精度解析积分改为归一化、分段及因式分解，避免接近退化投影方向的消减误差。同一组 200 万名义运动构造案例的最坏裂缝覆盖率误差从 0.02683 降至约 2.23×10⁻⁷；这是数学检查，不是镜头 MTF 证明。新增 GPU 局部检查覆盖交叉、圆端、折点及收尖，静止/名义运动与相位偏移构成的 64×64×16 射线参考比较；保留独立 75% 交叉并集及有限圆端面积检查。背景仍为 2×2 足迹积分，复杂裂缝局部为每时刻 64 条 N 车射线；49 项 Python 测试与全部 C++/GPU 测试通过。
+
+按用户要求，`cracks.depth.scale: 0.8` 让合成有效深度整体浅 20%，当前中位 0.280 mm、5–95% 为约 0.095–0.714 mm。对同一修正后的几何、深度场、相机及照明只改变这一比例，512×4096 样块有 22009 个像素变亮，无变暗像素，变化像素平均增加 4.41 DN，最大增加 11 DN；其余像素逐字节相同。对比图与原始数据在 `local_data/stage_b/crack_review_fix_v1/depth_comparison.png`、`depth_before/`、`depth_after/`。这只改善槽口外观，不新增几何凹陷或真实自遮挡。
+
+（64 条/时刻时的记录）修正后短程首次 GUI 性能实测仍约 0.995，保存 284445 行；局部提高采样后渲染累计约 12.8 s，队列峰值 4 批，满足 0.2 m/s、GUI 成像 RTF≥0.6。该性能值不外推到完整 20 m。整仓库指纹包含文档，因此定稿后重新构建与复验；最终采集为 `sessions/b_b2_crack_fix_gui_v2`，333 行批次重放为 `sessions/b_b2_crack_fix_replay_v2`，最终身份、行完整性、资源和逐字节一致性以 `evaluation/reports/stage_b_smoke.json` 为准，必须包括 `binary_matches_source: pass`，不绕过来源校验。
+
+**复核（32 条/时刻）**：统计同一位姿流，约 233 万个裂缝像素中 99.6% 走点级并集路径，只有约 1 万个走单段解析积分，因为细化路径有 0.5 mm 尺度摆动，像素足迹内几乎总含多个线段。曾试过同一路径连续段仍按最大值解析：与并集相比最大偏差 49–88 DN，不采用。改为降低并集路径的采样数，以每时刻 128 条为参考：64 条 RMSE 0.54 DN、最大 5 DN，离线渲染 11.1 s；32 条 RMSE 0.84 DN、p99 2 DN、最大 9 DN，8.1 s；16 条 RMSE 1.85 DN、最大 20 DN，6.8 s。32 条与板缝边缘已接受的档位（0.85 DN）相当，定为默认（`sampling.crack_area_samples`，生成元按 N 车格点自动计算）。局部参考测试中交叉中心像素的容差由 ±2 放宽到 ±4 DN：仍明确区分 75% 并集（约 39）与最大值近似（约 69）。全链路 `sessions/b_b2_crack32_v1`（`optics_b2_v12`）：GUI 成像实时率 0.995，渲染累计 9.07 s（主内核 7.79 s，墙钟 16.38 s），渲染队列在裂缝密集段达到 4 批上限；21 项检查及 333 行批次重放 `b_b2_crack32_v1_replay` 全部通过。
+
+旧版缺陷布局若仍指向已修改的原配置，派生操作会明确拒绝。重新准备基础布局即可得到不可变快照，然后按顺序细化和加深度；不要手改旧哈希，也不要覆盖历史输出：
+
+```bash
+python3 -m ssb_tools.stage_b_defects --config src/ssb_core/config/stage_b.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --long-catalog assets/cracks/generated/long_crack_candidates_v1.catalog.json \
+  --short-catalog assets/cracks/generated/crack_candidates_v1.catalog.json --output NEW_BASE
+python3 -m ssb_tools.stage_b_defects --refine NEW_BASE \
+  --spec src/ssb_tools/config/stage_b_scene.yaml --output NEW_REFINED
+python3 -m ssb_tools.stage_b_defects --depth NEW_REFINED \
+  --spec src/ssb_tools/config/stage_b_scene.yaml --output NEW_DEPTH
+```
+
+需先 `source install/setup.bash` 或设置 `PYTHONPATH=src/ssb_tools`。GUI 默认采集已使用新版光学场景和 3 m 短程世界，高清 GUI 背景/缺陷预览仍待 B3；完整 20 m 采集及拼接优化仍待后续阶段。
+- 未做的项：曝光端点改用平面外推（省约 0.65 s）、同一时刻的 4 个纹理取样合并光源计算（省约 0.4 s）。收益有限，暂不实施。
+
+## 后续第1项：采样档位兼容性
+
+旧光学场景缺少 `sampling.crack_area_samples` 时保留64条/时刻；生成工具增加
+`--crack-area-samples {32,64}`，默认64高精度档，32为性能档。两档均保留点级并集。
+默认GUI配置改为 `optics_b3_quality64/capture.yaml`，它仅将v12的采样数显式改为64，
+其他光学资产、深度和照明不变。旧资产不覆盖。49项Python测试、3组C++/GPU测试通过；
+并集参考测试分别覆盖显式32和缺省64。历史32档性能记录仍是当时实测，不代表当前默认档。
+
+## 后续第2项：Concrete034 GUI 分块预览
+
+`python -m ssb_tools.stage_b_gui --scene local_data/stage_b/optics_b3_quality64/scene.json
+--world local_data/stage_b/crack_review_fix_v1/world.sdf --output local_data/stage_b/gui_c034_v1`
+从已验收配方生成预览，原生底色先面积滤波，再按同一裁片变换、混合遮罩及宏观亮度采样。
+将原始 `panels.obj` 的三角形分组并重映射UV，逐个保留其顶点、法线和面；不再用光滑圆柱
+覆盖倒角。原板缝、砂浆和槽底网格保留。裂缝采用同一线段/宽度/有效深度数据做4倍子像素
+胶囊覆盖预览，不人为加宽；不宣称与OptiX曝光积分和光度逐像素一致。
+
+x=3..6 m附近采用1 mm纹素，其余2 mm，原生采集网格仍为0.1 mm。GUI预算独立设为
+1280 MiB（RGBA8含完整mip链的预估），生成前检查总量和单纹理8K尺寸上限；实际贴图为中性灰RGB PNG，避免单通道纹理在不同渲染后端的通道解释差异。
+这是有界常驻分块加Ogre mipmap，不是动态流送。细裂缝远看会自然变淡，微米级量测仍看采集图。
+产物清单保存输入及各块哈希和三角形计数；输出目录拒绝覆盖。默认入口切换到该世界。
+
+本次产物140块，RGBA8含mip预估745.8 MiB，混凝土471652个三角形全部保留。
+52项Python测试通过，Gz实际加载并截图核查。全填缝场景的 `gap.obj` 无三角形，
+GUI不再提交这个空网格（消除Ogre加载错误）；光学资产不改。
+
+## 后续第3项：GUI 环境提亮
+
+世界 `scene/ambient` 与GUI插件 `ambient_light` 统一由0.35提高到1.0，
+不新增固定灯、不改变扫描投影和OptiX采集光度。默认观察位置移到车旁，便于看清整体。
+`stage_b_gui_world --mode lighting` 生成 `gui_c034_light_v2/world.sdf`，旧世界不覆盖。
+结构对照确认世界仅环境RGB变化，光学配置未变；同视角截图用于亮度核查。
+
+## 后续第4项：专利轮轨导向外观
+
+依据CN111185894A说明书[0038]及图4、图5：四个行走轮承载于轨顶，四个竖轴导向轴承
+分别位于两根钢轨内侧。轴承半径暂取25 mm、轴向宽24 mm，中心在轨顶下19 mm，
+外圈与轨头内侧名义相切；补充金属外圈、密封盖、内圈、安装轴和安装块。
+尺寸为外观工程估计，不当作专利实测值。移除此前无充分依据且与轮胎分离的加大内轮缘，
+改为不超出踏面半径的侧环。当前没有轨头下方的防抬升抱轨机构。
+
+仍为6个刚体、120 kg、2个底盘碰撞体，四个车轮独立旋转关节及世界直线导向不变。
+导向轴承是外观，不参与碰撞、承载、侧滑或脱轨计算。53项Python测试通过，
+新增检查覆盖四个轴承的侧向相切和高度范围、四轮落在轨顶、质量与约束保持；
+Gz轨头近景核查无材质/网格加载错误。
+
+最终默认世界为 `gui_c034_rail_v2/world.sdf`，光学配置为 `optics_b3_quality64/capture.yaml`。
+世界派生命令依次为：
+
+```bash
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_gui_world \
+  --world local_data/stage_b/gui_c034_v1/world.sdf \
+  --config local_data/stage_b/optics_b3_quality64/capture.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --output local_data/stage_b/gui_c034_light_v2 --mode lighting
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_gui_world \
+  --world local_data/stage_b/gui_c034_light_v2/world.sdf \
+  --config local_data/stage_b/optics_b3_quality64/capture.yaml \
+  --spec src/ssb_tools/config/stage_b_scene.yaml \
+  --output local_data/stage_b/gui_c034_rail_v2 --mode robot
+```
+
+产物已存在时须换新目录；不覆盖已有运行资产。以上是第1–4项实现和局部检查，
+不代表完整20米采集、裂缝测量精度或拼接全图已经验收。
+
+## 下一轮实施：直轨接触与双里程计
+
+最新确认见DESIGN末节。取消顶部灯方案；新增刚体摩擦轮轨、双从动轮编码器，
+以双轮估计里程控制每圈0.6 m扫描，真实轮径和标定轮径分离。真实位姿只供成像和评估。
+底盘四盏定向工作灯及阴影最后加入；允许远弱于条光的杂散光并明确OptiX反射模型限制。
+先实现与验证再逐项提交；本段是实施计划，不表示接触模式已通过验收。
+
+直轨结构第一项已实现：连续圆角轨头、轨腰和宽轨底分色，轨距1435 mm、轨顶z=0、
+总高176 mm保持；0.6 m间距混凝土轨枕，配垫板、橡胶垫、扣件及螺栓。轨头使用简化
+盒碰撞（顶面和轨侧接触平面正确），细节不增加碰撞负担。世界为 `track_contact_v2`，
+不覆盖旧资产。轨道截面、两接触平面、轨枕间距和原有模型等26项测试通过。
+
+真实接触第一轮（前驱/后编码器）已通过：前轮1、3扭矩驱动（12 N·m/(rad/s)速度反馈，
+限幅±8 N·m），后轮0、2自由转动；四个导向轴承自由转动，名义侧向间隙0.2 mm。
+无世界移动关节，10个刚体总质量120 kg，轮轨库仑摩擦系数1、导向0.5。
+2 s静置后按缓起停曲线运行，扫描伺服只读取后轮量化计数平均里程，旋转轴位置闭环。
+接触诊断可用 `tools/run_contact_dynamics.sh SESSION CONFIG WORLD` 单独运行。
+
+基准 `contact_baseline_v2_dynamics` 实际行程1.5999995 m，无倒退；最大纵向滑移速度
+约0.000078 m/s。标定轮径+1%/−1%时实测螺距分别0.593986/0.605986 m，符合轮径比公式。
+去掉摩擦后驱动轮空转、车体不前进、估计里程和扫描推进均为零，确认未隐藏强制平移。
+初始横偏1 mm在导向接触下回到约0.2001 mm间隙边界。基准、±1%及导向扰动均通过
+`validate_contact` 的11项检查；扫描启动瞬态相位误差上限0.012 rad为本轮工程阈值，
+不声称精确每圈0.6 m或真机伺服参数。27项相关Python测试通过。
+本提交仅开放动力学试验，真实接触成像待完整位姿接口接入后开启。
+
+### 完整位姿与接触采集验收
+
+接触模式现已开放成像。160-byte 位姿记录包含世界位置、ZYX 姿态及速度、
+左右后轮转角；96-byte 行真值包含曝光中心的车体姿态。所有新增真值仅供成像/评估，
+控制器仍只用后轮编码器里程与扫描轴反馈。离线工具按 manifest 识别新旧记录长度，
+旧56-byte位姿仍可读取；右后轮边沿独立写入 `metadata/odometer_right_edges.bin`。
+
+扫描速度输出增加5 ms一阶伺服带宽：消除1 ms量化计数造成的速度跳变，避免
+倍频器遇到提前边沿而取消行触发；控制计数统一使用与采集边沿相同的floor定义。
+它不是丢弃行记录或强制修正真实运动。`contact_capture_v4`：1.6 m、168309行、
+64条复杂裂缝采样，22项采集检查全部通过；有效区3.1–4.4 m内128026行、无缺行，
+启动/停止缓冲区25条取消触发均有原因记录。333行批次重放53个文件逐字节一致。
+11项接触检查通过，最大扫描跟踪差0.01048 rad；头less成像进度RTF约0.995，
+GUI性能待下一步联合验收。新增车体旋转、yaw跨±π及独立右编码器测试通过；
+55项Python测试与3组C++/GPU测试通过。旧56-byte位姿读取烟测通过。
+
+`contact_20m_v1_dynamics` 20米接触试验也通过11项检查（伺服输出滤波加入前的
+动力学版本）；真实行程19.9999995 m，最大后轮滑移速度约7.76e-5 m/s。
+最终版本还需重跑20米稳定性，不能用此历史测试替代最终联合验收。
+
+### 车载工作灯（历史窄角版本，已被下方宽角版本替代）
+
+四盏spot灯安装在底盘 x=±0.51、y=±0.59、z=0.45 m，朝下及前后外侧；
+外锥SDF参数0.65 rad为完整锥角（此前“半角”标注有误），当时使用更大的半角做保守计算，最高光线的z方向仍小于−0.3，上方240°最低壁面高度0.64 m，
+名义直射范围有至少0.19 m高度余量。开启车体/轨道阴影；内壁作为受光面不投影，
+避免四盏灯重复绘制全部内壁阴影几何。隐藏GUI灯方向辅助线，无新增纹理开销。
+最终GUI环境散光0.6、灯强度2.0（预览参数、不是lux）；不添加顶部灯。
+
+OptiX `indirect_fill_relative=0.002` 是未标定的弱反射敏感性参数，默认缺省0保持旧图像；
+按反射率乘入，裂缝沿用深度相关有效反射率，凹槽额外乘0.2开口系数。
+这不是多次反射求解，也不以常数灰度抬升黑槽。仍未将机器人遮挡网格装入OptiX，
+不可用本次结果宣称绝对照度、真实杂散光或镜筒挡光已验证。
+56项Python及3组C++/GPU检查通过，包含光锥不交采集区域与弱补光不改变命中点。
+首轮GUI3 m烟测完成284445行、成像RTF约0.977；最终参数与独占GPU测速待联合验收。
+
+复用已验收资产生成演示：
+`python3 tools/prepare_contact_demo.py --output local_data/stage_b/gui_contact_lit_v4`
+该工具快照场景规范、保留Concrete034/裂缝/板缝资产，只派生接触模型、照明与3米剖面。
+
+照明遮挡复查：发光点移到电子舱盖边缘外侧，并留出玻璃前方8 mm净空；
+增加四个细支臂。阴影开启时确认轨道/轨枕实际受光，避免舱盖把光束全部挡住。
+透明灯玻璃不投影，遮光罩及车体仍投影；新增几何净空测试通过。
+
+
+### 本轮最终联合验收与默认入口
+
+默认 `tools/run_gz_gui.sh` 已切换到 `gui_contact_lit_v4/capture.yaml` 与
+`gui_contact_lit_v4/world/world.sdf`。Play后先静置2 s，再按0.2 m/s巡航、
+缓起停行驶3 m；仍可显式传入旧理想配置/世界。未改变光学纹理、裂缝或板缝资产。
+
+最终会话 `sessions/contact_gui_final_v4`，重放 `contact_gui_final4_replay`：
+
+- 真实行程2.9999995 m，扫描依据后轮平均量化里程2.9999697 m。
+- 284445行；有效区3.1–5.7 m内256025行，无缺行；本段门内取消触发为0。
+- 22项采集检查、11项接触检查全部通过；333行批次重放81个文件逐字节一致。
+- 4096像素、28.444 kHz名义触发、复杂裂缝64条采样、曝光积分和完整写盘均开启。
+- GUI与采集同时运行，成像进度RTF **0.99395**，动力学RTF **0.99943**；
+  动力学结束后0.0939 s写完。统计从首个位姿开始，不含资产加载/GPU初始化。
+- nvidia-smi每2 s采样的整卡占用峰值6596 MiB，含GUI与桌面，不是分配器精确峰值。
+  原有2 GiB纹理缓存、原生源预算、有限渲染/写入队列继续生效。
+- 最终伺服版本 `contact_final_20m_dynamics` 20 m检查通过：行程19.9999995 m，
+  最大滑移速度约7.76e-5 m/s，扫描跟踪误差≤0.01049 rad。
+  标定轮径±1%对照 `contact_final_cal_plus/minus_dynamics` 的实测螺距
+  分别0.593980/0.605980 m；四轮真实直径均为0.2 m。
+
+弱补光对照 `contact_gui_final_v2` / `contact_gui_no_fill` 共1165086720像素：
+每像素增加0或1级Mono8，平均增加0.33246级；255值比例从约1.00e-7至1.09e-7。
+GT定位的长裂缝ROI有1589个核心像素，对比度约52.7%，变化−0.00320个百分点。
+最终v4的全部raw索引/块hash与v2相同，因此该比较覆盖最终图像；报告位于
+`contact_gui_final_v2/evaluation/reports/reflected_fill.json`。
+它仅验证假设弱杂散光下的敏感性，仍不是实测照度或真实多次反射/机器人挡光验证。
+
+最终GUI预览：
+`local_data/stage_b/gui_contact_lit_v4/screenshots/2026-09-30T22:56:12.269491944.png`。
+轨道、轨枕、轮子和灯具的可见阴影已人工检查；验证结束后关闭测试GUI/服务端。
+本轮完成直轨接触、双编码器、实际位姿采集、车载照明与短程联合验收；
+20 m为动力学稳定性测试，尚未完成20 m完整成像拼接，曲线轨道也未实现。
+
+### 轨枕颜色修正
+
+轨枕改为较暗的旧混凝土灰，RGB基值约0.196/0.200/0.192，逐根增加小幅确定性
+色差，避免强工作灯下呈现整排白块。使用原有材质着色，无额外贴图开销；轨枕尺寸、
+钢轨和接触平面保持原参数。轨道生成检查通过，新GUI世界随下一步宽角灯派生。
+
+
+### 前后偏转15°、100°工作灯与深灰轨枕
+
+按用户最终方向：左前/右前灯分别在前方偏左/右15°，左后/右后灯在后方偏左/右15°，
+全部下俯15°。外锥总角100°、内锥总角80°（Ogre2/SDF填写完整角度），范围8 m，
+保留四盏灯、原强度与阴影。`preview.work_light_*` 可调整方向和内外总角。
+轨枕采用较暗混凝土灰及小幅逐根色差；生成工具重新生成轨道，避免从旧世界
+复制后仍保留旧颜色。没有增加高清贴图或灯数量。
+
+当前曝光条带与整段隧道的240°采集壁面须区分：灯可以照亮前后别处的侧壁，
+但名义直轨居中状态下避开当前拍摄条带。灯轴与前/后方向夹角约21.09°，加上50°
+半锥角后小于90°，整个光锥保持向前/向后；其最小轴向单位分量约0.324。
+发光点轴向±0.51 m，当前条带半宽0.42613 m，轴向间隔约83.87 mm。
+覆盖测试同时检查前后钢轨和侧壁目标在光锥内，以及整个240°扫描的两端像素
+处于全部四灯光锥外。120°几何检查也成立，但按用户最终决定收窄到100°，留出更大角度余量。
+
+反射仍采用0.002弱补光近似；本次没有进行实测光度标定或车载灯的OptiX直接传输，
+派生场景记录 `work_light_preview.direct_transport_in_capture=false`。名义几何避开
+当前条带不等于证明所有安装偏差、弯轨或透镜配光尾部情况下均无干扰。
+原始混凝土、裂缝、板缝及扫描灯光学资产无需重新烘焙。
+
+灯面采用暖白自发光材质；Gazebo聚光灯本身只照亮受光物体，普通反射材质不能
+表现迎面看到的发光面。该材质使灯面在暗环境下可见，不增加光源数量；
+该版本尚未加入光晕/眩光，下一节补充GUI显示效果；真实光度响应仍未标定。
+
+100°版本 `gui_contact_forward100_v7` / `contact_gui_forward100_v7` GUI烟测完成3 m、
+284445行，成像进度RTF0.99444，整卡显存采样峰值6575 MiB。灯面暖白自发光
+已人工检查；28项相关场景测试通过。默认GUI入口切换到此版本。扫描光源的
+更强自发光显示和镜头眩光效果在下一步处理。
+
+### 灯面及扫描COB发光与GUI眩光
+
+扫描透镜原有低自发光值0.10/0.12/0.12改为暖白1.0/0.96/0.90，工作灯沿用暖白
+灯面；扫描壁面projector及OptiX扫描照明不变。使用Gazebo Rendering 8原生
+[LensFlarePass](https://gazebosim.org/api/rendering/8/classgz_1_1rendering_1_1LensFlarePass.html)，
+自定义GUI插件 `SsbLightGlare` 只挂到带 `user-camera` 标记的观察相机。
+
+资源限制：五个候选发光面只选最强可见源，最多一个全屏GPU后处理；代理点光源
+强度为0、不开阴影，不参与照明。每200 ms最多5条遮挡射线，优先用GPU拾取。
+比较交点到观察相机的距离，避免原生遮挡逻辑按世界原点距离比较造成平移错误。
+发光面背对视角、离开视锥或被挡住时关闭眩光，遮挡更新延迟最多约200 ms；
+朝向与距离每帧更新。该效果不是物理标定，只有最强灯具有光晕，其余灯面仍可见。
+不模拟多灯光晕叠加，也不改原始Mono8、相机曝光或OptiX光度模型。
+
+默认派生世界更新到 `gui_contact_glare_v8`，GUI入口增加 `GZ_GUI_PLUGIN_PATH`。
+迎面预览确认灯面和暖白光晕可见，扫描COB透镜亮起；宽角100°/偏转15°和深灰轨枕
+保持上一版本。首次3 m烟测284445行，成像进度RTF0.99453，整卡显存采样峰值6506 MiB；
+该次为调试运行，期间编译来源发生变动，不作为来源验收记录。相关31项Python测试通过。
+
+最终眩光验收会话 `contact_gui_glare_final_v8`：284445行，成像RTF0.99469，
+整卡显存采样峰值6539 MiB；22项采集检查全部通过，包括来源一致性、有效区无丢行
+及333行批次重放逐字节一致。迎面遮挡板对照确认被挡灯的光晕消失。
+
+### 工作灯收窄至90°与底部扫描光斑排查
+
+按最新要求，四灯外锥总角改为90°，内锥80°，前后方向偏左/右15°、下俯15°。
+默认世界为 `gui_contact_glare90_v9`，保留已经验证的发光灯面和GUI眩光。
+
+底部扫描光斑消失的实现原因：`add_strip_projector` 将投影限制在半径2.75 m附近
+的2.65–2.85 m薄层，没有对扫描架、底盘等近场物体施加条光，也不产生它们的条光阴影。
+底部的衬砌投影还会被道床/车体挡住观察视线；这不等于光源到衬砌之间做了真实遮挡。
+支架若实际截获条光，其迎光面应该被照亮，后方应该有阴影。当前GUI不能验证这一点。
+后续需要带遮挡的条形配光照明；单纯调小projector近裁剪面会让光穿过支架继续投影，
+不能作为正确修复。OptiX当前光学网格仅含衬砌及板缝等，不应把GUI现象解释成采集层
+已经计算了车体遮挡。此次仅修正工作灯角度并记录问题，未改变扫描照明模型。
+
+90°版本31项相关测试通过，生成世界中的四灯外锥均核验为π/2；
+前后轨道/侧壁目标覆盖及当前曝光条带避让检查通过。本次未重复RTF测量，
+上一版0.99469的结果仅作为眩光实现的性能记录。
+
+### 扫描条光近场受光与遮挡修复
+
+扫描照明GUI不再使用远场贴花。17束来自同一出光点的窄锥聚光灯，沿轴向展开，
+叠加成名义半高宽约1.21 m×0.12 m的条光；每束开启真实深度阴影，支架等近场
+物体可以受光并遮挡后方光束。全部随head链接旋转，底部不以采集门控关闭灯。
+沿长轴约10%的强度起伏和边缘轮廓差异是有限光束近似，不用它替代OptiX光度模型。
+GUI源在透镜顶点前6 mm，避免不透明透镜外观遮住自己；实际OptiX出光位置不改。
+
+资源约束：17束扫描光+4盏90°工作灯，共21张2048²阴影图，低于Ogre2的25张上限；
+不开多次反射、不增加光学采样率、不增加大纹理。初试3 m采集284445行，GUI成像
+实时率0.99410，整卡显存采样峰值6861 MiB；较前次眩光运行6539 MiB约多322 MiB。
+该差值为跨运行观测，不等同于严格隔离测得的新增GPU分配量，也不把RTF称为GUI帧率。
+
+180°朝下的固定视角开/关灯对照：扫描架底梁出现窄亮条，开灯后该区域最大增加
+143显示灰度级；底梁后方车体选取区域差值为0，没有出现同样的穿透光斑。
+诊断截图在 `local_data/stage_b/strip_down_{on,off}_v10/screenshots/` 的2026-10-01版本；
+早先未固定视角的两张不用于定量对照。31项相关Python测试通过，其中光束半高宽
+根据生成的SDF配光独立计算。默认世界更新为 `gui_strip_shadow_final_v10`。
+
+最终会话 `contact_strip_shadow_final_v10`：284445行，GUI成像RTF0.99470，整卡显存
+采样峰值6844 MiB。22项采集验收全部通过，含来源一致性、有效区域无丢行及333行
+批次重放逐字节一致。对照截图验证的是GUI显示遮挡；采集层没有据此声称加入了机器人遮挡。
+
+### 光晕开关及采集光学状态复核
+
+GUI左上角增加“光晕”开关，每次启动默认关闭。关闭时跳过眩光遮挡查询与后处理；
+第一次开启才创建相关资源，再次关闭保留可复用对象但停用效果。实际照明、阴影、
+发光灯面及OptiX采集均不由该开关控制。
+
+复核OptiX：20×20 mm等效COB有限面源，2×2高斯积分，共4个光源采样点；
+与相机一起旋转，轴向偏移-115 mm。特制透镜以八次超高斯包络表示，名义半高宽
+1.2 m×0.12 m，包含距离平方衰减、入射角、粗糙漫反射及场景直接遮挡。
+凸衬砌内部无遮挡条件允许跳过部分阴影射线，槽口等仍实际追踪；当前光学网格无机器人。
+另有0.002弱反射补光近似，未追踪实际多次反射、透镜折射，也未标定绝对lux。
+GUI的17束窄光束不参与OptiX成像，不应把两个实现视为同一个光度模型。
+
+镜头畸变与离线暗场/平场现已接入，结果见下节；90 mm镜头资料核查见DESIGN末节。
+参考4w `agv_linescan/calibration.py`、`docs/OFFLINE_PROCESSING.md` 和
+`docs/archive/stage2/STAGE2_CONCRETE_CORRECTION.md`：保留原图，从独立标定影像
+估计系数，先平场后横向重采样，再交给后续拼接阶段。
+
+光晕开关验证：Gazebo插件构建通过；实际QML组件经Qt事件测试确认启动关闭、点击开启、再次点击关闭。
+Gazebo中已验证开启后创建光晕通道；WSL的xdotool重复点击未可靠命中控件，不将其记作实机双向点击通过。
+
+
+### 0.6%畸变及采后校正（2026-10-01）
+
+Stage B默认k1=0.006，正向定义为
+q_d=q_u*(1+0.006*q_u²)，逆映射用于OptiX射线。单行传感器不把旋转行号当作第二像面坐标。
+已有缓存capture.yaml不会自动改变；本机GUI新默认配置为`local_data/stage_b/gui_optics_v11/capture.yaml`，
+场景仍复用v10模型。旧会话保留理想镜头，不能套用新标定。
+
+标靶流程（配置必须包含OptiX场景路径；输出目录不得已存在）：
+
+```bash
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_bench --config CONFIG --output BENCH --render
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration fit --bench BENCH/bench.json --output CALIBRATION.json
+PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply --session SESSION --calibration CALIBRATION.json --output CORRECTED
+```
+
+标定只从暗场、均匀亮场和尺寸已知的条纹标靶图像估计，不读取渲染射线或hits.bin。
+独立验证使用错开7 mm的条纹，以及不同反射率/角度的均匀亮场，均经过OptiX采样和照明路径。
+`local_data/stage_b/optical_bench_v2/calibration_v2.json`：独立标靶最大残差0.01958 px；
+亮场列变异系数6.0455%→0.3033%；有效输出列98.584%，边缘不外推。
+这验证的是当前理想无噪声相机及固定标定距离，不代表真机精度，也不能消除壁面材料/姿态变化。
+校正输出保留float32线性DN、逐像素有效掩码与来源哈希，每256行处理；完整隧道拼接尚未实现。
+
+`tools/run_gz_gui.sh`在关闭GUI并确认采集完整后，自动执行上述离线校正，输出到会话的
+`processed/optical/`；默认使用上述标定，可用`SSB_OPTICAL_CALIBRATION`指定另一套。
+光学身份不匹配时拒绝套用；标定缺失/不匹配不会损坏已经保存的raw。
+
+
+本轮全链路验收：`sessions/contact_optics_v11`实际前进2.9999995 m，采集284445行，
+GUI开启、光晕默认关闭时成像进度RTF=0.99412，动力学RTF=0.99968；整卡显存采样峰值7014 MiB。
+使用333行批次重放与原始采集逐字节一致，Stage B检查全部通过（含来源、CPU射线、资源预算）。
+离线校正到`sessions/contact_optics_v11_corrected`，70个块，21.09秒、峰值RSS约152 MiB；
+此离线耗时不计入上述采集实时率。固定显示曲线对照图：
+`local_data/stage_b/gui_optics_v11/correction_comparison.png`，两侧均为原像素裁切，无锐化/自动对比度。
+
+回归验证：37项C++/CUDA测试、61项Python测试通过；GUI启动脚本通过bash语法检查。
+
+
+### 后续补充：RViz与任务面板（待实现，2026-10-01）
+
+新增必做项：RViz显示隧道、轨道和车辆；GUI设置起点/前进距离，并支持开始、暂停、继续及结束。
+还需统一任务状态、仿真时间和位姿接口，验证暂停续采的编码器/门控连续性，以及RViz与GZ联合资源占用。
+详细需求见DESIGN第13节“RViz与任务控制界面”。本次仅记录需求，未开发相关功能。
+
+## 2026-10-01 审核修复与当前演示入口
+
+当前入口为 `local_data/stage_b/contact_demo`，配置、世界及标定成套生成；旧v10/v11和普通光学哈希仅作历史记录。真值身份使用私密随机密钥HMAC，启动前检查标定；安装高度配置化、异常流水线停止、相对路径修复及固定2 m局部光学坐标已实现。详见 [审核修复记录](REVIEW_FIXES_2026-10-01.md)。真实Gazebo两插件短程回归及100/150 m光学平移回归已通过，后者不代表已完成全长度采集。资产迁移与新克隆步骤见README。
