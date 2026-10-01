@@ -3,6 +3,7 @@ import json
 import shutil
 from pathlib import Path
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ from ssb_tools.stage_b_scene import load_spec, make_world
 from ssb_tools.demo_bundle import export_demo
 from ssb_tools.session import sha256_file
 from ssb_tools.validate_contact import physical_world_report
+from ssb_tools.validate_stage_b import gazebo_world_checks
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -180,3 +182,43 @@ def test_physical_snapshot_never_falls_back_to_source(built, tmp_path, missing):
     (snapshot/missing).unlink()
     with pytest.raises((FileNotFoundError, ValueError)):
         physical_world_report(tmp_path, None, config, spec, folder/'world.sdf')
+
+
+@pytest.fixture
+def archived(built, tmp_path):
+    folder, config, spec = built
+    snapshot = tmp_path/'evaluation/physical'; snapshot.mkdir(parents=True)
+    for name in ('world.sdf', 'physical_manifest.json'):
+        shutil.copyfile(folder/name, snapshot/name)
+    for image in (folder/'track').glob('rail_top*.png'):
+        shutil.copyfile(image, snapshot/image.name)
+    (snapshot/'spec.yaml').write_text(yaml.safe_dump(spec))
+    summary = {'files': {str(p.relative_to(tmp_path)): sha256_file(p) for p in snapshot.iterdir()}}
+    prov = {'pose_source': 'gazebo_contact', 'inputs': {'world': {
+        'path': str(tmp_path/'removed_source/world.sdf'), 'sha256': sha256_file(snapshot/'world.sdf')}}}
+    return SimpleNamespace(root=tmp_path, summary=summary), copy.deepcopy(config), prov
+
+
+def test_gazebo_validation_uses_snapshot_without_original_world(archived):
+    session, config, prov = archived
+    assert not Path(prov['inputs']['world']['path']).exists()
+    assert all(c['state'] == 'pass' for c in gazebo_world_checks(session, config, prov))
+
+
+def test_archived_world_origin_and_input_identity_are_checked(archived):
+    session, config, prov = archived
+    snapshot = session.root/'evaluation/physical'
+    edit_world(snapshot, lambda root: root.find("world/model[@name='scan_car']/pose")
+               .__setattr__('text', '8 0 0 0 0 0'))
+    checks = {c['name']: c for c in gazebo_world_checks(session, config, prov)}
+    assert checks['physical_snapshot_identity']['state'] == 'fail'
+    assert checks['gazebo_world_matches_capture_origin']['state'] == 'fail'
+
+
+def test_legacy_unprotected_snapshot_requires_recapture(archived):
+    session, config, prov = archived
+    session.summary['files'].pop('evaluation/physical/world.sdf')
+    assert gazebo_world_checks(session, config, prov)[0]['state'] == 'fail'
+    shutil.rmtree(session.root/'evaluation/physical')
+    with pytest.raises(FileNotFoundError, match='recapture legacy sessions'):
+        gazebo_world_checks(session, config, prov)

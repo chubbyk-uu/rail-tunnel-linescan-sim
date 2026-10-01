@@ -22,6 +22,33 @@ def runtime_source_budget(scene, scene_path):
     return read_json(Path(scene_path).parent/scene['surface']['file'])['resources']['gpu_source_budget_bytes']
 
 
+def gazebo_world_checks(session, source, prov):
+    """Contact validation uses only protected archived physical inputs."""
+    from .physical_world import snapshot_inputs
+    from .validate_contact import physical_world_report
+    entry = prov['inputs']['world']
+    checks = []
+    if prov['pose_source'] == 'gazebo_contact':
+        snapshot, world_path, spec = snapshot_inputs(session.root)
+        archived = {str(p.relative_to(session.root)) for p in snapshot.rglob('*') if p.is_file()}
+        registered = {n for n in session.summary.get('files', {}) if n.startswith('evaluation/physical/')}
+        checks.append(check('physical_snapshot_identity',
+                            PASS if archived == registered and sha256_file(world_path) == entry['sha256'] else FAIL,
+                            unprotected=sorted(archived-registered), missing=sorted(registered-archived),
+                            world_matches_capture_input=sha256_file(world_path) == entry['sha256']))
+        match = physical_world_report(session.root, None, source, spec)
+        failed = [n for n, v in match['checks'].items() if not v['passed']]
+        checks.append(check('physical_world_matches_truth', PASS if match['passed'] else FAIL, failed=failed))
+    else:
+        world_path = Path(entry['path'])
+    car = ET.parse(world_path).getroot().find("world/model[@name='scan_car']")
+    world_x = float(car.findtext('pose').split()[0])
+    checks.append(check('gazebo_world_matches_capture_origin',
+                        PASS if abs(world_x-source['motion']['start_x_m']) < 1e-9 else FAIL,
+                        world_start_x_m=world_x, capture_start_x_m=source['motion']['start_x_m']))
+    return checks
+
+
 def optical_assets(session):
     archive=read_json(session.root/'evaluation/optical_assets.json')
     backend=read_json(session.root/'config/backend.json')['describe']
@@ -127,19 +154,7 @@ def main(argv=None):
         checks.append(provenance_chain(session,cfg,truth,prov,backend));checks.append(planned_motion(session.summary))
         source=yaml.safe_load((session.root/'evaluation/config_source.yaml').read_text())
         if prov.get('pose_source') in ('gazebo','gazebo_contact'):
-            world_entry=prov['inputs']['world'];world_path=Path(world_entry['path'])
-            car=ET.parse(world_path).getroot().find("world/model[@name='scan_car']")
-            world_x=float(car.find('pose').text.split()[0])
-            checks.append(check('gazebo_world_matches_capture_origin',
-                                PASS if abs(world_x-source['motion']['start_x_m'])<1e-9 else FAIL,
-                                world_start_x_m=world_x,capture_start_x_m=source['motion']['start_x_m']))
-            if prov['pose_source']=='gazebo_contact':
-                # Rails, wheels and springs of the archived world snapshot must be exactly the truth.
-                from .validate_contact import physical_world_report
-                from .physical_world import spec_for
-                match=physical_world_report(session.root,None,source,spec_for(world_path.parent.parent/'capture.yaml'),world_path)
-                failed=[n for n,v in match['checks'].items() if not v['passed']] if match else ['no physical-world snapshot']
-                checks.append(check('physical_world_matches_truth',PASS if match and match['passed'] else FAIL,failed=failed))
+            checks.extend(gazebo_world_checks(session, source, prov))
         poses=session.evaluation('pose_stream');row_truth=session.evaluation('row_truth')
         timing,rows,dropped=compare_timing(session,cfg,truth,poses);checks.extend(timing)
         checks.extend([accounting(rows,dropped),valid_region(source,poses,rows,row_truth,dropped),

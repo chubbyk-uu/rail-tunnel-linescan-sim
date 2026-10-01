@@ -53,7 +53,10 @@ def validate(root, config, spec=None, world=None):
     root = Path(root); config = Path(config); c = yaml.safe_load(config.read_text())
     spec_path = Path(spec) if spec else (config.parent/'spec.yaml' if (config.parent/'spec.yaml').exists()
                                           else Path(__file__).resolve().parents[1]/'config/stage_b_scene.yaml')
-    robot = yaml.safe_load(spec_path.read_text())['robot']; measure = robot['measuring_wheel']
+    from .physical_world import snapshot_inputs
+    physical_spec = (snapshot_inputs(root)[2] if (root/'evaluation/physical').exists()
+                     else yaml.safe_load(spec_path.read_text()))
+    robot = physical_spec['robot']; measure = robot['measuring_wheel']
     a = np.genfromtxt(root/'evaluation/contact.csv', delimiter=',', names=True)
     settle = a[(a['t'] >= -.5) & (a['t'] < 0)]; a = a[a['t'] >= 0]
     b = np.genfromtxt(root/'metadata/encoders.csv', delimiter=',', names=True)
@@ -65,7 +68,7 @@ def validate(root, config, spec=None, world=None):
     tr = c['truth'].get('odo_right_diameter_m', c['truth']['wheel_diameter_m'])
     base_z, _ = mount_geometry(c)
     half = robot['wheelbase_m']/2
-    rail_y = (yaml.safe_load(spec_path.read_text())['track']['gauge_m']+yaml.safe_load(spec_path.read_text())['track']['head_width_m'])/2
+    rail_y = (physical_spec['track']['gauge_m']+physical_spec['track']['head_width_m'])/2
     estimated = np.pi/count*(b['count_left']*dl+b['count_right']*dr)/2
     target = np.deg2rad(c['motion']['start_theta_deg'])+2*np.pi*estimated/c['motion']['advance_per_rev_m']
     # Measuring-wheel centres from the true body pose and the slide displacement (body z).
@@ -176,7 +179,7 @@ def validate(root, config, spec=None, world=None):
                 checks['wheels_always_loaded'] = bool(not unloaded.any())
             checks['static_deflection'] = bool(abs(static/deflection-1) < .02)
             report.update(static_deflection_m=float(static), load_ratio_range=[float(loads.min()), float(loads.max())])
-    physical = physical_world_report(root, config, c, yaml.safe_load(spec_path.read_text()), world)
+    physical = physical_world_report(root, config, c, physical_spec, world)
     if physical is not None:
         checks['physical_world_matches_truth'] = physical['passed']; report['physical_world'] = physical
     report = dict(passed=all(checks.values()), checks=checks, **report,
