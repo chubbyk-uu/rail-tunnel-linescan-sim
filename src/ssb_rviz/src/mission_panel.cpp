@@ -15,6 +15,8 @@
 #include <QDir>
 #include <QFile>
 #include <QRegularExpression>
+#include <QDockWidget>
+#include <QMainWindow>
 
 namespace ssb_rviz {
 MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
@@ -68,6 +70,12 @@ void MissionPanel::onInitialize() {
   auto qos = rclcpp::QoS(1).transient_local();
   subscription_ = node->create_subscription<std_msgs::msg::String>("/ssb/mission/status", qos,
     [this](std_msgs::msg::String::ConstSharedPtr msg){Q_EMIT received(QString::fromStdString(msg->data));});
+  QTimer::singleShot(0, this, [this] {
+    QWidget* parent = parentWidget();
+    while (parent && !qobject_cast<QDockWidget*>(parent)) parent = parent->parentWidget();
+    auto* main = qobject_cast<QMainWindow*>(window());
+    if (main && parent) main->addDockWidget(Qt::RightDockWidgetArea, qobject_cast<QDockWidget*>(parent));
+  });
   // Opt-in local review: read the render buffer directly (WSLg X11 grabs are black).
   review_dir_ = qEnvironmentVariable("SSB_RVIZ_REVIEW_DIR");
   if (!review_dir_.isEmpty()) {

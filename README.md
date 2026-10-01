@@ -66,7 +66,7 @@ A stage A session is about 0.9 GB. Stage A has no persistent `truth.optical_key`
 
 For the RViz mission panel (start position, travel distance, start/pause/resume/stop),
 run `tools/run_mission.sh` after building all packages. The panel uses English, requires
-at least 1 m of travel and shows a low-rate raw image thumbnail on the right.
+at least 1 m of travel and shows a low-rate raw image thumbnail at the lower left, with mission controls on the right.
 Add `--gz-gui` for both viewers.
 Each task creates a fresh session; closing RViz drains raw capture. Optical correction is
 run separately before stitching.

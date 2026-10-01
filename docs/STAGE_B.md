@@ -271,7 +271,7 @@ tools/run_mission.sh --demo local_data/stage_b/contact_demo --output-root sessio
 
 RViz 复用 SDF 的视觉几何、颜色和预览贴图，转换为 Collada 并缓存到 `local_data/rviz_preview/`，每张纹理最长边 512 px；不加载 0.1 mm 光学纹理。环境 MarkerArray 缓存后以 1 Hz 重发，防止新任务时间归零或手动 Reset 清空显示后场景丢失；不重读或重新烘焙资产。车辆各 link 由 10 Hz TF 更新，完整原始图像不经 DDS。显示话题 `/ssb/sim_truth/scene`、`/ssb/sim_truth/joint_states` 和坐标系 `sim_truth/*` 只供观察；位姿来自仿真物理状态，严禁用于盲重建。`/clock` 与 Gazebo 仿真时间一致，RViz 启用 `use_sim_time`，支持新任务时的时间归零。RViz 光照只是观察效果，不模拟采集条光的光度和阴影。
 
-右侧 Live Capture Preview 显示最近已保存原始块的缩略图及行号范围；默认一个块为 4096 行。只读取写完且回读哈希通过后原子重命名的 `.u8`，不读取未完成块或依赖采集结束的索引。预览按面积平均缩小至最多 512×512、保留 Mono8 DN，每秒最多更新一次，同一块复用编码缓存；PNG 与会话/行号信息通过单条低频消息 `/ssb/mission/preview` 发送，消息小于 512 KiB。任务切换清空旧图，按会话身份拒绝延迟的旧图；暂停和结束后显示最后已保存图。预览不做畸变、平场、对比度或锐化校正，原始文件不变；文件访问错误只显示预览错误，不中断采集。
+任务控制面板位于右侧，左下方（Displays 下方）的 Live Capture Preview 显示最近已保存原始块的缩略图及行号范围；默认一个块为 4096 行。只读取写完且回读哈希通过后原子重命名的 `.u8`，不读取未完成块或依赖采集结束的索引。预览按面积平均缩小至最多 512×512、保留 Mono8 DN，每秒最多更新一次，同一块复用编码缓存；PNG 与会话/行号信息通过单条低频消息 `/ssb/mission/preview` 发送，消息小于 512 KiB。任务切换清空旧图，按会话身份拒绝延迟的旧图；暂停和结束后显示最后已保存图。预览不做畸变、平场、对比度或锐化校正，原始文件不变；文件访问错误只显示预览错误，不中断采集。
 
 运行日志在 `local_data/mission_logs/`，各任务私有输入、世界和服务器日志在 `local_data/mission_runs/`；任务状态变更与最终真值写入会话的 `evaluation/mission.json`。关闭 RViz 会结束活动任务并等待原始图像保存；任务自然结束后 RViz 保持打开。可选的 GZ GUI 保留最后画面，新任务复用它连接新的服务器。
 

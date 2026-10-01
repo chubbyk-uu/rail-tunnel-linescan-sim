@@ -20,6 +20,7 @@ LivePreviewPanel::LivePreviewPanel(QWidget* parent) : Panel(parent) {
   image_label_->setObjectName("raw_preview_image");
   image_label_->setAlignment(Qt::AlignCenter);
   image_label_->setMinimumSize(256, 200);
+  image_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
   image_label_->setStyleSheet("background: #181818; color: #b8b8b8;");
   layout->addWidget(image_label_, 1);
   caption_ = new QLabel("No active capture"); caption_->setWordWrap(true);
@@ -43,12 +44,21 @@ void LivePreviewPanel::onInitialize() {
     rclcpp::QoS(1).transient_local(), [this](std_msgs::msg::String::ConstSharedPtr msg) {
       Q_EMIT missionReceived(QString::fromStdString(msg->data));
     });
-  // Default layout puts capture controls on the left and the image on the right.
+  // Keep the compact raw thumbnail below Displays; mission controls occupy the right.
   QTimer::singleShot(0, this, [this] {
     QWidget* parent = parentWidget();
     while (parent && !qobject_cast<QDockWidget*>(parent)) parent = parent->parentWidget();
     auto* main = qobject_cast<QMainWindow*>(window());
-    if (main && parent) main->addDockWidget(Qt::RightDockWidgetArea, qobject_cast<QDockWidget*>(parent));
+    if (!main || !parent) return;
+    auto* preview = qobject_cast<QDockWidget*>(parent);
+    main->addDockWidget(Qt::LeftDockWidgetArea, preview);
+    for (auto* dock : main->findChildren<QDockWidget*>()) {
+      if (dock->windowTitle() == "Displays" && main->dockWidgetArea(dock) == Qt::LeftDockWidgetArea) {
+        main->splitDockWidget(dock, preview, Qt::Vertical);
+        main->resizeDocks({dock, preview}, {350, 370}, Qt::Vertical);
+        break;
+      }
+    }
   });
 }
 
