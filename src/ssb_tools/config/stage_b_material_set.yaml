@@ -1,4 +1,4 @@
-# Stage B wall background material set (DESIGN.md §6, docs/STAGE_B_TEXTURE_AUDIT.md "选材决定").
+# Stage B wall background material set (DESIGN.md §6, docs/history/STAGE_B_TEXTURE_AUDIT.md "选材决定").
 # Sources live under a local sources root (not in git): <root>/<dir>/downloads.json + PNG channels.
 schema: ssb.material_set.v1
 seed: 20260930
@@ -16,7 +16,7 @@ layout:
   # same-orientation crops may share at most max_same_orientation_overlap of their source area
   # (translation-matchable duplicates would mislead strip registration).
   # With 4 streak-preserving orientations, >= 0.5 m is infeasible for one 0.57 m2 source;
-  # 0.45 m still exceeds the +/-0.3 m repetition search (docs/STAGE_B_TEXTURE_AUDIT.md).
+  # 0.45 m still exceeds the +/-0.3 m repetition search (docs/history/STAGE_B_TEXTURE_AUDIT.md).
   min_repeat_m: 0.45
   near_crop_m: 0.03
   max_same_orientation_overlap: 0.25

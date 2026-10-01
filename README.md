@@ -31,6 +31,8 @@ colcon build && colcon test && colcon test-result --all
 
 GPU tests run through `tools/with_optix_runtime.sh`, which drops the inherited
 `LD_LIBRARY_PATH`; anything ROS-dependent must be sourced inside the wrapped command.
+Rebuild before collecting after any new commit, including documentation-only commits:
+capture provenance checks both the Git revision and the source tree fingerprint.
 The real Gazebo server regression (both plugins, stage A default command, assembly
 mismatch rejection) runs separately:
 `python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression_NEW`.
@@ -38,21 +40,23 @@ mismatch rejection) runs separately:
 ## Stage A
 
 ```bash
+# Use fresh output directories; sessions/gz_a is the retained acceptance baseline.
 # Gazebo, headless; the process exits after every row is on disk.
-tools/run_gz.sh sessions/gz_a
+tools/run_gz.sh sessions/gz_a_NEW
 
 # Kinematic pose source, or re-imaging an archived pose stream without Gazebo.
 bash tools/with_optix_runtime.sh install/ssb_core/lib/ssb_core/ssb_render \
-  --config src/ssb_core/config/stage_a.yaml --session sessions/kin --realtime
+  --config src/ssb_core/config/stage_a.yaml --session sessions/kin_NEW --realtime
 bash tools/with_optix_runtime.sh install/ssb_core/lib/ssb_core/ssb_render \
-  --config src/ssb_core/config/stage_a.yaml --session sessions/rerender \
-  --poses sessions/gz_a/evaluation/pose_stream.bin --batch-rows 333
+  --config src/ssb_core/config/stage_a.yaml --session sessions/rerender_NEW \
+  --poses sessions/gz_a_NEW/evaluation/pose_stream.bin --batch-rows 333
 
 # Acceptance report (evaluation/reports/stage_a.json); --compare checks byte identity.
 source install/setup.bash
-ros2 run ssb_tools validate_stage_a sessions/gz_a --compare sessions/rerender
+ros2 run ssb_tools validate_stage_a sessions/gz_a_NEW --compare sessions/rerender_NEW
 ```
 
+Choose other fresh names if the `_NEW` directories already exist; capture refuses to overwrite them.
 A stage A session is about 0.9 GB. Stage A has no persistent `truth.optical_key`, so its
 `optical_signature` changes on every run and cannot be compared across runs (DESIGN §8.4).
 

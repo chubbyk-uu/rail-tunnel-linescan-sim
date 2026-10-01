@@ -16,7 +16,8 @@
 2026-10-01 清理了 `local_data/` 和 `sessions/` 中不再使用的数据（约 152 GB），清单见
 `local_data/data_inventory_2026-10-01.tsv`。以上文档引用的会话和资产目录大多已删除，
 文中的数字是当时实测结果的记录，原始数据不再保留。需要复核时，按现行代码和资产重新采集；
-采集可确定性复现（重放逐字节一致）。
+重新采集不能保证还原已删除旧会话的原始数据。逐字节一致的确定性重放仅适用于
+位姿流、资产、成像配置与运行环境均保持相同的情况。
 
 仍保留的数据：`sessions/gz_a`（阶段 A 基线）、`sessions/review_portable_gui_final` 与
 `sessions/review_portable_replay`（阶段 B 最终验收），以及现行演示依赖的资产（见 STAGE_B.md）。
