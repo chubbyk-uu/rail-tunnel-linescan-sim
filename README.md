@@ -5,8 +5,9 @@ vehicle dynamics, a custom OptiX backend images every encoder-triggered line, an
 stages reconstruct the unrolled tunnel wall.
 
 Status (2026-10-01): stage A (geometry and timing) is accepted. Stage B (scene,
-lighting, rail contact, lens calibration) has a validated 3 m capture. The full 20 m
-capture, stitching and the RViz mission UI are not implemented yet.
+lighting, rail contact, lens calibration) has a validated 3 m capture and a user-accepted
+visual baseline ([review record](docs/STAGE_B.md#71-画面复核与基线冻结2026-10-01)).
+The RViz mission UI is next; full 20 m capture and stitching are not implemented yet.
 
 ## Documentation
 
