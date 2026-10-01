@@ -18,6 +18,12 @@ def export_demo(demo, output):
     config=yaml.safe_load((demo/'capture.yaml').read_text())
     if not config['truth'].get('optical_key'):
         raise ValueError('bundle requires a prepared persistent optical key')
+    contact=config.get('contact',{}).get('enabled',False)
+    if contact:
+        from .physical_world import check
+        spec=yaml.safe_load((demo/'spec.yaml').read_text())
+        if not check(config,spec,demo/'world/world.sdf')['passed']:
+            raise ValueError('source physical world differs from its configuration')
     output.mkdir(parents=True);assets=output/'assets';assets.mkdir()
     copied={};hashes={}
 
@@ -64,6 +70,19 @@ def export_demo(demo, output):
             element.text='../'+str(target.relative_to(output))
     (output/'world').mkdir();ET.indent(world)
     world.write(output/'world/world.sdf',encoding='unicode',xml_declaration=True)
+    if contact:
+        shutil.copyfile(demo/'spec.yaml',output/'spec.yaml')
+        physical=json.loads((demo/'world/physical_manifest.json').read_text())
+        # Heightmap bytes do not change; only their bundled basenames change.
+        for rail in physical['actual']['rails']:
+            model=world.getroot().find(f"world/model[@name='{rail['name']}']")
+            image=output/'world'/model.findtext('link/collision/geometry/heightmap/uri')
+            if sha256_file(image)!=rail['sha256']:
+                raise ValueError(f"bundled heightmap content changed: {rail['name']}")
+            rail['file']=image.name
+        (output/'world/physical_manifest.json').write_text(json.dumps(physical,indent=2)+'\n')
+        if not check(config,spec,output/'world/world.sdf')['passed']:
+            raise ValueError('exported physical world differs from its configuration')
     for name in ('calibration.json','gui.config'):
         if not (demo/name).is_file():raise ValueError(f'missing prepared demo {name}')
         shutil.copyfile(demo/name,output/name)

@@ -1,4 +1,5 @@
 import copy
+import json
 import shutil
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -10,6 +11,8 @@ from PIL import Image
 
 from ssb_tools.physical_world import check
 from ssb_tools.stage_b_scene import load_spec, make_world
+from ssb_tools.demo_bundle import export_demo
+from ssb_tools.session import sha256_file
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -134,3 +137,30 @@ def test_partial_range_heightmap_is_rejected(built, tmp_path):
     data = np.asarray(Image.open(path)).astype(float)
     Image.fromarray(np.rint(5000+data*.5).astype(np.uint16), mode='I;16').save(path)
     assert 'rail_profile_matches_configuration' in failed(check(config, spec, folder/'world.sdf'))
+
+
+def test_contact_bundle_survives_relocation_without_source(built, tmp_path):
+    folder, config, spec = clone(built, tmp_path)
+    # Physics-only miniature demo; remove visual dependencies, retain all contacts.
+    tree = ET.parse(folder/'world.sdf')
+    for link in tree.getroot().iter('link'):
+        for visual in list(link.findall('visual')): link.remove(visual)
+    tree.write(folder/'world.sdf')
+    demo = tmp_path/'demo'; demo.mkdir(); shutil.move(folder, demo/'world')
+    world = demo/'world/world.sdf'
+    world.write_text(world.read_text().replace(str(folder), str(demo/'world')))
+    config['truth']['optical_key'] = '0'*64
+    config['render']['optical_scene'] = 'scene.json'
+    (demo/'scene.json').write_text('{}')
+    (demo/'capture.yaml').write_text(yaml.safe_dump(config))
+    (demo/'spec.yaml').write_text(yaml.safe_dump(spec))
+    (demo/'calibration.json').write_text('{}'); (demo/'gui.config').write_text('<gui/>')
+    bundle = tmp_path/'bundle'; manifest = export_demo(demo, bundle)
+    shutil.rmtree(demo)
+    moved = tmp_path/'relocated'; shutil.move(bundle, moved)
+    assert check(config, spec, moved/'world/world.sdf')['passed']
+    for name, digest in manifest['files'].items():
+        assert sha256_file(moved/name) == digest
+    packed = json.loads((moved/'world/physical_manifest.json').read_text())
+    assert all(r['file'].startswith('0') for r in packed['actual']['rails'])
+    assert yaml.safe_load((moved/'spec.yaml').read_text()) == spec

@@ -69,6 +69,8 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
   --demo local_data/stage_b/contact_demo --output /tmp/subway_demo_bundle
 ```
 
+接触模式资产包同时导出 `spec.yaml` 和 `world/physical_manifest.json`，同步高度场改名后的引用并保留图像内容哈希；导出前后都检查物理世界与配置一致。缺少规格或物理清单的旧包需从完整演示重新导出。
+
 复制为新克隆的 `local_data/stage_b/contact_demo` 即可运行。资产包含有生成端真值（HMAC 密钥、畸变），只用于生成采集，不能作为盲重建评估的输入。已验证的副本是 `local_data/stage_b/review_portable_relocated/`（327 个文件，约 1.8 GiB）。该历史副本仍从 −130° 开始，现行 `contact_demo` 从 180° 开始；恢复资产包后须核对起始相位和配置哈希。要保留新相位，应从现行演示重新导出成套资产包。
 
 ## 3. 现行场景与成像配置
@@ -466,4 +468,3 @@ python3 -m ssb_tools.validate_contact SESSION_dynamics --config CAPTURE.yaml --w
 平直轨演示可用 `--track-chord-mm 0 --track-cross-level-mm 0 --wheel-deflection-mm 0` 重新生成。
 
 **实时率**：加测量轮后物理每步约 0.95 ms，接近 1 ms 步长，采集实时率降到 0.91。原因是钢轨高度场太密：高度场必须是 2ⁿ+1 的正方形，513 点、12 m 一段时，73 mm 宽的轨头上也有 513 行，每个车轮每步要检查几千个格子。改为 129 点、3 m 一段（沿轨仍约 23 mm）后，每步降到 0.49 ms。同一路段离线重放，v5 网格只比 v4 慢约 2%。再降采样收益很小：在默认演示世界中（不含插件），129 点每步 0.36 ms，65 点 0.34 ms，33 点 0.34 ms，平直轨（无高度场）0.16 ms。剩余开销来自车轮与高度场的接触处理，与采样密度无关；65 点以下段数成倍增加，所以保持 129 点。
-
