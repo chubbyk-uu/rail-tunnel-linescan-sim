@@ -53,15 +53,15 @@ def run(output):
     spec=load_spec(REPO/'src/ssb_tools/config/stage_b_scene.yaml')
     results=[run_stage_a(output)]
     from ssb_tools.wheel_stiffness import calibrate
-    from ssb_tools.stage_b_robot import WHEEL_MASS_KG, AXLE_MASS_KG
-    sprung=spec['robot']['total_mass_kg']-4*(WHEEL_MASS_KG+AXLE_MASS_KG)
-    stiffness=calibrate(.0002,.2,sprung,AXLE_MASS_KG,WHEEL_MASS_KG,.1,base['motion']['sample_period_s'])
+    from ssb_tools.stage_b_robot import WHEEL_MASS_KG, AXLE_MASS_KG, running_wheel_load_mass
+    stiffness=calibrate(.0002,.2,running_wheel_load_mass(spec),AXLE_MASS_KG,WHEEL_MASS_KG,.1,base['motion']['sample_period_s'])
     rough=dict(track_irregularity=dict(model='beijing_subway_vertical_v1',chord10_max_m=.002,seed=20261001,
-                                       band_m=[.5,10.],common_mode=True),
+                                       cross_level_tier_m=.002,band_m=[.5,10.],common_mode=False),
                wheel_compliance=dict(static_deflection_m=.0002,damping_ratio=.2,stiffness_n_m=stiffness['stiffness_n_m'],
                                      damping_n_s_m=stiffness['damping_n_s_m']))
     cases=[('ideal',False,None,{}),('contact',True,None,{}),('mismatch',True,'assembly height differs',{}),
-           ('irregular',True,None,rough),('irregular_mismatch',True,'track irregularity differs',rough)]
+           ('irregular',True,None,rough),('irregular_mismatch',True,'track irregularity differs',rough),
+           ('start_mismatch',True,'start position differs',{})]
     for name,contact,bad,truth in cases:
         folder=output/name;folder.mkdir()
         c=copy.deepcopy(base);c['robot']={'base_reference_z_m':.37,'scan_axis_height_m':1.645}
@@ -69,6 +69,9 @@ def run(output):
         c['camera']['width']=64;c['acceptance']['valid_x_m']=[3.,3.1]
         c['render']['debug_column_stride']=16
         c['contact']={'enabled':contact,'settle_s':.5}
+        if contact:
+            for section in ('truth','calibration'):
+                c[section].update(odo_left_diameter_m=.08,odo_right_diameter_m=.08)
         c['truth'].update(copy.deepcopy(truth))
         for mesh in ('panels','joints','filler','gap'):
             (folder/(mesh+'.obj')).write_text('v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n')
@@ -81,6 +84,9 @@ def run(output):
         if name=='mismatch':
             tree=ET.parse(world);pose=tree.find("world/model[@name='scan_car']/link[@name='head']/pose")
             p=list(map(float,pose.text.split()));p[2]+=.01;pose.text=' '.join(map(str,p));tree.write(world)
+        if name=='start_mismatch':
+            tree=ET.parse(world);pose=tree.find("world/model[@name='scan_car']/pose")
+            p=list(map(float,pose.text.split()));p[0]+=.5;pose.text=' '.join(map(str,p));tree.write(world)
         env=dict(os.environ,SSB_WORLD=str(world),GZ_PARTITION=f'ssb_plugin_test_{os.getpid()}_{name}')
         session=folder/'session'
         with (folder/'run.log').open('w') as log:

@@ -40,7 +40,7 @@ TERMINAL = ('idle', 'complete', 'stopped', 'failed')
 
 def initial_state(config, base_pose):
     return dict(sim_time=0., scan=math.radians(config['motion']['start_theta_deg']),
-                wheel_angles=[0.]*4, base_pose=base_pose,
+                wheel_angles=[0.]*4, measure_angles=[0.]*2, base_pose=base_pose,
                 s_hat=0., speed=0., scan_rate=0., motion_complete=False, capture={})
 
 
@@ -283,8 +283,8 @@ class MissionManager(Node):
         self.truth_clock.publish(clock)
         self.tf.sendTransform(self.preview.frames(latest, clock.clock))
         js = JointState(); js.header.stamp = clock.clock
-        js.name = ['scan', 'odometer', 'wheel_joint_1', 'wheel_joint_2', 'wheel_joint_3']
-        js.position = [latest['scan'], *latest['wheel_angles']]
+        js.name = ['scan', 'odometer', 'wheel_joint_1', 'wheel_joint_2', 'wheel_joint_3', 'measure_left', 'measure_right']
+        js.position = [latest['scan'], *latest['wheel_angles'], *latest.get('measure_angles', [0., 0.])]
         self.joints.publish(js)
 
     def publish_image_preview(self):

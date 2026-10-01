@@ -17,7 +17,8 @@ inline void CheckTrackAndWheels(const gz::sim::Model& car,const gz::sim::EntityC
                                 const std::string& config_text) {
   const YAML::Node truth=YAML::Load(config_text)["truth"];
   const auto irregularity=truth?truth["track_irregularity"]:YAML::Node();
-  const bool irregular=irregularity && irregularity["chord10_max_m"] && irregularity["chord10_max_m"].as<double>()>0;
+  auto positive=[&](const char* key){return irregularity && irregularity[key] && irregularity[key].as<double>()>0;};
+  const bool irregular=positive("chord10_max_m") || positive("cross_level_tier_m");
   int surfaces=0;
   ecm.Each<gz::sim::components::Model,gz::sim::components::Name>(
     [&](const gz::sim::Entity&,const gz::sim::components::Model*,const gz::sim::components::Name* name){

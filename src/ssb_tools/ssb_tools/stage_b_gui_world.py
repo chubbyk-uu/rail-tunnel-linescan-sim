@@ -38,7 +38,7 @@ def prepare(world,config,spec,output,mode):
         config=dict(file='inputs/config.yaml',source_file=str(config),sha256=digest(config)),
         spec=dict(file='inputs/spec.yaml',source_file=str(spec),sha256=digest(spec)),
         world_sha256=digest(output/'world.sdf'),ambient_rgb=rgb,
-        limitations=('Rigid contact, front drive and rear dual encoders; original optical assets retained.' if c.get('contact',{}).get('enabled') else 'GUI world only; optical configuration unchanged; ideal carriage constraint retained.'))
+        limitations=('Rigid contact, front drive, encoders on two spring-loaded measuring wheels; original optical assets retained.' if c.get('contact',{}).get('enabled') else 'GUI world only; optical configuration unchanged; ideal carriage constraint retained.'))
     (output/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report))
     return report

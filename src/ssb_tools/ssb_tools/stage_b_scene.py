@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import math
+from collections import defaultdict
 from pathlib import Path
 import resource
 import time
@@ -241,13 +242,6 @@ def lip_profile(g, c, rho, steps):
     return points, t
 
 
-def lip_half_width(g, c, rho, depth):
-    """Lateral position of the inner fillet/wall at a given depth (where the filler meets it)."""
-    t = rho*math.tan(math.pi/8)
-    if depth >= c+t: return g
-    return g+rho-math.sqrt(max(0., rho*rho-(depth-c-t)**2))
-
-
 def wiggle(rng, spec):
     """Smooth along-joint edge offset (m) as a function of arc length: a few sinusoids."""
     w = spec['joint_edge_wiggle']; k = len(w['wavelengths_m']); a = w['rms_m']*math.sqrt(2/k)
@@ -288,6 +282,7 @@ def make_meshes(out, config, spec):
                               for name in ('panels.obj','joints.obj','filler.obj','gap.obj'))
     panels, joints = [], []
     INF = float('inf')
+    ring_lip_nodes, long_lip_nodes = defaultdict(set), defaultdict(set)
 
     def lip_points(n):
         """Lip polyline (s, depth) for an inner-edge offset n."""
@@ -301,6 +296,17 @@ def make_meshes(out, config, spec):
             if s1 <= u <= s0: return d0+(d1-d0)*(s0-u)/(s0-s1) if s0 > s1 else d1
         return INF
 
+    FILLER_OVERLAP = 5e-5   # filler tucks behind the wall: no seam along the joint (hidden)
+    UNDERLAY_DEPTH, UNDERLAY_HALF = 1e-4, 3e-4   # hidden strip under crossing-patch seams
+
+    def wall_half_width(n, depth):
+        """Lateral position of the lip/wall polyline (the actual faceted surface) at a depth."""
+        pts = lip_points(n)+[(g+n, D+seal)]
+        for (s0,d0),(s1,d1) in zip(pts[:-1],pts[1:]):
+            if d0 <= depth <= d1:
+                return s1 if d1 == d0 else s0+(s1-s0)*(depth-d0)/(d1-d0)
+        return g+n
+
     def cross_section(section, depth_top, n_left, n_right):
         """Per side: lip points plus the wall down to where it is hidden, and filler half widths."""
         filled = section['state'] == 'filled'
@@ -310,7 +316,7 @@ def make_meshes(out, config, spec):
             bottom = (c+max(t,depth_top)+1e-3) if filled else D+seal
             pts.append((g+n, bottom))
             sides[side] = pts
-        widths = {side:lip_half_width(g,c,rho,c+depth_top)+n for side,n in ((-1,n_left),(1,n_right))}
+        widths = {side:wall_half_width(n,c+depth_top)+FILLER_OVERLAP for side,n in ((-1,n_left),(1,n_right))}
         return sides, widths
 
     def sweep(mesh, curve_a, curve_b, to_world, toward):
@@ -322,8 +328,9 @@ def make_meshes(out, config, spec):
     rings = {}
     for ring in range(math.floor(lo/width), math.ceil(hi/width)):
         left, right = ring*width, (ring+1)*width
-        x0 = left+outer if lo < left else lo
-        x1 = right-outer if right < hi else hi
+        # A ring boundary within 1e-9 m of a tunnel end is that end (ring*width rounding).
+        x0 = left+outer if lo+1e-9 < left else lo
+        x1 = right-outer if right < hi-1e-9 else hi
         if x1 <= x0: continue
         a = math.radians(-p['angles_deg'][0]/2 + (ring % 2)*p['alternating_stagger_deg'])
         edges = [a]
@@ -335,7 +342,7 @@ def make_meshes(out, config, spec):
         rings[ring] = dict(left=left, right=right, x0=x0, x1=x1, edges=edges, longs=longs)
     ring_joints = {}
     for ring, R in rings.items():
-        if not lo < R['left'] < hi: continue
+        if not lo+1e-9 < R['left'] < hi-1e-9: continue
         recess = float(rng.uniform(*p['joint_filler_recess_m']))   # one level per ring joint
         sections = []
         for index,(u,v) in enumerate(zip(R['edges'][:-1],R['edges'][1:])):
@@ -375,6 +382,7 @@ def make_meshes(out, config, spec):
                             continue   # junction patch instead
                         world = lambda s_,d_,end,q0=q0,q1=q1,side=side: point(X+side*s_, q1 if end else q0, r+d_, zc)
                         sweep(top, s0[side][:len(profile)], s1[side][:len(profile)], world, (X,0.,zc))
+                        ring_lip_nodes[(X, side)].update((q0, q1))
                         sweep(groove, s0[side][len(profile)-1:], s1[side][len(profile)-1:], world, (X,0.,zc))
                 if depth is not None:
                     rad = r+c+depth
@@ -407,10 +415,10 @@ def make_meshes(out, config, spec):
         A, sec = L['A'], L['section']; fl = c+sec['filler_recess_m']; fr = c+RJ['recess']
         x_of = lambda u: X+side*u
         n_ring = RJ['wig'][side](A*r)                   # ring inner-edge offset at this crossing
-        u_ref = lip_half_width(g,c,rho,fr)+n_ring        # ring filler edge at the crossing centre
+        u_ref = wall_half_width(n_ring,fr)+FILLER_OVERLAP   # ring filler edge at the crossing centre
         # Nodes as fractions between the ring filler edge (per angle, watertight with the ring
         # filler) and the panel boundary; include the lip facet and filler-level positions.
-        cand = {q for q,_ in lip_points(n_ring)} | {lip_half_width(g,c,rho,fl)+n_ring}
+        cand = {q for q,_ in lip_points(n_ring)} | {wall_half_width(n_ring,fl)+FILLER_OVERLAP}
         # Dense near the ring filler edge, where the lip/filler boundary cells would otherwise
         # form short steep facets.
         taus = sorted({round(v,9) for v in {i/4 for i in range(5)} | {.015,.03,.06} |
@@ -421,7 +429,7 @@ def make_meshes(out, config, spec):
         Aw = unwrap(A)
         ring_nodes = {(q-Aw)*r for q in qs if abs(q-Aw)*r < outer}
         xm = x_of((u_ref+outer)/2)
-        hw = {sd:lip_half_width(g,c,rho,fl)+L['wig'][sd](xm) for sd in (-1,1)}
+        hw = {sd:wall_half_width(L['wig'][sd](xm),fl)+FILLER_OVERLAP for sd in (-1,1)}
         s_nodes = sorted({round(v,9) for v in {-outer, outer, -hw[-1], hw[1]} |
                          {sd*q for sd in (-1,1) for q,_ in lip_points(L['wig'][sd](xm)) if q < outer} |
                          {-outer+2*outer*i/12 for i in range(13)} | ring_nodes |
@@ -438,20 +446,44 @@ def make_meshes(out, config, spec):
         U = [[u_min_at(A+q/r)+(outer-u_min_at(A+q/r))*tau for q in s_nodes] for tau in taus]
         grid = [[depth(U[i][j], q, taus[i]) for j,q in enumerate(s_nodes)] for i in range(len(taus))]
         toward = (X, 0., zc)
+        node = lambda a,b: point(x_of(U[a][b]), A+s_nodes[b]/r, r+grid[a][b][0], zc)
+        def underlay(mesh, ends, across_u, extend=(0, 0)):
+            """Hidden strip just below a seam of this height-field patch, spanning the seam on
+            both sides. The patch's edge vertices cannot all match its neighbours' (chords vs
+            arcs, differently spaced nodes), so a micrometre slit may remain; rays through it
+            meet the strip in the patch's own material instead of the backing. Both sides of
+            the seam lie above the strip, so it is never directly visible."""
+            (u0,s0,d0),(u1,s1,d1) = ends; w = UNDERLAY_HALF
+            # At patch corners the strip also runs on past the corner (three surfaces meet there).
+            if across_u: s0, s1 = s0-extend[0]*w*math.copysign(1, s1-s0), s1+extend[1]*w*math.copysign(1, s1-s0)
+            else: u0, u1 = u0-extend[0]*w*math.copysign(1, u1-u0), u1+extend[1]*w*math.copysign(1, u1-u0)
+            du, ds = (w, 0.) if across_u else (0., w)
+            pts = [point(x_of(u+k*du), A+(q+k*ds)/r, r+d+UNDERLAY_DEPTH, zc)
+                   for (u,q,d),k in (((u0,s0,d0),-1),((u1,s1,d1),-1),((u1,s1,d1),1),((u0,s0,d0),1))]
+            oriented(mesh, pts, toward)
+        seam = lambda a,b: (U[a][b], s_nodes[b], grid[a][b][0])
+        last_i, last_j = len(taus)-1, len(s_nodes)-1
+        stepped = [not (abs(grid[0][j][0]-fr) < 1e-9 and abs(grid[0][j+1][0]-fr) < 1e-9) for j in range(last_j)]
         for i in range(len(taus)-1):
             for j in range(len(s_nodes)-1):
                 corners = [(i,j),(i+1,j),(i+1,j+1),(i,j+1)]
                 is_fill = sum(grid[a][b][1] for a,b in corners) >= 3
-                pts = [point(x_of(U[a][b]), A+s_nodes[b]/r, r+grid[a][b][0], zc) for a,b in corners]
-                oriented(fill if is_fill else top, pts, toward)
+                mesh = fill if is_fill else top
+                oriented(mesh, [node(a,b) for a,b in corners], toward)
+                row_ends, col_ends = (j == 0, j+1 == last_j), (i == 0, i+1 == last_i)
+                if i == 0 and not stepped[j]: underlay(mesh, (seam(0,j), seam(0,j+1)), True, row_ends)
+                if i+1 == last_i: underlay(mesh, (seam(last_i,j), seam(last_i,j+1)), True, row_ends)
+                if j == 0: underlay(mesh, (seam(i,0), seam(i+1,0)), False, col_ends)
+                if j+1 == last_j: underlay(mesh, (seam(i,last_j), seam(i+1,last_j)), False, col_ends)
         # Step down/up to the ring filler along the ring filler edge.
         for j in range(len(s_nodes)-1):
+            if not stepped[j]: continue
             d0, d1 = grid[0][j][0], grid[0][j+1][0]
-            if abs(d0-fr) < 1e-9 and abs(d1-fr) < 1e-9: continue
             q0, q1 = A+s_nodes[j]/r, A+s_nodes[j+1]/r; u0, u1 = U[0][j], U[0][j+1]
-            oriented(fill if grid[0][j][1] and grid[0][j+1][1] else groove,
-                     [point(x_of(u0),q0,r+d0,zc),point(x_of(u1),q1,r+d1,zc),point(x_of(u1),q1,r+fr,zc),point(x_of(u0),q0,r+fr,zc)],
-                     point(x_of(u0-1e-3),(q0+q1)/2,r,zc))
+            mesh = fill if grid[0][j][1] and grid[0][j+1][1] else groove
+            inside = point(x_of(u0-1e-3),(q0+q1)/2,r,zc)
+            oriented(mesh,[point(x_of(u0),q0,r+d0,zc),point(x_of(u1),q1,r+d1,zc),point(x_of(u1),q1,r+fr,zc),point(x_of(u0),q0,r+fr,zc)],inside)
+            underlay(mesh, ((u0,s_nodes[j],fr),(u1,s_nodes[j+1],fr)), True, (j == 0, j+1 == last_j))
 
     def longitudinal_joint(R, L, closed):
         A, section, wig = L['A'], L['section'], L['wig']; x0, x1 = R['x0'], R['x1']
@@ -466,6 +498,7 @@ def make_meshes(out, config, spec):
                 for xa_,xb_,(s0,_),(s1,_) in zip(xs[:-1],xs[1:],shapes[:-1],shapes[1:]):
                     world = lambda s_,d_,end,xa_=xa_,xb_=xb_,side=side: point(xb_ if end else xa_, A+side*s_/r, r+d_, zc)
                     sweep(top, s0[side][:len(profile)], s1[side][:len(profile)], world, above((xa_+xb_)/2))
+                    long_lip_nodes[(section['ring'], section['index'], side)].update((xa_, xb_))
                     sweep(groove, s0[side][len(profile)-1:], s1[side][len(profile)-1:], world, point((xa_+xb_)/2,A,r+c,zc))
             if depth is not None:
                 rad = r+c+depth
@@ -494,17 +527,73 @@ def make_meshes(out, config, spec):
             for (sl,dl),(sl2,dl2),(sr2,dr2),(sr,dr) in zip(Lp[:-1],Lp[1:],Rp[1:],Rp[:-1]):
                 oriented(groove,[point(x,A-sl/r,r+dl,zc),point(x,A-sl2/r,r+dl2,zc),point(x,A+sr2/r,r+dr2,zc),point(x,A+sr/r,r+dr,zc)],ref)
 
+    def unique_sorted(values, key=lambda v: v):
+        out = []
+        for v in sorted(values, key=key):
+            if not out or key(v)-key(out[-1]) > 1e-12: out.append(v)
+        return out
+
+    def panel(ring, R, index, L):
+        """Panel face between its lips, without T-junctions: its boundary vertices are exactly the
+        lips' outer-edge vertices (ring lips at x0/x1, longitudinal lips along both sides).
+        A zipper joins the x0 and x1 node rows; the two side edges fan out to the longitudinal
+        lip nodes. Angular spans stay within the node spacing (<= the panel step)."""
+        a, b = L['A']+outer/r, R['edges'][index+1]-outer/r
+        mid = (a+b)/2
+        def row(X, side):
+            if (X, side) not in ring_lip_nodes:     # tunnel end: plain subdivision
+                n = max(1, math.ceil((b-a)/step))
+                return [(a+(b-a)*i/n,)*2 for i in range(n+1)]
+            nodes = []
+            for q in ring_lip_nodes[(X, side)]:
+                unwrapped = q+2*math.pi*round((mid-q)/(2*math.pi))
+                if a-1e-9 <= unwrapped <= b+1e-9: nodes.append((unwrapped, q))
+            nodes = unique_sorted(nodes, key=lambda v: v[0])
+            if not nodes or abs(nodes[0][0]-a) > 1e-9: nodes.insert(0, (a, a))
+            if abs(nodes[-1][0]-b) > 1e-9: nodes.append((b, b))
+            return nodes
+        x0, x1 = R['x0'], R['x1']
+        bottom = row(R['left'], 1) if ring in ring_joints else row(None, 0)
+        top_row = row(R['right'], -1) if ring+1 in ring_joints else row(None, 0)
+        nxt = R['longs'][index+1] if index+1 < len(R['longs']) else R['longs'][0]
+        def chain(key):
+            xs = unique_sorted(long_lip_nodes.get(key, ()))
+            xs = [x for x in xs if x0+1e-9 < x < x1-1e-9]
+            return [x0]+xs+[x1]
+        left, right = chain((ring, index, 1)), chain((ring, nxt['section']['index'], -1))
+        # Vertices are (x, sort angle, exact angle); point() gets the lips' exact float inputs.
+        B = [(x0, q, e) for q, e in bottom]; T = [(x1, q, e) for q, e in top_row]
+        tris = []; i = j = 0
+        while i < len(B)-1 or j < len(T)-1:
+            if j == len(T)-1 or (i < len(B)-1 and B[i+1][1] <= T[j+1][1]):
+                tris.append((B[i], B[i+1], T[j])); i += 1
+            else:
+                tris.append((B[i], T[j+1], T[j])); j += 1
+        def emit(v):
+            centre = point(sum(p[0] for p in v)/3, sum(p[1] for p in v)/3, r-1., zc)
+            pts = [point(p[0], p[2], r, zc) for p in v]
+            oriented(top, pts+[pts[-1]], centre)
+        def fan(tri, corner_b, corner_t, xs, angle):
+            """Split the side edge corner_b-corner_t at the longitudinal lip's x nodes."""
+            apex = next(p for p in tri if p is not corner_b and p is not corner_t)
+            chain = [corner_b]+[(x, angle, angle) for x in xs[1:-1]]+[corner_t]
+            for p0, p1 in zip(chain[:-1], chain[1:]): emit((p0, p1, apex))
+        fan(tris[0], B[0], T[0], left, a)
+        for tri in tris[1:-1]: emit(tri)
+        fan(tris[-1], B[-1], T[-1], right, b)
+        panels.append(dict(ring=ring, index=index, x_m=[x0, x1], angle_rad=[a, b]))
+
     try:
         # Opaque lining behind all slot floors: closes crossings, no renderer fallback.
         cylinder_strip(groove,lo,hi,-math.pi,math.pi,edge_radius,zc,step)
         for ring, R in rings.items():
             if ring in ring_joints: ring_joint(ring)
             for index, L in enumerate(R['longs']):
-                b = R['edges'][index+1]
-                cylinder_strip(top, R['x0'], R['x1'], L['A']+outer/r, b-outer/r, r, zc, step)
                 patched = lambda rj: rj in ring_joints and crossing_ok(ring_joints[rj], L)
                 longitudinal_joint(R, L, (ring in ring_joints and not patched(ring), ring+1 in ring_joints and not patched(ring+1)))
-                panels.append(dict(ring=ring, index=index, x_m=[R['x0'],R['x1']], angle_rad=[L['A']+outer/r,b-outer/r]))
+        for ring, R in rings.items():
+            for index, L in enumerate(R['longs']):
+                panel(ring, R, index, L)
     finally:
         top.close()
         groove.close()
@@ -627,6 +716,13 @@ def prepare(config_path, spec_path, output, surface_path=None):
     output.mkdir(parents=True)
     try:
         geometry = make_meshes(output, config, spec)
+        # The lining must be closed: no ray from inside may reach the backing (ssb_tools.mesh_audit).
+        from .mesh_audit import audit
+        report = audit(output, config['tunnel']['radius_m'], config['tunnel']['axis_z_m'])
+        (output/'mesh_audit.json').write_text(json.dumps(report, indent=2)+'\n')
+        if report['leaks']['edges'] and geometry['joint_state_counts']['filled'] == len(geometry['joints']):
+            raise ValueError(f"optical lining leaks at {report['leaks']['edges']} edges; see mesh_audit.json")
+        geometry['light_leak_edges'] = report['leaks']['edges']
         previews = None
         if surface_path:
             from .stage_b_preview import prepare_preview
@@ -645,7 +741,7 @@ def prepare(config_path, spec_path, output, surface_path=None):
                     preparation_peak_rss_bytes=peak_rss_bytes(),
                     limitations=['Bind these hashed optical meshes with stage_b_optics for capture.',
                                  'Handholes remain to implement; joint states are recorded in geometry.joints.',
-                                 ('Rigid wheel/rail friction contact; front drive and rear dual encoders. '
+                                 ('Rigid wheel/rail friction contact; front drive, rear free running wheels, encoders on two spring-loaded measuring wheels. '
                                   'Contact fidelity requires dynamics validation.' if config.get('contact',{}).get('enabled') else
                                   'Prismatic guide and velocity-commanded wheels with no wheel contacts; '
                                   'not a validated wheel/rail contact model.')])

@@ -330,7 +330,8 @@ def test_joint_profile_states_and_filler_geometry(tmp_path,inputs):
     v,rad=radii('panels.obj')   # lining at r, rounded lips down to the wall top at r+c+t
     tan=p['joint_edge_radius_m']*math.tan(math.pi/8)
     # Crossing patches may slope from a lip down to the filler level (at most c + max recess).
-    assert rad.min()>=r-1e-9 and rad.max()<=r+c+max(tan,p['joint_filler_recess_m'][1])+1e-9 and (rad>r+c).any()
+    # Crossing-patch seam underlays lie 0.1 mm below the filler they back.
+    assert rad.min()>=r-1e-9 and rad.max()<=r+c+max(tan,p['joint_filler_recess_m'][1])+1e-4+1e-9 and (rad>r+c).any()
     _,rad=radii('gap.obj');assert np.allclose(rad,r+D+p['joint_gap_depth_m'],atol=1e-9)
     v,rad=radii('filler.obj')
     deepest=c+max(p['joint_filler_recess_m'][1],p['joint_damage']['loss_depth_m'][1])+1e-9
@@ -346,8 +347,8 @@ def test_joint_profile_states_and_filler_geometry(tmp_path,inputs):
     assert all(j['losses_m'] and all(l[2]>j['filler_recess_m'] for l in j['losses_m']) for j in damaged)
 
 
-def test_lip_profile_is_tangent_and_meets_filler_on_the_fillet():
-    from ssb_tools.stage_b_scene import lip_profile,lip_half_width
+def test_lip_profile_is_tangent():
+    from ssb_tools.stage_b_scene import lip_profile
     g,c,rho=.005,.003,.001
     pts,t=lip_profile(g,c,rho,8)
     s=np.array([q[0] for q in pts]);d=np.array([q[1] for q in pts])
@@ -358,9 +359,21 @@ def test_lip_profile_is_tangent_and_meets_filler_on_the_fillet():
     seg=np.diff(np.column_stack([s,d]),axis=0);ang=np.degrees(np.arctan2(seg[:,1],-seg[:,0]))
     assert ang[0]<45/8+1e-6 and ang[-1]>90-45/8-1e-6 and np.isclose(ang[8],45,atol=1e-6)
     assert np.all(np.diff(ang)>=-1e-9)                             # convex lip: monotonic turning
-    for depth in np.linspace(c,c+t,7):                             # filler edge lies on the inner fillet
-        x=lip_half_width(g,c,rho,depth)
-        assert np.isclose(np.hypot(x-(g+rho),depth-(c+t)),rho,atol=1e-12) or np.isclose(x,g)
+
+
+def test_production_lining_has_no_light_leaks(tmp_path,inputs):
+    # Two ring joints with all their crossings: panels, lips, walls, filler and crossing patches
+    # must close the lining; the backing behind it may never be visible from the tunnel.
+    import json,subprocess,sys
+    config,spec = inputs
+    config['tunnel'].update(x_min_m=0,x_max_m=3.6)   # also an end exactly on a ring boundary
+    make_meshes(tmp_path,config,spec)
+    # A fresh single-threaded process may fork its probe workers safely.
+    subprocess.run([sys.executable,'-m','ssb_tools.mesh_audit',str(tmp_path),'--output',str(tmp_path/'audit.json')],
+                   capture_output=True)
+    report=json.loads((tmp_path/'audit.json').read_text())
+    assert report['boundary_edges_probed']>10000
+    assert report['leaks']['edges']==0, report['leaks']['examples'][:3]
 
 
 def test_crack_refinement_keeps_topology_and_width_range(inputs):
@@ -523,26 +536,41 @@ def test_track_sleepers_and_contact_planes(tmp_path,inputs):
     assert max(v[2] for v in vertices)==pytest.approx(0)
 
 
-def test_contact_front_drive_rear_encoders_and_free_guides(tmp_path,inputs):
+def test_contact_front_drive_measuring_wheel_encoders_and_free_guides(tmp_path,inputs):
     from ssb_tools.stage_b_robot import make_robot
     config,spec=inputs;config['contact']={'enabled':True}
-    config['truth'].update(odo_left_diameter_m=.198,odo_right_diameter_m=.202)
+    with pytest.raises(ValueError,match='measuring-wheel diameter'):make_robot(tmp_path,config,spec)
+    config['calibration'].update(odo_left_diameter_m=.08,odo_right_diameter_m=.08)
+    config['truth'].update(odo_left_diameter_m=.0798,odo_right_diameter_m=.0803)
     car=make_robot(tmp_path,config,spec)
+    m=spec['robot']['measuring_wheel'];rail_y=(spec['track']['gauge_m']+spec['track']['head_width_m'])/2
     assert car.find("joint[@name='carriage']") is None
     assert all(j.findtext('parent')!='world' for j in car.findall('joint'))
     plugin=car.find('plugin');assert plugin.get('name')=='ssb_gazebo::ContactSystem'
-    for tag in ('left_drive','right_drive','left_encoder','right_encoder'):
+    for tag in ('left_drive','right_drive'):
         joint=car.find(f"joint[@name='{plugin.findtext(tag)}']")
-        link=car.find(f"link[@name='{joint.findtext('child')}']")
-        x=float(link.findtext('pose').split()[0])
-        assert (x>0) == tag.endswith('drive')
-        assert link.find('collision') is not None
-    for joint,diameter in [('odometer',.198),('wheel_joint_2',.202)]:
+        assert float(car.find(f"link[@name='{joint.findtext('child')}']").findtext('pose').split()[0])>0
+    # Encoders sit on the measuring wheels: wheel <- revolute - slider <- preloaded vertical slide - base.
+    for tag,side,sign,diameter in (('left_encoder','left',1,.0798),('right_encoder','right',-1,.0803)):
+        joint=car.find(f"joint[@name='{plugin.findtext(tag)}']")
+        assert joint.get('name')==f'measure_{side}' and joint.findtext('child')==f'measure_{side}_wheel'
+        slide=car.find(f"joint[@name='measure_{side}_slide']")
+        assert slide.get('type')=='prismatic' and slide.findtext('parent')=='base'
+        assert slide.findtext('child')==joint.findtext('parent') and slide.findtext('axis/xyz')=='0 0 1'
+        k=float(slide.findtext('axis/dynamics/spring_stiffness'));ref=float(slide.findtext('axis/dynamics/spring_reference'))
+        assert k*(0-ref)==pytest.approx(m['preload_n'])  # downward preload at the nominal height
+        wheel=car.find(f"link[@name='measure_{side}_wheel']");x,y,z=map(float,wheel.findtext('pose').split()[:3])
+        assert (x,y,z)==pytest.approx((m['x_m'],sign*rail_y,diameter/2))
+        assert float(wheel.findtext('collision/geometry/sphere/radius'))==pytest.approx(diameter/2)
+    assert float(plugin.findtext('left_diameter'))==.08 and float(plugin.findtext('drive_diameter'))==.2
+    # Running wheels all use the running diameter and carry no encoder gear.
+    for joint in ('odometer','wheel_joint_1','wheel_joint_2','wheel_joint_3'):
         link=car.find(f"link[@name='{car.findtext('joint[@name="'+joint+'"]'+'/child')}']")
-        assert float(link.findtext('collision/geometry/cylinder/radius'))==pytest.approx(diameter/2)
+        assert float(link.findtext('collision/geometry/cylinder/radius'))==pytest.approx(.1)
+    assert car.find("link[@name='base']/visual[@name='odometer_encoder']") is None
     assert len([j for j in car.findall('joint') if '_guide_' in j.get('name')])==4
-    assert len(car.findall('link'))==10
-    assert sum(float(m.text) for m in car.findall('link/inertial/mass'))==pytest.approx(120)
+    assert len(car.findall('link'))==14
+    assert sum(float(v.text) for v in car.findall('link/inertial/mass'))==pytest.approx(120)
 
 
 def test_work_light_cones_cover_rails_and_side_walls_and_cast_shadows(tmp_path,inputs):

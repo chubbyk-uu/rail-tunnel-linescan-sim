@@ -132,6 +132,9 @@ Config Config::Parse(const std::string& text) {
   c.calibration.head_mount_x_m = Get<double>(cal, "head_mount_x_m", "calibration.");
 
   c.contact_enabled=root["contact"] && root["contact"]["enabled"] && root["contact"]["enabled"].as<bool>();
+  // Contact mode odometry runs on dedicated measuring wheels, not the running-wheel diameter.
+  if(c.contact_enabled)Check(cal["odo_left_diameter_m"] && cal["odo_right_diameter_m"] && truth["odo_left_diameter_m"] &&
+                             truth["odo_right_diameter_m"],"contact mode requires explicit truth/calibration odo_left/right_diameter_m");
   c.odo_left_calibrated=cal["odo_left_diameter_m"]?cal["odo_left_diameter_m"].as<double>():c.calibration.wheel_diameter_m;
   c.odo_right_calibrated=cal["odo_right_diameter_m"]?cal["odo_right_diameter_m"].as<double>():c.calibration.wheel_diameter_m;
   c.odo_left_true=truth["odo_left_diameter_m"]?truth["odo_left_diameter_m"].as<double>():c.truth.wheel_diameter_m;
@@ -246,7 +249,7 @@ nlohmann::json Config::ObservableJson() const {
                  {"max_queued_batches", max_queued_batches}};
   j["storage"] = {{"block_rows", block_rows}};
   j["derived"] = {{"counts_per_rev", CountsPerRev()}, {"rows_per_rev", RowsPerRev()}};
-  if(contact_enabled){j["contact"]={{"enabled",true},{"layout","front-drive/rear-encoders"}};
+  if(contact_enabled){j["contact"]={{"enabled",true},{"layout","front-drive/measuring-wheel-encoders"}};
     j["calibration"]["odo_left_diameter_m"]=odo_left_calibrated;j["calibration"]["odo_right_diameter_m"]=odo_right_calibrated;}
   return j;
 }

@@ -1,4 +1,4 @@
-// Contact-driven front wheels; scan servo reads rear encoder counts only.
+// Contact-driven front wheels; scan servo reads the two spring-loaded measuring-wheel encoders only.
 #include <gz/plugin/RegisterMore.hh>
 #include <gz/sim/System.hh>
 #include <gz/sim/Model.hh>
@@ -45,6 +45,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
         gz::sim::Joint j(model.JointByName(ecm,n));if(!j.Valid(ecm))continue;j.EnablePositionCheck(ecm,true);springs_.push_back(j);}
       auto joint=[&](std::string name){gz::sim::Joint j(model.JointByName(ecm,name));if(!j.Valid(ecm))throw std::runtime_error("missing joint "+name);j.EnablePositionCheck(ecm,true);j.EnableVelocityCheck(ecm,true);return j;};
       for(int i=0;i<2;++i){enc_[i]=joint(sdf->Get<std::string>(i?"right_encoder":"left_encoder"));drive_[i]=joint(sdf->Get<std::string>(i?"right_drive":"left_drive"));diameter_[i]=sdf->Get<double>(i?"right_diameter":"left_diameter");}
+      for(int i=0;i<2;++i){slide_[i]=joint(i?"measure_right_slide":"measure_left_slide");rear_[i]=joint(i?"wheel_joint_2":"odometer");}
       drive_diameter_=sdf->Get<double>("drive_diameter");settle_=sdf->Get<double>("settle_s");
       if(!c_.contact_enabled || std::abs(diameter_[0]-c_.odo_left_calibrated)>1e-12 || std::abs(diameter_[1]-c_.odo_right_calibrated)>1e-12)throw std::runtime_error("contact world/config mismatch");
       scan_=joint("scan");scan_.ResetPosition(ecm,{c_.start_theta_rad});
@@ -55,9 +56,10 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       std::filesystem::create_directories(log_root_+"/metadata");std::filesystem::create_directories(log_root_+"/evaluation");
       obs_.open(log_root_+"/metadata/encoders.csv");truth_.open(log_root_+"/evaluation/contact.csv");
       obs_<<std::setprecision(17)<<"t,count_left,count_right,s_hat,theta_target,scan,scan_rate,torque_left,torque_right\n";
-      truth_<<std::setprecision(17)<<"t,x,y,z,roll,pitch,yaw,vx,vy,vz,left_angle,right_angle,left_rate,right_rate,scan,scan_rate"
+      truth_<<std::setprecision(17)<<"t,x,y,z,roll,pitch,yaw,vx,vy,vz,left_angle,right_angle,left_rate,right_rate,scan,scan_rate,"
+              "measure_slide_left,measure_slide_right"
             <<(springs_.empty()?"":",suspension_rear_left,suspension_front_left,suspension_rear_right,suspension_front_right")<<"\n";
-      std::cout<<"[contact] front drive, rear dual encoders; no world joint; diagnostics "<<log_root_<<std::endl;
+      std::cout<<"[contact] front drive, sprung measuring-wheel encoders; no world joint; diagnostics "<<log_root_<<std::endl;
     }catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}
   }
   void PreUpdate(const gz::sim::UpdateInfo& info,gz::sim::EntityComponentManager& ecm) override {
@@ -66,7 +68,12 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     if(std::abs(dt-c_.sample_period_s)>1e-10){std::cerr<<"contact timestep mismatch";std::_Exit(2);}
     if(!world_checked_){
       // Models after the vehicle in the SDF do not exist yet during Configure.
-      try{CheckTrackAndWheels(car_,ecm,c_.source_text);}
+      try{
+        CheckTrackAndWheels(car_,ecm,c_.source_text);
+        // Encoder distance is relative: a world spawned elsewhere would scan the wrong place.
+        if(std::abs(gz::sim::worldPose(base_.Entity(),ecm).Pos().X()-c_.start_x_m)>1e-3)
+          throw std::runtime_error("vehicle start position differs between world and capture configuration");
+      }
       catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}
       world_checked_=true;
     }
@@ -100,6 +107,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     if(!linear||!a||!b||!av||!bv||!th||!w||a->empty()||b->empty()||th->empty())return;
     auto rpy=pose.Rot().Euler();
     truth_<<t<<','<<pose.Pos().X()<<','<<pose.Pos().Y()<<','<<pose.Pos().Z()<<','<<rpy.X()<<','<<rpy.Y()<<','<<rpy.Z()<<','<<linear->X()<<','<<linear->Y()<<','<<linear->Z()<<','<<a->front()<<','<<b->front()<<','<<av->front()<<','<<bv->front()<<','<<th->front()<<','<<w->front();
+    for(const auto& j:slide_){auto q=j.Position(ecm);truth_<<','<<(q&&!q->empty()?q->front():std::nan(""));}
     for(const auto& j:springs_){auto q=j.Position(ecm);truth_<<','<<(q&&!q->empty()?q->front():std::nan(""));}
     truth_<<'\n';
     if(started_){
@@ -119,7 +127,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     if(t>=c_.profile.back()[0]){
       finished_=true;obs_.close();truth_.close();
       nlohmann::json summary={{"complete",true},{"end_s",t},{"s_hat",s_hat_},{"end_x",pose.Pos().X()},{"start_x",c_.start_x_m},
-        {"end_y",pose.Pos().Y()},{"end_z",pose.Pos().Z()},{"encoder_counts",{count_[0],count_[1]}},{"layout","front-drive/rear-encoders"},
+        {"end_y",pose.Pos().Y()},{"end_z",pose.Pos().Z()},{"encoder_counts",{count_[0],count_[1]}},{"layout","front-drive/measuring-wheel-encoders"},
         {"config",ssb::FileIdentity(config_path_)},{"mode","rigid friction contact"}};
       std::ofstream(log_root_+"/summary.json")<<summary.dump(2)<<'\n';
       if(pipeline_){pipeline_->Finish();completion_=std::async(std::launch::async,[this]{return pipeline_->Wait();});}
@@ -149,8 +157,9 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       {"scan_rate", rate && !rate->empty() ? rate->front() : 0.},
       {"speed", velocity ? velocity->X() : 0.},
       {"base_pose", {p.X(), p.Y(), p.Z(), q.X(), q.Y(), q.Z(), q.W()}},
-      {"wheel_angles", {position(enc_[0]), position(drive_[0]),
-                         position(enc_[1]), position(drive_[1])}},
+      {"wheel_angles", {position(rear_[0]), position(drive_[0]),
+                         position(rear_[1]), position(drive_[1])}},
+      {"measure_angles", {position(enc_[0]), position(enc_[1])}},
       {"capture", pipeline_ ? pipeline_->Progress() : nlohmann::json::object()}};
     gz::msgs::StringMsg message; message.set_data(status.dump());
     status_pub_.Publish(message);
@@ -161,7 +170,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     if(const char* p=std::getenv("SSB_WORLD"))options.inputs["world"]=ssb::FileIdentity(p);
     options.planned_end_s=c_.profile.back()[0];pipeline_=std::make_unique<ssb::Pipeline>(c_,std::move(renderer),options);
   }
-  ssb::Config c_;gz::sim::Joint enc_[2],drive_[2],scan_;gz::sim::Link base_;
+  ssb::Config c_;gz::sim::Joint enc_[2],drive_[2],slide_[2],rear_[2],scan_;gz::sim::Link base_;
   std::vector<gz::sim::Joint> springs_;
   gz::sim::Model car_;bool world_checked_=false;  // rear-left, front-left, rear-right, front-right
   gz::transport::Node transport_;

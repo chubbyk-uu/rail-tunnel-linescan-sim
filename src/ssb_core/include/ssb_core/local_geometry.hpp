@@ -4,6 +4,9 @@
 
 namespace ssb {
 constexpr double kOpticalChunkLength = 2.;
+// Neighbouring chunks overlap by this much: separate instances are not mutually watertight in
+// float32, and a ray exactly on a shared clip plane could otherwise slip between them.
+constexpr double kOpticalChunkOverlap = 1e-5;
 inline double OpticalFrame(double x) { return std::floor(x/kOpticalChunkLength)*kOpticalChunkLength+1.; }
 struct LocalOpticalVertex { float x,y,z; };
 struct OpticalChunk { double origin_x; unsigned first_triangle,triangle_count; };
@@ -14,6 +17,6 @@ struct LocalGeometry {
   std::vector<double> primitive_origin_x;
   std::vector<OpticalChunk> chunks;
 };
-// Clip long triangles at fixed 2 m boundaries. Internal clip edges are not optical defects.
+// Clip long triangles at fixed 2 m boundaries (with a small overlap). Internal clip edges are not optical defects.
 LocalGeometry LocalizeGeometry(const StageBAssets& assets);
 }  // namespace ssb

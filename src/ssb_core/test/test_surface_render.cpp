@@ -481,7 +481,7 @@ TEST_F(SurfaceFixture, LongDistanceLocalFramesMatchSourceMeshAndReplayAcrossBoun
     scene["surface"]=Entry("surface.json");scene["defects"]=Entry("defects.json");SaveScene();
     StageBAssets oracle(c);
     auto localized=LocalizeGeometry(oracle);
-    for(auto v:localized.vertices) EXPECT_LE(std::abs(v.x),1.f);
+    for(auto v:localized.vertices) EXPECT_LE(std::abs(v.x),1.f+float(kOpticalChunkOverlap));
     EXPECT_GT(localized.chunks.size(),1u);
     std::vector<RowJob> jobs(17);
     for(size_t i=0;i<jobs.size();++i) {

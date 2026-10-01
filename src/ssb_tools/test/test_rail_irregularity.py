@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 import yaml
 
-from ssb_tools.rail_irregularity import (chord_offsets, decode_heightmap, profile, segments, settings, shape,
-                                         SEGMENT_MAX_M, SEGMENT_OVERLAP_M)
+from ssb_tools.rail_irregularity import (chord_offsets, cross_shape, decode_heightmap, profile, rails, segments,
+                                         settings, shape, twist, SEGMENT_MAX_M, SEGMENT_OVERLAP_M)
 from ssb_tools.stage_b_scene import load_spec
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,12 +20,12 @@ def inputs():
             load_spec(ROOT/'src/ssb_tools/config/stage_b_scene.yaml'))
 
 
-def irregular(config, chord=.002, seed=20261001, length=None):
+def irregular(config, chord=.002, seed=20261001, length=None, cross=0.):
     c = copy.deepcopy(config)
     if length:
         c['tunnel']['x_max_m'] = c['tunnel']['x_min_m']+length
     c['truth']['track_irregularity'] = dict(model='beijing_subway_vertical_v1', chord10_max_m=chord, seed=seed,
-                                            band_m=[.5, 10.], common_mode=True)
+                                            cross_level_tier_m=cross, band_m=[.5, 10.], common_mode=cross == 0)
     return c
 
 
@@ -58,13 +58,41 @@ def test_profile_band_and_beijing_shape(inputs):
     assert ratio(.4, .2) == pytest.approx(16., rel=.02)     # well below the corner
 
 
+@pytest.mark.parametrize('cross', [.002, .004])
+@pytest.mark.parametrize('length', [23., 53.])
+def test_cross_level_and_5m_twist_are_bounded_by_the_tier(inputs, cross, length):
+    x, left, right, record = rails(irregular(inputs[0], .002, length=length, cross=cross))
+    d = left-right
+    level, twisted = np.abs(d).max(), np.abs(twist(x, d, 5.)).max()
+    assert max(level, twisted) == pytest.approx(cross) and min(level, twisted) <= cross
+    # Independent 5 m twist by direct sampling.
+    centres = np.arange(x[0], x[-1]-5, .005)
+    assert np.abs(np.interp(centres+5, x, d)-np.interp(centres, x, d)).max() <= cross*(1+1e-6)
+    assert record['metrics']['twist_5m_max_m'] == pytest.approx(twisted)
+    # Adding the differential leaves the common profile (and so the vertical tier) unchanged.
+    x0, z0, _ = profile(irregular(inputs[0], .002, length=length))
+    assert np.allclose((left+right)/2, z0, rtol=0, atol=1e-15)
+    # Cross-level only: both rails move in opposition.
+    x1, l1, r1, _ = rails(irregular(inputs[0], 0., length=length, cross=cross))
+    assert np.allclose(l1, -r1) and np.allclose(l1-r1, d)
+
+
+def test_cross_level_shape_asymptotes():
+    ratio = lambda a, b: cross_shape(a)/cross_shape(b)
+    assert ratio(.4, .2) == pytest.approx(16., rel=.02)     # short waves fall as wavelength^4
+    assert ratio(2e4, 1e4) == pytest.approx(.25, rel=.01)  # very long waves (beyond 2pi/Wr) roll off
+
+
 def test_flat_and_invalid_settings(inputs):
     assert settings(inputs[0]) is None
     c = irregular(inputs[0], 0.)
     assert settings(c) is None and profile(c) is None
-    for key, value in [('chord10_max_m', .02), ('band_m', [10, .5]), ('common_mode', False), ('model', 'other')]:
+    for key, value in [('chord10_max_m', .02), ('band_m', [10, .5]), ('common_mode', False), ('model', 'other'),
+                       ('cross_level_tier_m', -.001)]:
         bad = irregular(inputs[0]); bad['truth']['track_irregularity'][key] = value
         with pytest.raises(ValueError): settings(bad)
+    with pytest.raises(ValueError): settings(_with(irregular(inputs[0], cross=.002), common_mode=True))
+    assert settings(irregular(inputs[0], 0., cross=.002))['cross_model'].startswith('german')
 
 
 @pytest.mark.parametrize('length', [23., 53.])
@@ -77,31 +105,51 @@ def test_segments_overlap_and_stay_bounded(length):
     assert len(parts) == (2 if length == 23 else 5)
 
 
+def _with(config, **values):
+    config['truth']['track_irregularity'].update(values)
+    return config
+
+
 def test_track_heightmaps_match_profile_and_lower_guide_faces(tmp_path, inputs):
     from ssb_tools.stage_b_track import make_track, replace_track
     config, spec = inputs
-    c = irregular(config, .005)
+    c = irregular(config, .005, cross=.004)
     with pytest.raises(ValueError): make_track(tmp_path, c, spec)
     world = ET.Element('world'); ET.SubElement(world, 'model', name='track')
     replace_track(world, tmp_path, c, spec)
     surfaces = [m for m in world.findall('model') if m.get('name').startswith('rail_surface_')]
     assert len(surfaces) == 4 and len(world.findall("model[@name='track']")) == 1
-    x, z, _ = profile(c)
+    x, left, right, _ = rails(c)
+    z = np.minimum(left, right)
     record = yaml.safe_load((tmp_path/'track/rail_irregularity.json').read_text())
+    entries = {e['file']: e for e in record['heightmaps']}
     for entry in record['heightmaps']:
         xs, zs = decode_heightmap(tmp_path/'track'/entry['file'], entry)
-        assert np.abs(zs-np.interp(xs, x, z)).max() <= entry['quantization_m']+1e-12
+        rail = left if entry['rail'] == 'left' else right
+        assert np.abs(zs-np.interp(xs, x, rail)).max() <= entry['quantization_m']+1e-12
     # gz-physics ignores <pos>: placement is the model pose; size spans the segment.
     for model in surfaces:
         px, py, pz = map(float, model.findtext('pose').split()[:3])
         sx, sy, sz = map(float, model.findtext('link/collision/geometry/heightmap/size').split())
-        entry = record['heightmaps'][int(model.get('name')[-2:])]
-        assert px == pytest.approx(sum(entry['x_m'])/2) and sx == pytest.approx(entry['x_m'][1]-entry['x_m'][0])
-        assert pz == pytest.approx(entry['z_m'][0]) and sy == pytest.approx(spec['track']['head_width_m'])
+        entry = entries[Path(model.findtext('link/collision/geometry/heightmap/uri')).name]
+        assert model.get('name') == f"rail_surface_{entry['rail']}_{entry['file'][-6:-4]}"
+        assert np.sign(py) == (1 if entry['rail'] == 'left' else -1)
+        # DART spreads N samples over size*(N-1)/N: the SDF size is stretched to compensate.
+        assert px == pytest.approx(sum(entry['x_m'])/2) and sx*512/513 == pytest.approx(entry['x_m'][1]-entry['x_m'][0])
+        assert pz == pytest.approx(entry['z_m'][0]) and sy*512/513 == pytest.approx(spec['track']['head_width_m'])
         assert model.findtext('link/collision/geometry/heightmap/pos') == '0 0 0'
-    rails = world.find("model[@name='track']/link[@name='rails']")
+    # The validator decodes both rails from the world alone; swapped rails are detected.
+    from ssb_tools.validate_contact import rail_profile_matches_world
+    ET.ElementTree(world).write(tmp_path/'world.sdf')
+    assert rail_profile_matches_world(c, tmp_path/'world.sdf')['passed']
+    assert not rail_profile_matches_world(_with(copy.deepcopy(c), seed=7), tmp_path/'world.sdf')['passed']
+    for model in surfaces:
+        model.set('name', model.get('name').replace('left', 'tmp').replace('right', 'left').replace('tmp', 'right'))
+    ET.ElementTree(world).write(tmp_path/'world.sdf')
+    assert not rail_profile_matches_world(c, tmp_path/'world.sdf')['passed']
+    rail_link = world.find("model[@name='track']/link[@name='rails']")
     for side in ('left', 'right'):
-        col = rails.find(f"collision[@name='{side}_head']")
+        col = rail_link.find(f"collision[@name='{side}_head']")
         top = float(col.findtext('pose').split()[2])+float(col.findtext('geometry/box/size').split()[2])/2
         assert top == pytest.approx(z.min()-.003) and top < z.min()
         assert float(col.findtext('pose').split()[2])-float(col.findtext('geometry/box/size').split()[2])/2 == pytest.approx(-.038)
@@ -115,6 +163,8 @@ def test_sprung_wheels_keep_mass_names_and_require_calibration(tmp_path, inputs)
     from ssb_tools.stage_b_robot import make_robot
     config, spec = inputs
     config['contact'] = {'enabled': True}
+    for section in ('truth', 'calibration'):
+        config[section].update(odo_left_diameter_m=.08, odo_right_diameter_m=.08)
     config['truth']['wheel_compliance'] = dict(static_deflection_m=.0002, damping_ratio=.2)
     with pytest.raises(ValueError): make_robot(tmp_path, config, spec)
     config['truth']['wheel_compliance'].update(stiffness_n_m=2.9e6, damping_n_s_m=3300.)

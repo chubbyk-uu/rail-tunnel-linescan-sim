@@ -90,6 +90,9 @@ TEST(WorldCheck, TrackIrregularityMustMatchWorldHeightmaps) {
   AddModel(ecm,"rail_surface_left_00");
   EXPECT_NO_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,rough));
   EXPECT_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,flat),std::runtime_error);
+  // A cross-level-only track is irregular too.
+  EXPECT_NO_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,
+    "truth: {track_irregularity: {chord10_max_m: 0, cross_level_tier_m: 0.002, seed: 1}}\n"));
 }
 
 TEST(WorldCheck, WheelComplianceMustMatchSdfSprings) {

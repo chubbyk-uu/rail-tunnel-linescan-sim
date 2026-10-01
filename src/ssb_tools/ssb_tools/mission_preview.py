@@ -130,14 +130,16 @@ class Preview:
         world[:3, 3] = base_pose[:3]
         world[:3, :3] = Rotation.from_quat(base_pose[3:]).as_matrix()
         wheel_names = ['odometer_wheel', 'wheel_1', 'wheel_2', 'wheel_3']
+        measure_names = ['measure_left_wheel', 'measure_right_wheel']
         frames = []
         for link in self.car.findall('link'):
             name = link.get('name')
             relative = np.linalg.inv(self.base)@transform(link.findtext('pose', '0 0 0 0 0 0'))
             if name == 'head':
                 relative[:3, :3] = Rotation.from_rotvec([-status['scan'], 0, 0]).as_matrix()@relative[:3, :3]
-            elif name in wheel_names:
-                angle = status['wheel_angles'][wheel_names.index(name)]
+            elif name in wheel_names or name in measure_names:
+                angle = (status['wheel_angles'][wheel_names.index(name)] if name in wheel_names else
+                         status.get('measure_angles', [0., 0.])[measure_names.index(name)])
                 relative[:3, :3] = relative[:3, :3]@Rotation.from_rotvec([0, angle, 0]).as_matrix()
             values = pose_values(world if name == 'base' else relative)
             tf = TransformStamped(); tf.header.stamp = stamp

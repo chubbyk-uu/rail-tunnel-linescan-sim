@@ -39,12 +39,13 @@ LocalGeometry LocalizeGeometry(const StageBAssets& a) {
     const unsigned ids[3]={tri.a,tri.b,tri.c};
     for(int j=0;j<3;++j) {auto v=a.vertices[ids[j]];p[j]={v.x,v.y,v.z};}
     const double lo=std::min({p[0][0],p[1][0],p[2][0]}),hi=std::max({p[0][0],p[1][0],p[2][0]});
-    const auto first=static_cast<long long>(std::floor(lo/kOpticalChunkLength));
-    const auto last=static_cast<long long>(std::floor(hi/kOpticalChunkLength));
+    const auto first=static_cast<long long>(std::floor((lo-kOpticalChunkOverlap)/kOpticalChunkLength));
+    const auto last=static_cast<long long>(std::floor((hi+kOpticalChunkOverlap)/kOpticalChunkLength));
     if(last-first>1000) throw std::runtime_error("optical triangle exceeds supported chunk span");
     for(auto chunk=first;chunk<=last;++chunk) {
-      auto polygon=Clip(Clip({p.begin(),p.end()},chunk*kOpticalChunkLength,true),
-                        (chunk+1)*kOpticalChunkLength,false);
+      auto polygon=Clip(Clip({p.begin(),p.end()},chunk*kOpticalChunkLength-kOpticalChunkOverlap,true),
+                        (chunk+1)*kOpticalChunkLength+kOpticalChunkOverlap,false);
+      if(polygon.size()<3) continue;
       for(size_t j=1;j+1<polygon.size();++j) {
         Piece piece{{polygon[0],polygon[j],polygon[j+1]},a.face_material[i],0};
         const auto n=Cross(Sub(piece.points[1],piece.points[0]),Sub(piece.points[2],piece.points[0]));

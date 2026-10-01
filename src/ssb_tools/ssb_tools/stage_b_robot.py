@@ -89,6 +89,45 @@ def wheel_compliance(config,robot):
                 axle_mass_kg=AXLE_MASS_KG,travel_m=.005)
 
 
+GRAVITY=9.81
+
+
+def measuring_wheel(config,robot):
+    """Validated contact-mode measuring wheel settings, or None outside contact mode.
+
+    Two spring-loaded wheels on vertical guides behind the rear axle carry the odometry
+    encoders, so running-wheel lift on a twisted track cannot stop or overspin the odometer.
+    The configured odometer diameters (truth and calibration) are these wheels' diameters.
+    """
+    if not config.get('contact',{}).get('enabled'):return None
+    m=dict(robot['measuring_wheel'])
+    for section in ('truth','calibration'):
+        for key in ('odo_left_diameter_m','odo_right_diameter_m'):
+            value=config[section].get(key)
+            if value is None or not abs(float(value)/m['diameter_m']-1)<=.05:
+                raise ValueError(f'{section}.{key} must be the measuring-wheel diameter '
+                                 f'({m["diameter_m"]} m nominal, within 5%); regenerate the contact configuration')
+    values=[m[k] for k in ('diameter_m','width_m','preload_n','spring_rate_n_m','damping_n_s_m','travel_m',
+                           'slider_mass_kg','wheel_mass_kg')]
+    if not all(math.isfinite(v) and v>0 for v in values):raise ValueError('invalid measuring wheel settings')
+    half=robot['wheelbase_m']/2
+    if not m['x_m']<-half-robot['wheel_diameter_m']/2-m['diameter_m']/2-.01:
+        raise ValueError('measuring wheel must sit behind the rear running wheels')
+    if m['preload_n']/m['spring_rate_n_m']<=m['travel_m']:
+        raise ValueError('measuring wheel spring must stay compressed over the whole slide travel')
+    return m
+
+
+def running_wheel_load_mass(spec):
+    """Mass whose weight the four running-wheel springs carry, for stiffness calibration.
+
+    Measuring wheels carry their own weight plus the spring preload, which unloads the body.
+    """
+    robot=spec['robot'];m=robot['measuring_wheel']
+    return (robot['total_mass_kg']-4*(WHEEL_MASS_KG+AXLE_MASS_KG)
+            -2*(m['slider_mass_kg']+m['wheel_mass_kg'])-2*m['preload_n']/GRAVITY)
+
+
 def make_robot(out,config,spec):
     robot=spec['robot']
     base_z, axis_height = mount_geometry(config)
@@ -137,7 +176,9 @@ def make_robot(out,config,spec):
     base=sub(car,'link',name='base');sub(base,'pose',pose(z=base_z))
     compliance=wheel_compliance(config,robot)
     axles=4*compliance['axle_mass_kg'] if compliance else 0
-    inertial(base,robot['total_mass_kg']-35-(.8 if contact else 0)-axles,(4.2,8.1,10.5))
+    measuring=measuring_wheel(config,robot)
+    measuring_mass=2*(measuring['slider_mass_kg']+measuring['wheel_mass_kg']) if measuring else 0
+    inertial(base,robot['total_mass_kg']-35-(.8 if contact else 0)-axles-measuring_mass,(4.2,8.1,10.5))
     # Helpers take coordinates in the car frame, converting into the base link.
     def base_box(name,x,y,z,size,color=WHITE,collision=False):
         box(base,name,pose(x,y,z-base_z),size,color,collision)
@@ -235,7 +276,7 @@ def make_robot(out,config,spec):
     for i,(x,y) in enumerate(((-half,rail_y),(half,rail_y),(-half,-rail_y),(half,-rail_y))):
         sign=1 if y>0 else -1
         if contact:
-            diameter=config['truth'].get('odo_left_diameter_m' if i==0 else 'odo_right_diameter_m' if i==2 else 'wheel_diameter_m',config['truth']['wheel_diameter_m'])
+            diameter=config['truth']['wheel_diameter_m']
         name='odometer_wheel' if i==0 else f'wheel_{i}'
         joint='odometer' if i==0 else f'wheel_joint_{i}';wheels.append(joint)
         wheel=sub(car,'link',name=name);sub(wheel,'pose',pose(x,y,robot['wheel_diameter_m']/2))
@@ -251,7 +292,7 @@ def make_robot(out,config,spec):
                      diameter*.25*math.sin(a),roll=math.pi/2),.005,.007,DARK)
         if i in (1,3):
             base_cylinder(f'hub_motor_{i}',x,y-sign*.081,diameter/2,.063,.071,DARK,roll=math.pi/2)
-        if i in (0,2):
+        if i in (0,2) and not measuring:
             tag='odometer' if i==0 else 'right_odometer'
             base_cylinder(tag+'_drive_gear',x,y-sign*.110,diameter/2,.035,.009,METAL,roll=math.pi/2)
             base_cylinder(tag+'_follow_gear',x+.060,y-sign*.110,diameter/2+.040,.037,.009,METAL,roll=math.pi/2)
@@ -274,6 +315,9 @@ def make_robot(out,config,spec):
             dyn=sub(axis,'dynamics');sub(dyn,'spring_reference',0)
             sub(dyn,'spring_stiffness',f"{compliance['stiffness_n_m']:.12g}");sub(dyn,'damping',f"{compliance['damping_n_s_m']:.12g}")
         make_joint(car,joint,'revolute',parent,name,'0 1 0')
+
+    if measuring:
+        add_measuring_wheels(car,base,base_z,config,robot,rail_y,measuring)
 
     head=sub(car,'link',name='head');sub(head,'pose',pose(z=zc))
     inertial(head,15,(.25,.20,.20))
@@ -372,12 +416,58 @@ def make_robot(out,config,spec):
     plugin=sub(car,'plugin',filename='ssb_gazebo_scan',name='ssb_gazebo::ContactSystem' if contact else 'ssb_gazebo::ScanSystem')
     if contact:
         cal=config['calibration'];settings=config['contact']
-        for tag,value in [('left_encoder','odometer'),('right_encoder','wheel_joint_2'),
+        for tag,value in [('left_encoder','measure_left'),('right_encoder','measure_right'),
                           ('left_drive','wheel_joint_1'),('right_drive','wheel_joint_3'),
-                          ('left_diameter',cal.get('odo_left_diameter_m',cal['wheel_diameter_m'])),
-                          ('right_diameter',cal.get('odo_right_diameter_m',cal['wheel_diameter_m'])),
+                          ('left_diameter',cal['odo_left_diameter_m']),('right_diameter',cal['odo_right_diameter_m']),
                           ('drive_diameter',cal['wheel_diameter_m']),('settle_s',settings.get('settle_s',2.0))]:sub(plugin,tag,value)
     else:
         for tag,name in (('carriage_joint','carriage'),('scan_joint','scan'),('wheel_joint','odometer')):sub(plugin,tag,name)
         for name in wheels[1:]:sub(plugin,'follower_wheel_joint',name)
     return car
+
+
+def add_measuring_wheels(car,base,base_z,config,robot,rail_y,m):
+    """Measuring wheels: base -(sprung vertical slide, preloaded)- slider -(revolute, encoder)- wheel.
+
+    The bracket hangs from the rear crossbar: a horizontal arm, a vertical mount plate with a
+    linear guide rail and a spring seat. The slider carries the guide carriage, a leg down to the
+    axle, the encoder (inboard, coaxial) and the axle stub; the wheel runs on the rail-head top.
+    """
+    from .stage_b_track import friction
+    half=robot['wheelbase_m']/2;x=m['x_m'];travel=m['travel_m']
+    for side,sign in (('left',1),('right',-1)):
+        diameter=config['truth'][f'odo_{side}_diameter_m'];r=diameter/2
+        def fixed(name,dx,inboard,z,size,color):
+            box(base,f'measure_{side}_{name}',pose(x+dx,sign*(rail_y-inboard),z-base_z),size,color)
+        # Fixed bracket on the base (car-frame heights above the nominal rail top).
+        arm_start=-half-.0325
+        fixed('arm',(arm_start-(x-.03))/2+(x-.03)-x,.052,.245,f'{arm_start-(x-.03):.6g} .03 .04',ORANGE)
+        fixed('mount_plate',0,.052,.165,'.06 .008 .17',ORANGE)
+        fixed('guide_rail',0,.044,.15,'.015 .008 .13',METAL)
+        fixed('spring_seat',0,.036,.232,'.035 .032 .012',ORANGE)
+        cylinder(base,f'measure_{side}_spring',pose(x,sign*(rail_y-.030),.193-base_z),.007,.066,METAL)
+        # Moving slider; its frame is the wheel centre at the nominal height.
+        slider=sub(car,'link',name=f'measure_{side}_slider');sub(slider,'pose',pose(x,sign*rail_y,r))
+        inertial(slider,m['slider_mass_kg'],(4e-4,4e-4,2e-4))
+        box(slider,'carriage',pose(0,-sign*.030,.145-r),'.035 .02 .03',DARK)
+        box(slider,'leg',pose(0,-sign*.026,.085-r),'.03 .012 .10',ORANGE)
+        cylinder(slider,'axle',pose(y=-sign*.0115,roll=math.pi/2),.006,.017,METAL)
+        cylinder(slider,'encoder',pose(y=-sign*.0445,roll=math.pi/2),.018,.025,DARK)
+        cylinder(slider,'encoder_cap',pose(y=-sign*.0575,roll=math.pi/2),.012,.002,METAL)
+        wheel=sub(car,'link',name=f'measure_{side}_wheel');sub(wheel,'pose',pose(x,sign*rail_y,r))
+        mass=m['wheel_mass_kg'];inertial(wheel,mass,(mass*(3*r*r+m['width_m']**2)/12,mass*r*r/2,mass*(3*r*r+m['width_m']**2)/12))
+        cylinder(wheel,'tread',pose(roll=math.pi/2),r,m['width_m'],DARK)
+        cylinder(wheel,'hub',pose(roll=math.pi/2),r*.45,m['width_m']+.004,METAL)
+        # Collision is a sphere of the tread radius: the crowned rail head makes a near-point contact,
+        # and DART's (ODE) cylinder-heightfield test let a lightly loaded 80 mm cylinder sink up to
+        # 5.6 mm at a grid line when nearly stopped; sphere-heightfield contact is robust.
+        col=sub(wheel,'collision',name='tread_contact')
+        sub(sub(sub(col,'geometry'),'sphere'),'radius',r);friction(col,1.0)
+        # Spring force on the slider: -k (q - q_ref); q_ref = -preload/k gives the preload at q = 0.
+        joint=sub(car,'joint',name=f'measure_{side}_slide',type='prismatic')
+        sub(joint,'parent','base');sub(joint,'child',f'measure_{side}_slider')
+        axis=sub(joint,'axis');sub(axis,'xyz','0 0 1');limit=sub(axis,'limit')
+        sub(limit,'lower',-travel);sub(limit,'upper',travel)
+        dyn=sub(axis,'dynamics');sub(dyn,'spring_reference',f"{-m['preload_n']/m['spring_rate_n_m']:.12g}")
+        sub(dyn,'spring_stiffness',f"{m['spring_rate_n_m']:.12g}");sub(dyn,'damping',f"{m['damping_n_s_m']:.12g}")
+        make_joint(car,f'measure_{side}','revolute',f'measure_{side}_slider',f'measure_{side}_wheel','0 1 0')

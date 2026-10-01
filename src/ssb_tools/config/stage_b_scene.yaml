@@ -38,6 +38,19 @@ robot:
   total_mass_kg: 120.0
   wheelbase_m: 0.7
   wheel_diameter_m: 0.2
+  # Contact mode: odometry from two spring-loaded measuring wheels behind the rear axle, one per
+  # rail (curves later), on vertical linear guides; running wheels carry no encoders. User chose
+  # 80 mm and a vertical slide (2026-10-01); preload, rate, masses and placement are estimates.
+  measuring_wheel:
+    diameter_m: 0.08
+    width_m: 0.03
+    x_m: -0.52             # wheel centre, car frame; rear running wheel centre is at -0.35
+    preload_n: 30.0        # spring force at nominal height; ~0.05 N traction needed at 0.4 m/s^2
+    spring_rate_n_m: 2000. # soft: +/-5 mm of travel changes the preload by +/-10 N
+    damping_n_s_m: 20.
+    travel_m: 0.012        # +/- slide travel about the nominal height
+    slider_mass_kg: 0.35
+    wheel_mass_kg: 0.15
   guide_bearing_radius_m: 0.025 # estimated; vertical spindle, tangent to inner rail head
   guide_bearing_width_m: 0.024 # estimated axial width, contained within 38 mm head
   head_cradle_length_m: 0.56 # updated machine photos; unmeasured envelope estimate
