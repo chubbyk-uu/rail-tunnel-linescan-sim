@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Short real-server regression for both plugins and assembly mismatch rejection."""
+"""Real-server regression for the default Stage A command and both Stage B plugins."""
 import argparse
 import copy
 import json
@@ -13,14 +13,44 @@ import yaml
 REPO=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(REPO/'src/ssb_tools'))
 from ssb_tools.stage_b_scene import make_world,load_spec
-from ssb_tools.session import Session
+from ssb_tools.session import Session, sha256_file
+
+
+def run_stage_a(output):
+    folder=output/'stage_a';folder.mkdir()
+    env=dict(os.environ,GZ_PARTITION=f'ssb_plugin_test_{os.getpid()}_stage_a')
+    env.pop('SSB_WORLD',None)
+    session=folder/'session'
+    # No config/world override: exercise the exact README command and installed world.
+    with (folder/'run.log').open('w') as log:
+        proc=subprocess.run(['bash',str(REPO/'tools/run_gz.sh'),str(session)],
+                            env=env,stdout=log,stderr=subprocess.STDOUT,timeout=60)
+    assert proc.returncode==0,folder/'run.log'
+    s=Session(session)
+    assert s.summary['motion']['complete'] and s.summary['rows']>0
+    provenance=json.loads((session/'config/provenance.json').read_text())
+    actual_world=Path(provenance['inputs']['world']['path'])
+    assert sha256_file(actual_world)==sha256_file(REPO/'src/ssb_gazebo/worlds/stage_a.sdf')
+
+    # The original mismatch must still be rejected, rather than exempting Stage A.
+    wrong=yaml.safe_load((REPO/'src/ssb_core/config/stage_a.yaml').read_text())
+    wrong['robot']['base_reference_z_m']=.3
+    cfg=folder/'mismatch.yaml';cfg.write_text(yaml.safe_dump(wrong))
+    rejected=folder/'rejected_session'
+    with (folder/'mismatch.log').open('w') as log:
+        bad=subprocess.run(['bash',str(REPO/'tools/run_gz.sh'),str(rejected),str(cfg)],
+                           env=env,stdout=log,stderr=subprocess.STDOUT,timeout=60)
+    assert bad.returncode!=0 and not rejected.exists()
+    assert 'assembly height differs' in (folder/'mismatch.log').read_text()
+    return {'name':'stage_a_default','rows':s.summary['rows'],'complete':True,
+            'installed_world_matches_source':True,'mismatch_rejected_before_capture':True}
 
 
 def run(output):
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=False)
     base=yaml.safe_load((REPO/'src/ssb_core/config/stage_b.yaml').read_text())
     spec=load_spec(REPO/'src/ssb_tools/config/stage_b_scene.yaml')
-    results=[]
+    results=[run_stage_a(output)]
     for name,contact,bad in [('ideal',False,False),('contact',True,False),('mismatch',True,True)]:
         folder=output/name;folder.mkdir()
         c=copy.deepcopy(base);c['robot']={'base_reference_z_m':.37,'scan_axis_height_m':1.645}

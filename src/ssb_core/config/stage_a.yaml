@@ -2,6 +2,10 @@
 # provisional stay provisional here; the comments name their status.
 schema: ssb.config.v1
 
+robot:
+  base_reference_z_m: 0.25  # matches stage_a.sdf base link
+  scan_axis_height_m: 1.72  # head relative to base; optical centre remains at z=1.97
+
 tunnel:
   radius_m: 2.77          # patent example value, used for stage 1
   axis_z_m: 1.97          # axis height above rail top; engineering assumption

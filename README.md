@@ -37,6 +37,17 @@ ros2 run ssb_tools validate_stage_a sessions/gz_a --compare sessions/rerender
 ```
 
 A stage A session is about 0.9 GB (`sessions/` is not tracked).
+Its explicit assembly heights match `stage_a.sdf`: base 0.25 m, scan axis 1.72 m
+above the base, keeping the optical centre at 1.97 m. The actual default command is
+covered by `python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression`
+(use a new output directory).
+
+Stage A's analytic baseline has no persistent `truth.optical_key`: each parse
+generates a fresh private key, so its `optical_signature` is a per-run identity,
+not a cross-run optical-condition identifier. Replay acceptance compares raw data,
+not this signature. If stable signatures or reusable optical calibration are needed,
+generate a random key once with `ssb_tools.optical_identity.ensure_optical_key` and
+save it in a private configuration copy; keep that same key for all associated runs.
 
 ## Stage B development
 
@@ -85,7 +96,11 @@ After building a new checkout, copy that directory to
 `local_data/stage_b/contact_demo` and run `tools/run_gz_gui.sh`.
 The bundle includes the calibrated simulation rig and runtime assets with relative
 references and updated dependency hashes. Raw source image names remain provenance
-labels; normalized texture payloads are the runtime inputs. On WSL, the private Mesa
+labels; normalized texture payloads are the runtime inputs. Its `capture.yaml` includes
+private generation truth (including the HMAC key and lens distortion). Sharing this
+bundle shares that truth; it is for generating captures, not for blind reconstruction
+evaluation. Reconstruction should receive only the session's observable inputs.
+On WSL, the private Mesa
 installation is still required (`SSB_MESA_PREFIX`, default
 `~/opt/agv-mesa-25.2.8/install`); the launcher itself is now in this repository.
 OptiX SDK/runtime and ROS remain system prerequisites.
@@ -94,9 +109,6 @@ The final GUI run at 0.2 m/s and 64 crack samples achieved imaging RTF 0.994,
 284445 rows over 3 m, no missing rows in the valid region and byte-identical replay.
 A separate 20 m contact-only run passed stability checks; full 20 m reconstruction
 is still subsequent work. See [the acceptance record](docs/STAGE_B.md).
-
-This uses the existing private Mesa launcher from the adjacent 4WIDS_agv workspace.
-
 
 镜头畸变与离线校正：Stage B新模板采用假设的+0.6%枕形畸变，使用OptiX标靶影像估计平场和几何映射。
 操作命令、标定结果和输出格式见[Stage B光学校正](docs/STAGE_B.md)。原始Mono8始终保留，校正结果另存。

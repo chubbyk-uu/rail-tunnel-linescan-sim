@@ -9,8 +9,22 @@ from ssb_tools.session import sha256_file
 from ssb_tools.demo_bundle import export_demo
 import shutil
 import subprocess
+import xml.etree.ElementTree as ET
 from ssb_tools.optical_identity import ensure_optical_key
 from ssb_tools.validate_stage_b import runtime_source_budget
+
+
+def test_stage_a_config_matches_original_world_and_optical_centre():
+    repo=Path(__file__).resolve().parents[3]
+    c=yaml.safe_load((repo/'src/ssb_core/config/stage_a.yaml').read_text())
+    car=ET.parse(repo/'src/ssb_gazebo/worlds/stage_a.sdf').find("world/model[@name='scan_car']")
+    base_z=float(car.findtext("link[@name='base']/pose").split()[2])
+    head_z=float(car.findtext("link[@name='head']/pose").split()[2])
+    assert c['robot']['base_reference_z_m']==pytest.approx(base_z)
+    assert c['robot']['scan_axis_height_m']==pytest.approx(head_z-base_z)
+    truth=dict(c['truth'],tunnel=c['tunnel'],robot=c['robot'])
+    origin,_,_=head_pose(np.zeros(1),np.zeros(1),truth)
+    assert origin[0,2]==pytest.approx(1.97)
 
 
 def test_key_is_random_persistent_and_rejects_invalid_values():
