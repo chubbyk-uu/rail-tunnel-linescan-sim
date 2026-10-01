@@ -3,6 +3,7 @@ import argparse
 from collections import deque
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -36,6 +37,12 @@ from .session import sha256_file
 TERMINAL = ('idle', 'complete', 'stopped', 'failed')
 
 
+def initial_state(config, base_pose):
+    return dict(sim_time=0., scan=math.radians(config['motion']['start_theta_deg']),
+                wheel_angles=[0.]*4, base_pose=base_pose,
+                s_hat=0., speed=0., scan_rate=0., motion_complete=False, capture={})
+
+
 class MissionManager(Node):
     def __init__(self, args):
         super().__init__('ssb_mission_manager')
@@ -54,9 +61,8 @@ class MissionManager(Node):
         self.command_result = {}; self.events = []
         self.last_received = time.monotonic(); self.expected_exit = False
         self.preview = Preview(self.demo/'world/world.sdf', self.repo/'local_data/rviz_preview')
-        self.latest = dict(sim_time=0., scan=0., wheel_angles=[0.]*4,
-                           base_pose=pose_values(transform(self.preview.car.findtext('pose'))@self.preview.base),
-                           s_hat=0., speed=0., scan_rate=0., motion_complete=False, capture={})
+        self.latest = initial_state(self.config,
+            pose_values(transform(self.preview.car.findtext('pose'))@self.preview.base))
         self.truth_clock = self.create_publisher(Clock, '/clock', 10)
         self.tf = TransformBroadcaster(self)
         self.joints = self.create_publisher(JointState, '/ssb/sim_truth/joint_states', 10)
@@ -130,9 +136,8 @@ class MissionManager(Node):
         self.session = self.root/token; self.task = task; self.events = []
         self.error = ''; self.expected_exit = False
         self.inputs = inputs
-        self.latest = dict(sim_time=0., scan=0., wheel_angles=[0.]*4,
-                           base_pose=[start, 0., config['robot']['base_reference_z_m'], 0., 0., 0., 1.],
-                           s_hat=0., speed=0., scan_rate=0., motion_complete=False, capture={})
+        self.latest = initial_state(config,
+            [start, 0., config['robot']['base_reference_z_m'], 0., 0., 0., 1.])
         self.transition('starting')
         env = dict(os.environ, SSB_CONFIG=str(inputs/'capture.yaml'), SSB_WORLD=str(inputs/'world.sdf'),
                    SSB_SESSION=str(self.session), SSB_MISSION_STATUS_TOPIC=self.status_topic)

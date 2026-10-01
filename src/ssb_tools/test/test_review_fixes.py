@@ -119,6 +119,7 @@ def test_demo_generation_preserves_lens_key_and_preflight_rejects_other_rig(tmp_
     from ssb_tools.optical_identity import check_calibration
     repo=Path(__file__).resolve().parents[3]
     config=yaml.safe_load((repo/'src/ssb_core/config/stage_b.yaml').read_text())
+    config['motion']['start_theta_deg']=-130.  # legacy input must not set the demo's initial pose
     ensure_optical_key(config)
     scene=tmp_path/'scene.json'
     scene.write_text(json.dumps({'lamp':{},'response_gain':3.2,'indirect_fill_relative':.002,'limitations':''}))
@@ -134,6 +135,7 @@ def test_demo_generation_preserves_lens_key_and_preflight_rejects_other_rig(tmp_
                     '--config',str(cfg),'--spec',str(repo/'src/ssb_tools/config/stage_b_scene.yaml'),
                     '--output',str(demo),'--calibration',str(cal)],check=True,capture_output=True)
     generated=yaml.safe_load((demo/'capture.yaml').read_text())
+    assert generated['motion']['start_theta_deg']==180.
     assert generated['truth']['lens_k1']==.006
     assert generated['truth']['optical_key']==config['truth']['optical_key']
     assert check_calibration(demo/'capture.yaml',demo/'calibration.json')==identity

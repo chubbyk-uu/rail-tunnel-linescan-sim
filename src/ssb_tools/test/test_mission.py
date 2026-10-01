@@ -18,7 +18,7 @@ def config():
                 motion=dict(advance_per_rev_m=.6, line_rate_hz=28444.444444444445), acceptance={})
 
 
-@pytest.mark.parametrize('distance', [.05, .1, .2, 3., 20.])
+@pytest.mark.parametrize('distance', [.12, .2, 3., 20.])
 def test_distance_profile_integrates_to_requested_travel(config, distance):
     before = copy.deepcopy(config)
     c, task = plan(config, 0., distance)
@@ -30,7 +30,7 @@ def test_distance_profile_integrates_to_requested_travel(config, distance):
     assert config == before
 
 
-@pytest.mark.parametrize('start,distance', [(-.001, 1), (19., 2.), (0., 0.), (0., .01), (0., float('nan')), (float('inf'), 1)])
+@pytest.mark.parametrize('start,distance', [(-.001, 1), (19., 2.), (0., 0.), (0., .05), (0., .1), (0., float('nan')), (float('inf'), 1)])
 def test_out_of_bounds_and_nonfinite_tasks_rejected(config, start, distance):
     with pytest.raises(ValueError): plan(config, start, distance)
 
@@ -53,6 +53,22 @@ def test_preview_head_follows_body_attitude_and_negative_scan_axis(tmp_path):
     head = body*Rotation.from_quat([q.x, q.y, q.z, q.w])
     expected = body*Rotation.from_rotvec([-.7, 0, 0])
     np.testing.assert_allclose(head.as_matrix(), expected.as_matrix(), atol=1e-12)
+
+
+@pytest.mark.parametrize('angle,direction', [(180., [0., 0., -1.]),
+                                          (-130., [0., -.766044443118978, -.642787609686539])])
+def test_idle_and_starting_scan_pose_use_configured_angle(tmp_path, angle, direction):
+    pytest.importorskip('rclpy')
+    from ssb_tools.mission_manager import initial_state
+    from builtin_interfaces.msg import Time
+    world = tmp_path/'world.sdf'
+    world.write_text('''<sdf><world><model name="scan_car"><pose>0 0 0 0 0 0</pose>
+      <link name="base"><pose>0 0 .3 0 0 0</pose></link>
+      <link name="head"><pose>0 0 2.015 0 0 0</pose></link></model></world></sdf>''')
+    state = initial_state({'motion': {'start_theta_deg': angle}}, [0., 0., .3, 0., 0., 0., 1.])
+    q = Preview(world, tmp_path/'cache').frames(state, Time())[1].transform.rotation
+    beam = Rotation.from_quat([q.x, q.y, q.z, q.w]).apply([0., 0., 1.])
+    np.testing.assert_allclose(beam, direction, atol=1e-12)
 
 
 def test_textured_preview_preserves_uv_winding_and_caps_image(tmp_path):

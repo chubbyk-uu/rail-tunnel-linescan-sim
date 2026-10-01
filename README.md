@@ -74,7 +74,9 @@ tools/run_gz_gui.sh            # opens local_data/stage_b/contact_demo, paused; 
 ```
 
 The demo is a 3 m run on rigid wheel/rail contact (2 s settling, then 0.2 m/s, 20 rpm,
-28.444 kHz line triggers). The launcher checks the optical calibration before starting
+28.444 kHz line triggers). The head starts pointing straight down, rotates to the
+right lower gate to begin capture, then scans through the top to the left lower gate.
+The launcher checks the optical calibration before starting
 Gazebo. After the GUI closes, it waits for all raw rows to reach disk and checks the
 session. Dark/flat/geometric correction is run separately before stitching, writing
 to `SESSION/processed/optical/` without changing the raw data.

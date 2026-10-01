@@ -101,11 +101,17 @@ def main():
     report = dict(checks={}, performance={})
     try:
         wait(lambda: latest.get('state') == 'idle')
+        assert abs(latest['scan_rad']-np.pi) < 1e-12, 'default camera must face down before launch'
+        report['checks']['initial_scan_rad'] = latest['scan_rad']
         assert not command('start', start_m=19., distance_m=2.)['ok']
         assert latest['state'] == 'idle' and latest['output'] == ''
         report['checks']['bounds_rejection'] = True
         assert command('start', start_m=2., distance_m=.6)['ok']
-        wait(lambda: latest['distance_estimated_m'] > .13 and latest['rows_generated'] > 1000)
+        def entered_gate():
+            if latest['scan_rad'] < 4*np.pi/3:
+                assert latest['rows_generated'] == 0, 'exposure before right lower gate'
+            return latest['distance_estimated_m'] > .13 and latest['rows_generated'] > 1000
+        wait(entered_gate)
         assert command('pause')['ok']
         paused = dict(latest)
         deadline = time.monotonic()+1.5
@@ -124,6 +130,9 @@ def main():
         wait(lambda: latest['state'] in ('complete', 'failed'))
         assert latest['state'] == 'complete', latest
         first = Path(latest['output']); report['checks']['pause_resume'] = verify(first)
+        first_angle = float(Session(first).evaluation('row_truth')['theta'][0])
+        assert 4*np.pi/3 <= first_angle < 4*np.pi/3+.001, first_angle
+        report['checks']['first_exposure_rad'] = first_angle
         replay = output/'replay'
         with (output/'replay.log').open('w') as log:
             subprocess.run([str(repo/'install/ssb_core/lib/ssb_core/ssb_render'),
@@ -145,6 +154,10 @@ def main():
         assert latest['state'] == 'complete', latest
         third = Path(latest['output']); report['checks']['restart'] = verify(third)
         assert len({str(first), str(second), str(third)}) == 3
+        assert command('start', start_m=7., distance_m=.12)['ok']
+        wait(lambda: latest['state'] in ('complete', 'failed'))
+        assert latest['state'] == 'complete', latest
+        report['checks']['minimum_travel'] = verify(Path(latest['output']))
         if a.performance:
             for mode in ('gz', 'rviz', 'both'):
                 viewers = []

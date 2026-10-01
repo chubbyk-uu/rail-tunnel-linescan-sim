@@ -24,7 +24,7 @@ odometer: {ppr: 2500, edges_per_cycle: 4, gear_ratio: 1.0}
 motion:
   line_rate_hz: 28444.444444444445 # 0.2 m/s, 20 rpm; spatial pitches unchanged
   advance_per_rev_m: 0.6
-  start_theta_deg: 180.0
+  start_theta_deg: 180.0 # straight down; first gate opens at 240 deg (right lower side)
   start_x_m: -0.9
   sample_period_s: 0.001
   # 21.8 m centre travel, including start/end coverage buffers.

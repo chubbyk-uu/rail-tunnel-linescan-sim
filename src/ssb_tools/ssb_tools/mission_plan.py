@@ -10,8 +10,8 @@ import yaml
 def plan(config, start, distance):
     if not all(math.isfinite(x) for x in (start, distance)) or distance <= 0:
         raise ValueError('起点和距离必须为有限值，距离必须大于零')
-    if distance < .05:
-        raise ValueError('当前采集任务距离至少为 0.05 m，以留出初始非采集角的行程')
+    if distance < .12:
+        raise ValueError('当前采集任务距离至少为 0.12 m，正下方到采集边界需约 0.1 m 行程')
     t = config['tunnel']
     fov = config['camera']['fov_at_nominal_m']
     # Effective inspection domain excludes the 1.5 m construction buffers.

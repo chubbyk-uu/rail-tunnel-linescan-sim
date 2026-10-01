@@ -38,6 +38,7 @@ def main():
     c['robot']={'base_reference_z_m':base,'scan_axis_height_m':height}
     c['contact']={'enabled':True,'settle_s':2.}
     c['motion']['start_x_m']=3.
+    c['motion']['start_theta_deg']=180.  # bottom -> right lower gate -> top -> left
     c['motion']['profile']=[[0.,0.],[1.,1.],[15.,1.],[16.,0.],[17.,0.]]
     c['acceptance']['valid_x_m']=[3.1,5.7]
     for section in ['truth','calibration']:

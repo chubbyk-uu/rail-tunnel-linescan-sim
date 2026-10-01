@@ -22,7 +22,7 @@ MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
   auto* form = new QFormLayout;
   start_ = new QDoubleSpinBox; distance_ = new QDoubleSpinBox;
   start_->setRange(0, 20); start_->setValue(3); start_->setDecimals(3);
-  distance_->setRange(.05, 20); distance_->setValue(3); distance_->setDecimals(3);
+  distance_->setRange(.12, 20); distance_->setValue(3); distance_->setDecimals(3);
   start_->setSuffix(" m"); distance_->setSuffix(" m");
   start_->setObjectName("mission_start"); distance_->setObjectName("mission_distance");
   form->addRow("任务起点", start_); form->addRow("前进距离", distance_); layout->addLayout(form);

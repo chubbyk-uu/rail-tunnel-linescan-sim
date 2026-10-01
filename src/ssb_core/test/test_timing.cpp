@@ -80,6 +80,26 @@ void CheckAccounting(const TimingRun& run) {
 
 }  // namespace
 
+TEST(StageB, StartsDownAndExposesOnlyAfterRightLowerGate) {
+  auto c = Config::Load(std::string(SSB_CONFIG_DIR) + "/stage_b.yaml");
+  EXPECT_NEAR(c.start_theta_rad, M_PI, 1e-12);
+  c.profile = {{0., 1.}, {3., 1.}};
+  const auto run = RunSamples(c, KinematicSource(c).Sample());
+  ASSERT_EQ(run.all.gates.size(), 2u);
+  EXPECT_EQ(run.all.gates[0].kind, kGateStart);
+  EXPECT_EQ(run.all.gates[1].kind, kGateEnd);
+  EXPECT_NEAR(run.all.gates[0].t, .5, 1e-10); // 60 degrees at 20 rpm
+  EXPECT_NEAR(run.all.gates[1].t, 2.5, 1e-10);
+  ASSERT_FALSE(run.all.rows.empty());
+  EXPECT_LT(std::sin(run.all.rows.front().pose.theta), 0.); // -y: vehicle right
+  EXPECT_GT(std::sin(run.all.rows.back().pose.theta), 0.);  // +y: vehicle left
+  for (const auto& row : run.all.rows) {
+    EXPECT_GE(row.record.t_center, .5);
+    EXPECT_LT(row.record.t_center, 2.5);
+  }
+  CheckAccounting(run);
+}
+
 TEST(Timing, ConstantSpeedGivesUniformRowsLockedToTheEncoderLattice) {
   Config c = BaseConfig();
   c.profile = {{0, 1}, {4.0, 1}};
