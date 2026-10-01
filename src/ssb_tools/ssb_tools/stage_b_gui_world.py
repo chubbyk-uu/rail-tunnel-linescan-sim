@@ -24,8 +24,8 @@ def prepare(world,config,spec,output,mode):
     if mode=='lighting':
         w.find('scene/ambient').text=' '.join(map(str,[*rgb,1]))
     elif mode=='track':
-        from .stage_b_track import make_track
-        w.remove(w.find("model[@name='track']"));w.append(make_track(output,c,s))
+        from .stage_b_track import replace_track
+        replace_track(w,output,c,s)
     elif mode=='robot':
         from .stage_b_robot import make_robot
         old=w.find("model[@name='scan_car']")

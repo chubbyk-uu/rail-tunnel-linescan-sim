@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+import numpy as np
 import yaml
 
 REPO=Path(__file__).resolve().parents[1]
@@ -51,19 +52,33 @@ def run(output):
     base=yaml.safe_load((REPO/'src/ssb_core/config/stage_b.yaml').read_text())
     spec=load_spec(REPO/'src/ssb_tools/config/stage_b_scene.yaml')
     results=[run_stage_a(output)]
-    for name,contact,bad in [('ideal',False,False),('contact',True,False),('mismatch',True,True)]:
+    from ssb_tools.wheel_stiffness import calibrate
+    from ssb_tools.stage_b_robot import WHEEL_MASS_KG, AXLE_MASS_KG
+    sprung=spec['robot']['total_mass_kg']-4*(WHEEL_MASS_KG+AXLE_MASS_KG)
+    stiffness=calibrate(.0002,.2,sprung,AXLE_MASS_KG,WHEEL_MASS_KG,.1,base['motion']['sample_period_s'])
+    rough=dict(track_irregularity=dict(model='beijing_subway_vertical_v1',chord10_max_m=.002,seed=20261001,
+                                       band_m=[.5,10.],common_mode=True),
+               wheel_compliance=dict(static_deflection_m=.0002,damping_ratio=.2,stiffness_n_m=stiffness['stiffness_n_m'],
+                                     damping_n_s_m=stiffness['damping_n_s_m']))
+    cases=[('ideal',False,None,{}),('contact',True,None,{}),('mismatch',True,'assembly height differs',{}),
+           ('irregular',True,None,rough),('irregular_mismatch',True,'track irregularity differs',rough)]
+    for name,contact,bad,truth in cases:
         folder=output/name;folder.mkdir()
         c=copy.deepcopy(base);c['robot']={'base_reference_z_m':.37,'scan_axis_height_m':1.645}
         c['motion'].update(start_x_m=3.,start_theta_deg=-30.,profile=[[0.,0.],[.1,1.],[.5,1.],[.6,0.],[.7,0.]])
         c['camera']['width']=64;c['acceptance']['valid_x_m']=[3.,3.1]
         c['render']['debug_column_stride']=16
         c['contact']={'enabled':contact,'settle_s':.5}
-        cfg=folder/'capture.yaml';cfg.write_text(yaml.safe_dump(c))
+        c['truth'].update(copy.deepcopy(truth))
         for mesh in ('panels','joints','filler','gap'):
             (folder/(mesh+'.obj')).write_text('v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n')
-        make_world(folder,c,spec)
+        if name=='irregular_mismatch':
+            flat=copy.deepcopy(c);flat['truth'].pop('track_irregularity');make_world(folder,flat,spec)
+        else:
+            make_world(folder,c,spec)
+        cfg=folder/'capture.yaml';cfg.write_text(yaml.safe_dump(c))
         world=folder/'world.sdf'
-        if bad:
+        if name=='mismatch':
             tree=ET.parse(world);pose=tree.find("world/model[@name='scan_car']/link[@name='head']/pose")
             p=list(map(float,pose.text.split()));p[2]+=.01;pose.text=' '.join(map(str,p));tree.write(world)
         env=dict(os.environ,SSB_WORLD=str(world),GZ_PARTITION=f'ssb_plugin_test_{os.getpid()}_{name}')
@@ -73,7 +88,7 @@ def run(output):
                                 env=env,stdout=log,stderr=subprocess.STDOUT,timeout=60)
         if bad:
             assert proc.returncode!=0 and not session.exists()
-            assert 'assembly height differs' in (folder/'run.log').read_text()
+            assert bad in (folder/'run.log').read_text()
             results.append({'name':name,'rejected_before_capture':True});continue
         assert proc.returncode==0,(folder/'run.log')
         s=Session(session);assert s.summary['motion']['complete'] and s.summary['rows']>0
@@ -81,6 +96,9 @@ def run(output):
         if contact:
             assert abs(poses['z']-.37).max()<.003
             assert poses['body_valid'].all()
+        if truth:
+            rails=[m for m in ET.parse(world).getroot().iter('model') if m.get('name','').startswith('rail_surface_')]
+            assert rails and np.ptp(poses['z'])>2e-4, 'irregular track must move the body'
         results.append({'name':name,'rows':s.summary['rows'],'complete':True})
     (output/'report.json').write_text(json.dumps(results,indent=2)+'\n')
     print(json.dumps(results))

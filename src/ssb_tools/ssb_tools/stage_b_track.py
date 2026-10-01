@@ -33,11 +33,26 @@ def profile_mesh(path,profile,x0,x1):
     mesh.close()
 
 
-def make_track(out,config,spec):
+def replace_track(world,out,config,spec):
+    """Remove any previous track and rail-top heightmaps, then append the current ones."""
+    for model in list(world.findall('model')):
+        if model.get('name')=='track' or model.get('name','').startswith('rail_surface_'):world.remove(model)
+    for model in make_track(out,config,spec,with_surfaces=True):world.append(model)
+
+
+def make_track(out,config,spec,with_surfaces=False):
+    """Track model. With with_surfaces, return [track, *rail-top heightmap models]."""
     out=Path(out);folder=out/'track';folder.mkdir(exist_ok=True)
     t=spec['track'];x0=config['tunnel']['x_min_m'];x1=config['tunnel']['x_max_m'];length=x1-x0
     model=ET.Element('model',name='track');sub(model,'static','true')
     rails=sub(model,'link',name='rails');width=t['head_width_m'];gauge=t['gauge_m'];head_y=(gauge+width)/2
+    from .rail_irregularity import write_heightmaps
+    # Vertical irregularity (simulation truth): wheels run on native heightmaps; the flat
+    # box keeps only the guide faces, its top below every rail-top point.
+    surfaces=write_heightmaps(folder,config,[('left',head_y),('right',-head_y)],width)
+    box_top=surfaces[1]['guide_box_top_m'] if surfaces else 0.
+    if not surfaces:
+        for stale in ('rail_profile.npz','rail_irregularity.json'):(folder/stale).unlink(missing_ok=True)
     # 73 x 38 mm head with a 7.5 mm corner radius; top running plane remains z=0.
     r=.0075
     head=[(-width/2+r,0),(width/2-r,0),(width/2-r+r*.707,-r+r*.707),(width/2,-r),
@@ -54,8 +69,9 @@ def make_track(out,config,spec):
             sub(sub(sub(v,'geometry'),'mesh'),'uri',str((folder/(name+'.obj')).resolve()))
             mat=sub(v,'material');sub(mat,'ambient',color);sub(mat,'diffuse',color)
             p=sub(sub(mat,'pbr'),'metal');sub(p,'metalness',metalness);sub(p,'roughness',rough);sub(v,'cast_shadows','true')
-        col=sub(rails,'collision',name=side+'_head');sub(col,'pose',f'{(x0+x1)/2} {y} -.019 0 0 0')
-        sub(sub(sub(col,'geometry'),'box'),'size',f'{length} {width} .038');friction(col,1.0)
+        height=.038+box_top
+        col=sub(rails,'collision',name=side+'_head');sub(col,'pose',f'{(x0+x1)/2} {y} {box_top-height/2:.12g} 0 0 0')
+        sub(sub(sub(col,'geometry'),'box'),'size',f'{length} {width} {height:.12g}');friction(col,1.0)
     sleepers=sub(model,'link',name='sleepers')
     spacing=t.get('sleeper_spacing_m',.6)
     for i in range(math.ceil((x1-x0)/spacing)):
@@ -77,4 +93,6 @@ def make_track(out,config,spec):
     box(bed,'concrete_bed',f'{(x0+x1)/2} 0 -.466 0 0 0',f'{length} {t["bed_width_m"]} .22','0.27 0.28 0.27 1',True)
     box(bed,'foundation',f'{(x0+x1)/2} 0 -.6455 0 0 0',f'{length} {t["bed_width_m"]} .179','0.25 0.26 0.25 1')
     finish(bed)
+    if with_surfaces:return [model,*(surfaces[0] if surfaces else [])]
+    if surfaces:raise ValueError('irregular track needs its rail-top heightmaps: use replace_track')
     return model

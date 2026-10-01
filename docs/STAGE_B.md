@@ -47,6 +47,19 @@ python3 tools/prepare_contact_demo.py --output local_data/stage_b/NEW_DEMO --cal
 
 默认输入是 `gui_optics_v11/capture.yaml` 和 `gui_strip_shadow_final_v10/world/world.sdf`。脚本会补上接触配置、装配高度和私密密钥，并重新生成轨道。
 
+轨道起伏与车轮柔性（§11）也在这里设定，二者都会写进配置的真值段并决定世界的生成：
+
+```bash
+python3 tools/prepare_contact_demo.py --output local_data/stage_b/NEW_DEMO \
+  --config local_data/stage_b/contact_demo/capture.yaml \
+  --calibration local_data/stage_b/contact_demo/calibration.json \
+  --track-chord-mm 2 --wheel-deflection-mm 0.2
+```
+
+- `--track-chord-mm {0,2,5}`：竖向不平顺档位（10 m 弦最大矢度），0 为平直轨；`--track-seed` 设定随机种子。
+- `--wheel-deflection-mm`：聚氨酯轮静压缩量，默认 0.2，不低于 0.15；0 为刚性轮。会在 DART 中自动标定刚度（需在已 `source /opt/ros/jazzy/setup.bash` 的环境中运行）。
+- 沿用现行演示的配置和标定时，光学签名不变（签名不含轨道和车轮），可直接复用标定，不必重新渲染标靶。
+
 **可移植资产包**：把演示及其全部依赖导出为一个相对引用的独立目录，可以复制到新克隆的仓库里使用：
 
 ```bash
@@ -68,6 +81,8 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
 | 相机 | 4096 像素、7.04 μm，90 mm 镜头对焦 2.75 m，视场 0.852 m；8 μs 曝光；k1=0.006 枕形畸变 | `capture.yaml` |
 | 采样档位 | 背景走解析路径，3 个曝光时刻，2×2 纹理足迹积分；临界几何每时刻 16 条 N 车射线；复杂裂缝每时刻 64 条（可选 32 性能档）；自适应关闭 | `stage_b_optics --integrated --area-samples 16 --area-pattern rooks --time-samples 3` |
 | 机器人 | 120 kg，10 个刚体；前驱、后编码器，四个导向轴承；底座 0.3 m、轴高 1.715 m | `capture.yaml` 的 `robot`、`contact`；`world.sdf` |
+| 轨道起伏 | 现行演示为平直轨；可选 2/5 mm 档北京地铁谱竖向起伏（§11） | `capture.yaml` 的 `truth.track_irregularity`；`world/track/rail_top_*.png` |
+| 车轮柔性 | 现行演示为刚性轮；可选聚氨酯轮柔性，静压缩量默认 0.2 mm（§11） | `capture.yaml` 的 `truth.wheel_compliance` |
 | 纹理预算 | OptiX GPU 2 GiB、CPU 1 GiB；GUI 1280 MiB（现行 140 块约 746 MiB） | `stage_b_scene.yaml` 的 `resources` |
 | GUI 预览 | 同源 Concrete034 分块底色（x=3–6 m 处 1 mm，其余 2 mm），裂缝 4 倍子像素预览；环境散光 0.6；工作灯和条光见 DESIGN §7.5 | `gui_c034_v1`、`gui_strip_shadow_final_v10` |
 
@@ -256,12 +271,15 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_review \
 - 没有镜头 MTF、离焦和噪声；暗场为零。
 - 背景只有一块 0.57 m² 素材，重复只能控制、不能消除。全区 4200 个窗口的高通互相关中位数 0.20，>0.8 的占 0.4%，拼接端需要做峰值唯一性防护。
 - 只验证了直轨。性能只在 3 m 短程测过，不外推到完整 20 m。
+- 轨道起伏只有左右相同的竖向分量；没有水平、扭曲和轨向不平顺，也没有波磨、焊缝等局部缺陷。车轮刚度是假设值，DART 在 1 ms 步长下无法实现 0.1 mm 以下的静压缩量；没有模拟受载滚动半径变化和滚动阻力。
 
 ## 9. 待完成
 
 1. 阶段 C：完整 20 m 采集，包括覆盖图、资源和吞吐报告，以及 20 m 场景的 double 格式裂缝索引。
 2. 阶段 D：展开、重叠匹配、全局优化、分块重采样。
-3. 按需加入：裂缝几何凹陷参考、机器人遮挡、镜头退化、未填/破损板缝的新模型、弯轨。
+3. 轨道不平顺第二步：左右差动分量（水平、扭曲，档位用 DB11/T 718 的水平与三角坑值），评估翘轮对编码器和扫描的影响。
+4. 隧道加长到 50 m：高度场已按段生成（50 m 约 5 段），其余资产需重新生成并复测资源与实时率。
+5. 按需加入：裂缝几何凹陷参考、机器人遮挡、镜头退化、未填/破损板缝的新模型、弯轨、轨向不平顺。
 
 ## 10. RViz 与任务控制
 
@@ -330,3 +348,62 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 132 项 Python 测试通过，包含 1/1.2/3/20 m 的名义验收区、多种初始相位、区内缺行拒绝、畸形输入和满队列回执。真实 Gazebo＋OptiX 的 1 m 暂停/继续和 3 m 完整任务，各经独立重放后通过阶段 B 验收器全部 22 项检查。1 m 任务有效区 [2.11,2.79] m 有 68282 行、零缺行；3 m 任务有效区 [3.11,5.79] m 有 267393 行、零缺行，总行数仍为 284445。起停缓冲区内丢行继续如实报告。
 
 实际 RViz 面板验证了接收端缺失、拒绝回执、管理器断连/重连，以及实际等待 90 s 无回执后重新操作；测试在 91.29 s 检查时已恢复按钮，下一条命令成功接收并回执。报告位于 `local_data/evaluation/mission_audit_fix/capture_regression/report.json` 和 `local_data/evaluation/mission_audit_fix/panel_regression_final/report.json`。回归临时原始数据/重放副本及其私有输入已清理约 4.23 GiB，保留小型配置、报告和必要截图。用户观看的历史会话 `sessions/mission/20261001_145804_982cf426` 保持原配置与哈希，其中原有 [3,6] m 验收区不会追溯修改；修正后的区间用于新生成任务。
+
+## 11. 轨道竖向不平顺与车轮柔性
+
+设计依据见 DESIGN §5.1（车轮柔性）和 §6.1（轨道不平顺）。实现位置：
+
+- 剖面与高度场：`ssb_tools.rail_irregularity`；
+- 轨道生成：`stage_b_track.replace_track`；
+- 车轮弹簧与标定：`stage_b_robot.wheel_compliance`、`ssb_tools.wheel_stiffness`；
+- 一致性检查：插件 `world_check.hpp`、验收器 `validate_contact` 和 `validate_stage_b`。
+
+**生成内容**：`world/track/` 下有 `rail_profile.npz`（5 mm 网格剖面）、`rail_irregularity.json`（档位、种子、均方根、10 m 弦最大值、最大坡度、各段高度场哈希）和 `rail_top_XX.png`（16 位高度场）。它们都是仿真真值，重建不得读取。
+
+**DART 车轮刚度标定**（车体 98 kg、轴座 0.5 kg、车轮 5 kg，1 ms，阻尼比 0.2）：
+
+| 目标静压缩量 | SDF 刚度 | 按 载荷/压缩量 的名义刚度 |
+|---|---|---|
+| 0.15 mm | 4.92×10⁶ N/m | 1.60×10⁶ N/m |
+| 0.20 mm | 2.86×10⁶ N/m | 1.20×10⁶ N/m |
+| 0.40 mm | 1.00×10⁶ N/m | 0.60×10⁶ N/m |
+
+整车实测静压缩量为 0.1501 / 0.2000 / 0.4000 mm。标定在生成演示时自动进行，结果和迭代记录写进配置。
+
+**动力学实测**（3 m 短程，只算动力学，起步 1.5 s 后统计）：
+
+| 工况 | 车体升沉范围 | 俯仰范围 | 俯仰与参考偏差 | 升沉与参考偏差 | 编码器 − 后轴行程 | 车轮载荷 / 静载 |
+|---|---|---|---|---|---|---|
+| 平直，0.2 mm | 0 | 0.07 mrad | 0.03 mrad | 0.00 mm | +0.03 mm | 0.94–1.06 |
+| 2 mm，0.2 mm | 1.9 mm | 3.2 mrad | 0.13 mrad | 0.04 mm | −0.31 mm | 0.69–1.16 |
+| 5 mm，0.2 mm | 4.8 mm | 6.9 mrad | 0.38 mrad | 0.14 mm | −0.52 mm | 0.69–1.16 |
+| 5 mm，0.15 mm | 4.8 mm | 7.0 mrad | 0.34 mrad | 0.13 mm | −0.46 mm | 0.62–1.18 |
+| 5 mm，0.4 mm | 4.8 mm | 6.8 mrad | 0.45 mrad | 0.18 mm | −0.51 mm | 0.81–1.11 |
+
+- 车轮始终不卸载，所有工况都通过 `validate_contact` 的全部检查。
+- 车体响应对车轮刚度几乎不敏感：激励频率（几 Hz）远低于悬挂固有频率，车体基本按几何关系跟随轨面。
+- 参考值取刚性圆盘在剖面上的准静态位置（半径 0.1 m 的车轮会跨过短波谷底）。
+- 起步前 1.5 s 内偏差较大（最大约 1.3 mrad），原因是车体以平直姿态放到轨道上，静置时轮轨静摩擦锁住了一点预应力，开动后释放；首行曝光在此之后。
+- 编码器读的是轮轨接触点的走行，与后轴实际行程相差约 0.02%。
+- 19 m 行程（5 mm 档、0.2 mm）稳定：俯仰范围 12.2 mrad，编码器多计 0.45 mm，滑移 99% 分位 0.74 mm/s，车轮载荷为静载的 41%–124%。
+
+**验收判据的变化**：车体参考点在轨面上方 0.3 m，俯仰时会相对车轮前后摆动，所以行程、滑移和倒退改在后轮轴位置计算。新增或调整的判据：
+
+| 判据 | 要求 |
+|---|---|
+| 无倒退 | 总倒退量小于 0.5 mm，指令车速超过 5% 后不得倒退 |
+| 小纵向滑移 | 99% 分位小于 1 mm/s，最大值小于 5 mm/s |
+| 支撑高度 | 与参考值相差不超过 0.3 mm（平直轨仍为 3 mm） |
+| 车体跟随轨面（有起伏时） | 起步后俯仰偏差小于 1 mrad |
+| 车轮始终受载（有柔性时） | 悬挂压缩量始终大于零 |
+| 静压缩量（有柔性时） | 与目标值相差不超过 2% |
+| 钢轨剖面与真值一致 | 给出世界文件时，逐点比对高度场与重新生成的剖面 |
+
+```bash
+python3 -m ssb_tools.validate_contact SESSION_dynamics --config CAPTURE.yaml --world WORLD.sdf
+```
+
+**带成像的完整采集**（5 mm 档、0.2 mm，3 m，无 GUI，代码定稿并重新构建后采集）：284443 行，成像实时率 0.977，动力学实时率 0.982，渲染 12.6 s。阶段 B 验收器 23 项全部通过，包括运行程序与源码一致、新增的"钢轨剖面与真值一致"、有效区无缺行和 333 行批次重放逐字节一致；接触验收全部通过。会话为 `sessions/irr_trials_v2/final_chord5`，演示资产在 `local_data/stage_b/irregularity_trials_v2/`。GUI 下的实时率尚未在起伏轨道上单独测量。
+
+**单步断触**：刚性轮在高度场上偶有 1 ms 的断触，竖向速度出现 9.8 mm/s（重力加速度乘以 1 ms）的跳变，与起伏幅值和高度场分辨率无关。4WIDS 也观察到同类现象。加上车轮柔性后不再出现。
+

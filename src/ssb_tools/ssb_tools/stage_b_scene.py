@@ -595,8 +595,8 @@ def make_world(out, config, spec, previews=None):
             sub(metal,'albedo_map',str((out/texture).resolve()))
             sub(metal,'roughness',.9)
             sub(metal,'metalness',0)
-    from .stage_b_track import make_track
-    world.append(make_track(out,config,spec))
+    from .stage_b_track import replace_track
+    replace_track(world,out,config,spec)
     from .stage_b_robot import make_robot
     world.append(make_robot(out,config,spec))
     from .stage_b_lighting import apply_work_light_environment

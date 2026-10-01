@@ -82,6 +82,9 @@ The launcher checks the optical calibration before starting
 Gazebo. After the GUI closes, it waits for all raw rows to reach disk and checks the
 session. Dark/flat/geometric correction is run separately before stitching, writing
 to `SESSION/processed/optical/` without changing the raw data.
+Optional vertical rail irregularity (flat / 2 mm / 5 mm, Beijing Subway spectrum shape) and
+polyurethane wheel compliance are generated into the world with `tools/prepare_contact_demo.py`
+(`--track-chord-mm`, `--wheel-deflection-mm`); the current demo uses flat rails and rigid wheels.
 Details, asset regeneration, replay and validation: [docs/STAGE_B.md](docs/STAGE_B.md).
 
 ## Data

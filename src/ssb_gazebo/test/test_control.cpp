@@ -61,3 +61,52 @@ TEST(Assembly, ReadsActualLinkPosesAndRejectsMismatch) {
   c.base_reference_z_m=.37;c.scan_axis_height_m=1.715;
   EXPECT_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c),std::runtime_error);
 }
+
+#include <gz/sim/components/Joint.hh>
+#include <gz/sim/components/JointAxis.hh>
+#include <sdf/JointAxis.hh>
+#include "world_check.hpp"
+
+namespace {
+gz::sim::Entity AddModel(gz::sim::EntityComponentManager& ecm,const std::string& name) {
+  auto e=ecm.CreateEntity();ecm.CreateComponent(e,gz::sim::components::Model());
+  ecm.CreateComponent(e,gz::sim::components::Name(name));return e;
+}
+void AddSpring(gz::sim::EntityComponentManager& ecm,gz::sim::Entity car,const std::string& name,double k,double c) {
+  auto e=ecm.CreateEntity();ecm.CreateComponent(e,gz::sim::components::Joint());
+  ecm.CreateComponent(e,gz::sim::components::Name(name));ecm.CreateComponent(e,gz::sim::components::ParentEntity(car));
+  sdf::JointAxis axis;axis.SetSpringStiffness(k);axis.SetDamping(c);
+  ecm.CreateComponent(e,gz::sim::components::JointAxis(axis));
+}
+const char* kSprings[]={"odometer_suspension","wheel_joint_1_suspension","wheel_joint_2_suspension","wheel_joint_3_suspension"};
+}
+
+TEST(WorldCheck, TrackIrregularityMustMatchWorldHeightmaps) {
+  gz::sim::EntityComponentManager ecm;auto car=AddModel(ecm,"scan_car");
+  const std::string flat="truth: {wheel_diameter_m: 0.2}\n";
+  const std::string rough="truth: {track_irregularity: {chord10_max_m: 0.002, seed: 1}}\n";
+  EXPECT_NO_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,flat));
+  EXPECT_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,rough),std::runtime_error);
+  AddModel(ecm,"rail_surface_left_00");
+  EXPECT_NO_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,rough));
+  EXPECT_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,flat),std::runtime_error);
+}
+
+TEST(WorldCheck, WheelComplianceMustMatchSdfSprings) {
+  gz::sim::EntityComponentManager ecm;auto car=AddModel(ecm,"scan_car");
+  const std::string sprung="truth: {wheel_compliance: {static_deflection_m: 0.0002, stiffness_n_m: 2.9e6, damping_n_s_m: 3300}}\n";
+  const std::string rigid="truth: {wheel_diameter_m: 0.2}\n";
+  EXPECT_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,sprung),std::runtime_error);  // no springs
+  for(int i=0;i<3;++i)AddSpring(ecm,car,kSprings[i],2.9e6,3300);
+  EXPECT_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,sprung),std::runtime_error);  // three of four
+  AddSpring(ecm,car,kSprings[3],2.9e6*1.01,3300);
+  EXPECT_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,sprung),std::runtime_error);  // stiffness differs
+  EXPECT_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,rigid),std::runtime_error);   // springs, no config
+}
+
+TEST(WorldCheck, MatchingSprungWorldIsAccepted) {
+  gz::sim::EntityComponentManager ecm;auto car=AddModel(ecm,"scan_car");
+  for(auto* n:kSprings)AddSpring(ecm,car,n,2.9e6,3300);
+  EXPECT_NO_THROW(ssb_gazebo::CheckTrackAndWheels(gz::sim::Model(car),ecm,
+    "truth: {wheel_compliance: {static_deflection_m: 0.0002, stiffness_n_m: 2.9e6, damping_n_s_m: 3300}}\n"));
+}

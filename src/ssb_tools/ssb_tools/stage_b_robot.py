@@ -65,6 +65,30 @@ def mesh_visual(link,name,path,placement,color):
     material=sub(visual,'material');sub(material,'diffuse',color);sub(material,'ambient',color)
 
 
+WHEEL_MASS_KG=5.
+AXLE_MASS_KG=.5
+
+
+def wheel_compliance(config,robot):
+    """Radial polyurethane-tread compliance as a sprung vertical joint per wheel (truth).
+
+    DART ignores contact kp/kd, so the elasticity lives in a joint. Its stiffness/damping are
+    calibrated (ssb_tools.wheel_stiffness) so the realized static deflection equals the assumed
+    value; generated configurations record them and the plugin checks them against the SDF.
+    """
+    entry=(config.get('truth') or {}).get('wheel_compliance')
+    if not entry or not config.get('contact',{}).get('enabled'):return None
+    deflection=float(entry['static_deflection_m']);zeta=float(entry.get('damping_ratio',.2))
+    if not (math.isfinite(deflection) and 1e-4<=deflection<=.002 and math.isfinite(zeta) and 0<zeta<=1):
+        raise ValueError('wheel compliance needs static_deflection_m in [0.1, 2] mm and damping_ratio in (0, 1]')
+    if 'stiffness_n_m' not in entry or 'damping_n_s_m' not in entry:
+        raise ValueError('wheel compliance needs calibrated stiffness_n_m and damping_n_s_m (prepare_contact_demo)')
+    k,c=float(entry['stiffness_n_m']),float(entry['damping_n_s_m'])
+    if not (math.isfinite(k) and k>0 and math.isfinite(c) and c>0):raise ValueError('invalid wheel compliance values')
+    return dict(static_deflection_m=deflection,damping_ratio=zeta,stiffness_n_m=k,damping_n_s_m=c,
+                axle_mass_kg=AXLE_MASS_KG,travel_m=.005)
+
+
 def make_robot(out,config,spec):
     robot=spec['robot']
     base_z, axis_height = mount_geometry(config)
@@ -111,7 +135,9 @@ def make_robot(out,config,spec):
     car=ET.Element('model',name='scan_car')
     sub(car,'pose',pose(config['motion']['start_x_m']))
     base=sub(car,'link',name='base');sub(base,'pose',pose(z=base_z))
-    inertial(base,robot['total_mass_kg']-35-(.8 if contact else 0),(4.2,8.1,10.5))
+    compliance=wheel_compliance(config,robot)
+    axles=4*compliance['axle_mass_kg'] if compliance else 0
+    inertial(base,robot['total_mass_kg']-35-(.8 if contact else 0)-axles,(4.2,8.1,10.5))
     # Helpers take coordinates in the car frame, converting into the base link.
     def base_box(name,x,y,z,size,color=WHITE,collision=False):
         box(base,name,pose(x,y,z-base_z),size,color,collision)
@@ -213,7 +239,7 @@ def make_robot(out,config,spec):
         name='odometer_wheel' if i==0 else f'wheel_{i}'
         joint='odometer' if i==0 else f'wheel_joint_{i}';wheels.append(joint)
         wheel=sub(car,'link',name=name);sub(wheel,'pose',pose(x,y,robot['wheel_diameter_m']/2))
-        inertial(wheel,5,(.013,.025,.013))
+        inertial(wheel,WHEEL_MASS_KG,(.013,.025,.013))
         cylinder(wheel,'tread',pose(roll=math.pi/2),diameter/2,.060,DARK)
         # No unsupported rail flange: a flush side ring remains inside the tread radius.
         cylinder(wheel,'inner_side_ring',pose(y=-sign*.029,roll=math.pi/2),diameter/2-.005,.002,METAL)
@@ -235,7 +261,19 @@ def make_robot(out,config,spec):
             col=sub(wheel,'collision',name='tread_contact');sub(col,'pose',pose(roll=math.pi/2))
             g=sub(sub(col,'geometry'),'cylinder');sub(g,'radius',diameter/2);sub(g,'length',.060)
             friction(col,1.0)
-        make_joint(car,joint,'revolute','base',name,'0 1 0')
+        parent='base'
+        if compliance:
+            # base -(sprung vertical slide)- axle -(revolute, encoder/drive)- wheel
+            parent=name+'_axle';axle=sub(car,'link',name=parent)
+            sub(axle,'pose',pose(x,y,robot['wheel_diameter_m']/2))
+            inertial(axle,compliance['axle_mass_kg'],(5e-4,5e-4,5e-4))
+            spring=sub(car,'joint',name=joint+'_suspension',type='prismatic')
+            sub(spring,'parent','base');sub(spring,'child',parent)
+            axis=sub(spring,'axis');sub(axis,'xyz','0 0 1');limit=sub(axis,'limit')
+            sub(limit,'lower',-compliance['travel_m']);sub(limit,'upper',compliance['travel_m'])
+            dyn=sub(axis,'dynamics');sub(dyn,'spring_reference',0)
+            sub(dyn,'spring_stiffness',f"{compliance['stiffness_n_m']:.12g}");sub(dyn,'damping',f"{compliance['damping_n_s_m']:.12g}")
+        make_joint(car,joint,'revolute',parent,name,'0 1 0')
 
     head=sub(car,'link',name='head');sub(head,'pose',pose(z=zc))
     inertial(head,15,(.25,.20,.20))

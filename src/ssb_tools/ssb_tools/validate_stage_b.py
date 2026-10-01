@@ -133,6 +133,11 @@ def main(argv=None):
             checks.append(check('gazebo_world_matches_capture_origin',
                                 PASS if abs(world_x-source['motion']['start_x_m'])<1e-9 else FAIL,
                                 world_start_x_m=world_x,capture_start_x_m=source['motion']['start_x_m']))
+            if prov['pose_source']=='gazebo_contact':
+                # Rail-top heightmaps must be exactly the configured truth profile (or absent if flat).
+                from .validate_contact import rail_profile_matches_world
+                match=rail_profile_matches_world(source,world_path)
+                checks.append(check('rail_profile_matches_truth',PASS if match['passed'] else FAIL,**match))
         poses=session.evaluation('pose_stream');row_truth=session.evaluation('row_truth')
         timing,rows,dropped=compare_timing(session,cfg,truth,poses);checks.extend(timing)
         checks.extend([accounting(rows,dropped),valid_region(source,poses,rows,row_truth,dropped),

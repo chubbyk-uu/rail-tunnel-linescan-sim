@@ -14,9 +14,10 @@ REPO=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(REPO/'src/ssb_tools'))
 from ssb_tools.stage_b_gui_world import prepare
 from ssb_tools.stage_b_scene import digest
-from ssb_tools.stage_b_track import make_track
+from ssb_tools.stage_b_track import replace_track
 from ssb_tools.optical_identity import ensure_optical_key, check_calibration
 from ssb_tools.robot_geometry import mount_geometry
+from ssb_tools.stage_b_robot import WHEEL_MASS_KG, AXLE_MASS_KG
 
 
 def main():
@@ -27,6 +28,11 @@ def main():
     p.add_argument('--output',required=True,type=Path)
     p.add_argument('--calibrate',action='store_true',help='render independent targets and fit this demo rig')
     p.add_argument('--calibration',type=Path,help='reuse a compatible measured calibration')
+    p.add_argument('--track-chord-mm',type=float,choices=(0.,2.,5.),default=0.,
+                   help='vertical rail irregularity tier: max 10 m mid-chord offset (0 = flat rails)')
+    p.add_argument('--track-seed',type=int,default=20261001,help='rail irregularity random seed')
+    p.add_argument('--wheel-deflection-mm',type=float,default=.2,
+                   help='realized polyurethane tread static deflection (assumption, >=0.15; 0 = rigid wheels)')
     a=p.parse_args();out=a.output.resolve()
     if a.calibrate and a.calibration:
         p.error('choose --calibrate or --calibration')
@@ -41,6 +47,21 @@ def main():
     c['motion']['start_theta_deg']=180.  # bottom -> right lower gate -> top -> left
     c['motion']['profile']=[[0.,0.],[1.,1.],[15.,1.],[16.,0.],[17.,0.]]
     c['acceptance']['valid_x_m']=[3.1,5.7]
+    # Physical truth options; the world is generated from them and the plugin checks the match.
+    c['truth'].pop('track_irregularity',None);c['truth'].pop('wheel_compliance',None)
+    if a.track_chord_mm>0:
+        c['truth']['track_irregularity']=dict(model='beijing_subway_vertical_v1',chord10_max_m=a.track_chord_mm/1000,
+                                              seed=a.track_seed,band_m=[.5,10.],common_mode=True)
+    if a.wheel_deflection_mm>0:
+        # Solve the SDF spring for the realized static deflection in DART at the capture step.
+        from ssb_tools.wheel_stiffness import calibrate
+        wheels=4*(WHEEL_MASS_KG+AXLE_MASS_KG)
+        result=calibrate(a.wheel_deflection_mm/1000,.2,spec['robot']['total_mass_kg']-wheels,AXLE_MASS_KG,
+                         WHEEL_MASS_KG,c['truth']['wheel_diameter_m']/2,c['motion']['sample_period_s'])
+        c['truth']['wheel_compliance']=dict(static_deflection_m=a.wheel_deflection_mm/1000,damping_ratio=.2,
+            stiffness_n_m=result['stiffness_n_m'],damping_n_s_m=result['damping_n_s_m'],
+            calibration=dict(realized_static_deflection_m=result['realized_static_deflection_m'],
+                             nominal_stiffness_n_m=result['nominal_stiffness_n_m'],method=result['method']))
     for section in ['truth','calibration']:
         c[section].setdefault('odo_left_diameter_m',c[section]['wheel_diameter_m'])
         c[section].setdefault('odo_right_diameter_m',c[section]['wheel_diameter_m'])
@@ -66,7 +87,7 @@ def main():
     (out/'capture.yaml').write_text(yaml.safe_dump(c,sort_keys=False))
     prepare(a.world,out/'capture.yaml',out/'spec.yaml',out/'world','robot')
     world=out/'world/world.sdf';tree=ET.parse(world);w=tree.getroot().find('world')
-    w.remove(w.find("model[@name='track']"));w.append(make_track(out/'world',c,spec))
+    replace_track(w,out/'world',c,spec)
     ET.indent(tree);tree.write(world,encoding='unicode',xml_declaration=True)
     manifest=out/'world/manifest.json';report=json.loads(manifest.read_text())
     report['track_regenerated']=True;report['world_sha256']=digest(world)

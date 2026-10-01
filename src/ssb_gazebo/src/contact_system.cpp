@@ -15,10 +15,12 @@
 #include <future>
 #include <iomanip>
 #include <iostream>
+#include <vector>
 #include "ssb_core/pipeline.hpp"
 #include "ssb_core/optix_renderer.hpp"
 #include "control_math.hpp"
 #include "assembly_check.hpp"
+#include "world_check.hpp"
 
 namespace ssb_gazebo {
 class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfigure,
@@ -38,6 +40,9 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
         status_pub_ = transport_.Advertise<gz::msgs::StringMsg>(topic);
       gz::sim::Model model(entity);base_=gz::sim::Link(model.LinkByName(ecm,"base"));base_.EnableVelocityChecks(ecm,true);
       CheckAssembly(model,ecm,c_);
+      car_=model;
+      for(const char* n:{"odometer_suspension","wheel_joint_1_suspension","wheel_joint_2_suspension","wheel_joint_3_suspension"}){
+        gz::sim::Joint j(model.JointByName(ecm,n));if(!j.Valid(ecm))continue;j.EnablePositionCheck(ecm,true);springs_.push_back(j);}
       auto joint=[&](std::string name){gz::sim::Joint j(model.JointByName(ecm,name));if(!j.Valid(ecm))throw std::runtime_error("missing joint "+name);j.EnablePositionCheck(ecm,true);j.EnableVelocityCheck(ecm,true);return j;};
       for(int i=0;i<2;++i){enc_[i]=joint(sdf->Get<std::string>(i?"right_encoder":"left_encoder"));drive_[i]=joint(sdf->Get<std::string>(i?"right_drive":"left_drive"));diameter_[i]=sdf->Get<double>(i?"right_diameter":"left_diameter");}
       drive_diameter_=sdf->Get<double>("drive_diameter");settle_=sdf->Get<double>("settle_s");
@@ -50,7 +55,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       std::filesystem::create_directories(log_root_+"/metadata");std::filesystem::create_directories(log_root_+"/evaluation");
       obs_.open(log_root_+"/metadata/encoders.csv");truth_.open(log_root_+"/evaluation/contact.csv");
       obs_<<std::setprecision(17)<<"t,count_left,count_right,s_hat,theta_target,scan,scan_rate,torque_left,torque_right\n";
-      truth_<<std::setprecision(17)<<"t,x,y,z,roll,pitch,yaw,vx,vy,vz,left_angle,right_angle,left_rate,right_rate,scan,scan_rate\n";
+      truth_<<std::setprecision(17)<<"t,x,y,z,roll,pitch,yaw,vx,vy,vz,left_angle,right_angle,left_rate,right_rate,scan,scan_rate"
+            <<(springs_.empty()?"":",suspension_rear_left,suspension_front_left,suspension_rear_right,suspension_front_right")<<"\n";
       std::cout<<"[contact] front drive, rear dual encoders; no world joint; diagnostics "<<log_root_<<std::endl;
     }catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}
   }
@@ -58,6 +64,12 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     if(info.paused)return;
     const double dt=std::chrono::duration<double>(info.dt).count(),t=std::chrono::duration<double>(info.simTime).count()-settle_;
     if(std::abs(dt-c_.sample_period_s)>1e-10){std::cerr<<"contact timestep mismatch";std::_Exit(2);}
+    if(!world_checked_){
+      // Models after the vehicle in the SDF do not exist yet during Configure.
+      try{CheckTrackAndWheels(car_,ecm,c_.source_text);}
+      catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}
+      world_checked_=true;
+    }
     double factor=t>=0&&t<=c_.profile.back()[0]?ssb::EvaluateProfile(c_.profile,t).factor:0;
     double speed=c_.advance_per_rev_m*c_.NominalOmega()/(2*M_PI)*factor;
     for(int i=0;i<2;++i){auto v=drive_[i].Velocity(ecm);if(!v||v->empty())continue;
@@ -87,7 +99,9 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     auto a=enc_[0].Position(ecm),b=enc_[1].Position(ecm),av=enc_[0].Velocity(ecm),bv=enc_[1].Velocity(ecm),th=scan_.Position(ecm),w=scan_.Velocity(ecm);
     if(!linear||!a||!b||!av||!bv||!th||!w||a->empty()||b->empty()||th->empty())return;
     auto rpy=pose.Rot().Euler();
-    truth_<<t<<','<<pose.Pos().X()<<','<<pose.Pos().Y()<<','<<pose.Pos().Z()<<','<<rpy.X()<<','<<rpy.Y()<<','<<rpy.Z()<<','<<linear->X()<<','<<linear->Y()<<','<<linear->Z()<<','<<a->front()<<','<<b->front()<<','<<av->front()<<','<<bv->front()<<','<<th->front()<<','<<w->front()<<'\n';
+    truth_<<t<<','<<pose.Pos().X()<<','<<pose.Pos().Y()<<','<<pose.Pos().Z()<<','<<rpy.X()<<','<<rpy.Y()<<','<<rpy.Z()<<','<<linear->X()<<','<<linear->Y()<<','<<linear->Z()<<','<<a->front()<<','<<b->front()<<','<<av->front()<<','<<bv->front()<<','<<th->front()<<','<<w->front();
+    for(const auto& j:springs_){auto q=j.Position(ecm);truth_<<','<<(q&&!q->empty()?q->front():std::nan(""));}
+    truth_<<'\n';
     if(started_){
       obs_<<t<<','<<count_[0]<<','<<count_[1]<<','<<s_hat_<<','<<target_theta_<<','<<th->front()<<','<<w->front()<<','<<torque_[0]<<','<<torque_[1]<<'\n';
       if(pipeline_) {
@@ -148,6 +162,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     options.planned_end_s=c_.profile.back()[0];pipeline_=std::make_unique<ssb::Pipeline>(c_,std::move(renderer),options);
   }
   ssb::Config c_;gz::sim::Joint enc_[2],drive_[2],scan_;gz::sim::Link base_;
+  std::vector<gz::sim::Joint> springs_;
+  gz::sim::Model car_;bool world_checked_=false;  // rear-left, front-left, rear-right, front-right
   gz::transport::Node transport_;
   gz::transport::Node::Publisher status_pub_;
   std::chrono::steady_clock::time_point last_status_{};
