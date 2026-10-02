@@ -1,0 +1,114 @@
+{
+  "schema": "ssb.readme_media.v1",
+  "recorded_date": "2026-10-02",
+  "method": "FFmpeg gdigrab desktop window-region video to H.264; cropped video to GIF/PNG; no screenshot sequence used",
+  "source_videos": [
+    {
+      "viewer": "gazebo",
+      "file": "local_data/readme_media_20261002/gazebo.mp4",
+      "sha256": "19083dff4dfcf3b8af07029b90d0b3fbfa76e5b91b39f8f48dfeaab647bc73ff",
+      "source_revision": "f1e9eab6ce5bba5ef606e030592c17b3f5d00074",
+      "source_worktree": "README/deployment documentation edits; simulation code unchanged",
+      "session": "sessions/mission/20261002_221255_bb55f2a3",
+      "probe": {
+        "programs": [],
+        "streams": [
+          {
+            "width": 1476,
+            "height": 996,
+            "r_frame_rate": "15/1",
+            "nb_frames": "180"
+          }
+        ],
+        "format": {
+          "duration": "12.000000",
+          "size": "1772287"
+        }
+      }
+    },
+    {
+      "viewer": "rviz",
+      "file": "local_data/readme_media_20261002/rviz.mp4",
+      "sha256": "22a2bf8e18e35fb2493804892b81a77f9fd9d6bed93bd43532a6cfa267e0a2bd",
+      "source_revision": "f1e9eab6ce5bba5ef606e030592c17b3f5d00074",
+      "source_worktree": "README/deployment documentation edits; simulation code unchanged",
+      "session": "sessions/mission/20261002_221619_155cefbd",
+      "probe": {
+        "programs": [],
+        "streams": [
+          {
+            "width": 1616,
+            "height": 1026,
+            "r_frame_rate": "15/1",
+            "nb_frames": "180"
+          }
+        ],
+        "format": {
+          "duration": "12.000000",
+          "size": "2631172"
+        }
+      }
+    }
+  ],
+  "capture_verification": [
+    {
+      "viewer": "gazebo",
+      "session": "sessions/mission/20261002_221255_bb55f2a3",
+      "status": "complete",
+      "rows": 284443,
+      "raw_blocks": 70,
+      "public_metadata_and_raw_hashes_verified": true
+    },
+    {
+      "viewer": "rviz",
+      "session": "sessions/mission/20261002_221619_155cefbd",
+      "status": "complete",
+      "rows": 284443,
+      "raw_blocks": 70,
+      "public_metadata_and_raw_hashes_verified": true
+    }
+  ],
+  "outputs": [
+    {
+      "file": "gazebo.png",
+      "bytes": 526840,
+      "sha256": "08e463af37703b5734a23f3bd8964f0a0e0e13174d5b0a64fe59d09d2f180793",
+      "width": 980,
+      "height": 900,
+      "frames": 1,
+      "duration_s": null
+    },
+    {
+      "file": "rviz.png",
+      "bytes": 772982,
+      "sha256": "4e06d9832c724136ffce19986b87a7361d23afd6b6d9eb5e878295b1bc1932b9",
+      "width": 1540,
+      "height": 930,
+      "frames": 1,
+      "duration_s": null
+    },
+    {
+      "file": "gazebo_scan.gif",
+      "bytes": 15937935,
+      "sha256": "5f0599943df2d5b285b63597b502b85158ec6c5a67c776ff16caeabdc71312d0",
+      "width": 900,
+      "height": 827,
+      "frames": 48,
+      "duration_s": 8.0
+    },
+    {
+      "file": "rviz_capture.gif",
+      "bytes": 11226694,
+      "sha256": "be7f74a867d306085a3b8e18da3a193fadfb1880d26d50a35822c782b3e7e3ab",
+      "width": 1400,
+      "height": 845,
+      "frames": 48,
+      "duration_s": 8.0
+    }
+  ],
+  "limitations": [
+    "viewer recordings are separate 3 m tasks",
+    "GUI media is not raw line-scan image quality or a performance benchmark",
+    "Git contains GIF/PNG; source MP4 remains local"
+  ]
+}

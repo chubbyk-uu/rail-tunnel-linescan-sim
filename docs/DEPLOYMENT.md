@@ -1,0 +1,172 @@
+# 环境部署补充：WSL 与原生 Linux
+
+本页补充 [README](../README.md) 中的安装步骤。两种环境共用 ROS 2 Jazzy、Gazebo Harmonic、CUDA Toolkit 12.8、OptiX SDK 9.1.0 和项目源码；图形驱动及 OptiX 运行时的处理不同。当前整套验收来自 WSL 主机，原生 Linux 下的命令路径由现有代码核对，尚未在独立原生主机做整套验收。
+
+## WSL OptiX 运行库
+
+SDK 提供头文件和 API，实际光线追踪还依赖驱动侧的 `libnvoptix.so.1`。当前 WSL 运行包装器明确检查 610.57.04 组件；更换组件版本必须重新核对包装器和运行兼容性，不能混合不同驱动包的文件。
+
+参考 [NVIDIA 论坛中的 WSL 实验方案](https://forums.developer.nvidia.com/t/running-optix-on-wsl-2026-version/382414)，以下仅解包用户态组件，不安装 Linux 驱动、不改 Windows 驱动目录和 `/usr/lib/wsl/lib`。这是项目使用的实验部署方式，不是 NVIDIA 对所有 WSL/驱动组合的兼容保证。
+
+在新的临时目录操作，下载来源为 [NVIDIA 官方组件目录](https://download.nvidia.com/XFree86/Linux-x86_64/610.57.04/)：
+
+```bash
+mkdir -p /tmp/ssb-optix-extract
+cd /tmp/ssb-optix-extract
+curl --fail --location --retry 2 \
+  https://download.nvidia.com/XFree86/Linux-x86_64/610.57.04/NVIDIA-Linux-x86_64-610.57.04.run \
+  -o NVIDIA-Linux-x86_64-610.57.04.run
+# 不加 sudo，只解包，不执行驱动安装流程。
+sh NVIDIA-Linux-x86_64-610.57.04.run --extract-only
+
+export SSB_OPTIX_RUNTIME="$HOME/opt/optix-runtime-610.57.04"
+# 此处应是新的目录；已有安装先核对，不覆盖或混装。
+mkdir -p "$SSB_OPTIX_RUNTIME"
+cp NVIDIA-Linux-x86_64-610.57.04/libnvoptix.so.610.57.04 \
+   NVIDIA-Linux-x86_64-610.57.04/libnvidia-rtcore.so.610.57.04 \
+   NVIDIA-Linux-x86_64-610.57.04/libnvidia-gpucomp.so.610.57.04 \
+   NVIDIA-Linux-x86_64-610.57.04/nvoptix.bin "$SSB_OPTIX_RUNTIME/"
+ln -s libnvoptix.so.610.57.04 "$SSB_OPTIX_RUNTIME/libnvoptix.so.1"
+```
+
+回到项目根目录，执行 README 的 WSL `ssb_selfcheck`。驱动更新后再次自检。仅把 CUDA `stubs` 用于必要的链接检查，不能把它放进运行时 `LD_LIBRARY_PATH`。需要代理时在当前终端设置自己的代理环境，不把地址或凭据写入仓库。
+
+`tools/with_optix_runtime.sh` 只影响子进程，设置隔离库、WSL CUDA 接口和 Toolkit 的运行库路径。包装器会丢弃继承的 `LD_LIBRARY_PATH`，ROS 命令必须在它内部加载环境，例如：
+
+```bash
+bash tools/with_optix_runtime.sh bash -c '
+  source /opt/ros/jazzy/setup.bash
+  source install/setup.bash
+  # 在这里运行需要 ROS 和 OptiX 的命令。
+'
+```
+
+## WSL Mesa 图形环境
+
+本机使用私有 Mesa 25.2.8，默认安装目录 `~/opt/agv-mesa-25.2.8/install`。`tools/with_mesa_runtime.py` 只为子进程加载对应的 GL/EGL/GBM 库，避免替换系统库。
+
+本仓库**没有收录私有 Mesa 构建器及补丁**。已有安装可以恢复到上述路径，或用 `SSB_MESA_PREFIX` 指向另一份同结构安装；新机器需另行取得构建器。构建方法来自 [4W 项目的 MESA_SETUP.md](https://github.com/chubbyk-uu/four-wheel-steering-agv-inspection/blob/main/docs/MESA_SETUP.md)，需要该仓库的访问权限。版本锁、补丁和构建脚本应作为一套使用，不单独复制启动器。
+
+若已取得完整的 4W 源码，在 **4W 仓库根目录**执行其构建步骤：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential ninja-build pkg-config dpkg-dev patch python3 \
+  libglvnd-dev zlib1g-dev libzstd-dev libexpat1-dev libdrm-dev libudev-dev \
+  libelf-dev libunwind-dev libwayland-dev libx11-dev libxext-dev libx11-xcb-dev \
+  libxxf86vm-dev libxrandr-dev x11proto-dev spirv-tools \
+  libxcb-glx0 libxcb-shm0 libxcb-shape0 libxcb-dri2-0 libxcb-dri3-0 \
+  libxcb-randr0 libxcb-present0 libxcb-sync1 libxcb-xfixes0 libxcb-render0 libxshmfence1
+python3 tools/build_private_mesa.py > /tmp/ssb_private_mesa_build.log 2>&1
+```
+
+固定版本依赖和下载哈希以该构建器的锁文件为准；上游固定包不可用时需明确处理，不能声称只克隆本项目就能恢复整套 WSL 图形环境。构建结果放在 `~/opt/`，不要放进可清理的 `local_data/`。
+
+回到本项目，先检查包装器：
+
+```bash
+export SSB_MESA_PREFIX="$HOME/opt/agv-mesa-25.2.8/install"
+python3 tools/with_mesa_runtime.py /usr/bin/true
+```
+
+它检查私有库和驱动目录是否存在，不等于图形渲染验收。然后用 README 的联合任务确认 Gazebo / RViz 可见，日志中无渲染错误。`--system` 是这个包装器的显式选项，但现有联合启动器仍选择 D3D12；不能据此把联合启动器当作原生 Linux 启动器。
+
+## 原生 Linux 启动
+
+先完成 README 的公共依赖、构建、资产恢复与**原生后端自检**。系统 NVIDIA 驱动必须能够提供 CUDA、OpenGL 和 OptiX，使用本机驱动配套的运行库，不加载 WSL 隔离组件。
+
+以下命令在原生 Ubuntu 的正常桌面终端、项目根目录执行。若之前在该终端手工设置过 WSL 的 Mesa `LD_PRELOAD` 或 D3D12 环境，重新打开干净终端。
+
+### 联合任务：分别打开管理器和 RViz
+
+**终端一：**
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+export GZ_PARTITION=ssb_native_mission
+export GZ_SIM_SYSTEM_PLUGIN_PATH="$PWD/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
+export GZ_GUI_PLUGIN_PATH="$PWD/install/ssb_gazebo/lib${GZ_GUI_PLUGIN_PATH:+:$GZ_GUI_PLUGIN_PATH}"
+python3 -m ssb_tools.mission_manager --gz-gui \
+  > /tmp/ssb_native_manager.log 2>&1
+```
+
+**终端二：**
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+export GZ_PARTITION=ssb_native_mission
+rviz2 -d install/ssb_rviz/share/ssb_rviz/config/mission.rviz \
+  --ros-args -p use_sim_time:=true > /tmp/ssb_native_rviz.log 2>&1
+```
+
+两个终端使用同一 `GZ_PARTITION`，ROS domain 也须一致。管理器启动后，RViz 面板用法与 WSL 相同；点击 Start 后管理器才创建 Gazebo 服务器和 GUI。只需 RViz 时去掉终端一的 `--gz-gui`。
+
+这组命令不经过 WSL 包装器。与 `run_mission.sh` 的差别是两个终端各自管理进程：关闭 RViz **不会自动关闭另一个终端的管理器**。先在面板等待任务完成或点 Stop 保存，随后在终端一 Ctrl+C，让管理器排空并关闭自身 Gazebo 进程，最后关闭 RViz。
+
+### 无界面壁面采集
+
+下面给出目标 `[3,6] m` 的独立步骤，不调用 WSL 的 `run_gz.sh` 或 `run_wall_capture.sh`。输出目录必须是新的：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+python3 -m ssb_tools.mission_plan \
+  --demo local_data/stage_b/contact_demo \
+  --output sessions/native_wall_3m_NEW_inputs \
+  --target-start-m 3 --target-length-m 3 > /tmp/ssb_native_plan.log 2>&1
+
+export GZ_PARTITION=ssb_native_wall
+export GZ_SIM_SYSTEM_PLUGIN_PATH="$PWD/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
+export SSB_CONFIG="$PWD/sessions/native_wall_3m_NEW_inputs/capture.yaml"
+export SSB_WORLD="$PWD/sessions/native_wall_3m_NEW_inputs/world.sdf"
+export SSB_SESSION="$PWD/sessions/native_wall_3m_NEW"
+python3 -m ssb_tools.physical_world check \
+  --config "$SSB_CONFIG" --world "$SSB_WORLD"
+```
+
+计算与运动剖面匹配的步数（这里使用 Bash 变量 `ssb_iterations`，不硬编码任务时长）：
+
+```bash
+ssb_iterations=$(python3 - <<'PY'
+import os, math, yaml
+with open(os.environ['SSB_CONFIG']) as f:
+    c = yaml.safe_load(f)
+m = c['motion']
+settle = c.get('contact', {}).get('settle_s', 2) if c.get('contact', {}).get('enabled') else 0
+print(math.ceil((m['profile'][-1][0] + settle) / m['sample_period_s'] - 1e-9) + 2)
+PY
+)
+gz sim -s -r -v 3 --iterations "$ssb_iterations" "$SSB_WORLD" \
+  > /tmp/ssb_native_capture.log 2>&1
+python3 tools/check_session.py "$SSB_SESSION"
+python3 -m ssb_tools.wall_coverage \
+  --session "$SSB_SESSION" \
+  --calibration local_data/stage_b/contact_demo/calibration.json \
+  --output "$SSB_SESSION/reconstruction/coverage"
+```
+
+真实步长变更会被插件拒绝。最终检查须确认会话完成且原始块完整；仅仅 `gz sim` 退出不等于采集验收。后续展开和匹配用 README 的共同命令。
+
+### 原生测试边界
+
+当前 CMake 的 GPU 测试仍调用 `with_optix_runtime.sh`，`optical_bench --render` 等部分生成工具也使用该包装器。这些工具属于现有 WSL 路径，不能直接宣称原生整套 `colcon test` 已通过。
+
+原生主机可以在正常 ROS/工作区终端中直接运行构建后的 GPU 测试，使用构建目录 PTX：
+
+```bash
+SSB_PTX="$PWD/build/ssb_core/ssb_scan.ptx" build/ssb_core/test_render \
+  > /tmp/ssb_native_gpu_test.log 2>&1
+```
+
+测试成功后还需真实短程采集、哈希和覆盖检查，以及 GUI 联合运行验证。默认资产包已含测量标定，运行任务时不需要在原生主机重跑 WSL 包装的标靶生成；需要重新生成光学标定时，应先改用系统运行库的探针入口，再做独立验收。原生适配自动启动器、完整 GPU 测试和资产重建入口尚未作为本次文档更新的实现内容。
+
+## 数据和排障
+
+- `local_data/`、`sessions/`、`build/`、`install/`、`log/` 不进 Git。源码、完整演示资产和系统运行环境是三个独立恢复项。
+- WSL 下数据放 Linux 文件系统；尽量用一个资产压缩包传输，采集和重建使用顺序块写入，避免逐行同步或数千小文件。
+- 采集结束不自动补偿畸变/平场；原图保留。生产重建禁止读取资产真值或 `evaluation/`。
+- 更新提交后采集前重新构建；仅文档变更也会影响 Git 溯源身份。
+- WSL 启动日志位于 `local_data/mission_logs/` 或 `local_data/gui_logs/`；管理器为每次任务保存生成配置和 `server.log` / `gui.log`。
+- 原生启动示例的进程输出位于上面的 `/tmp/ssb_native_*.log`；任务生成日志仍由管理器保存到数据目录。
