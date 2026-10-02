@@ -24,9 +24,12 @@ MATCH = np.dtype([('window', '<i4'), ('band_a', '<i2'), ('band_b', '<i2'),
          ('lower_column', '<f8'), ('upper_column', '<f8')]])
 
 
-def verified_bands(root):
+def verified_bands(root, raw_root=None):
+    """Hash-verified D1 products. v2 samples the capture's public uint8 raw blocks (hashes
+    recorded by D1; `raw_root` relocates them); legacy v1 uses its float32 cache."""
     root = Path(root).resolve()
-    names = ['provenance.json', 'report.json', 'bands.json', 'projection.npy', 'mapping.npz', 'sensor_flat.npy']
+    names = ['provenance.json', 'report.json', 'bands.json', 'projection.npy', 'mapping.npz']
+    names.append('native_source.json' if (root/'native_source.json').exists() else 'sensor_flat.npy')
     paths = [confined_file(root, name) for name in names]
     provenance = read_json(paths[0])
     if provenance.get('stage') != 'initial_unroll': raise ValueError('verified D1 products required')
@@ -39,7 +42,7 @@ def verified_bands(root):
         if outputs.get(path.name) != sha256_file(path):
             raise ValueError('D1 product hash mismatch: '+path.name)
     report = read_json(root/'report.json')
-    if report.get('schema') != 'ssb.initial_unroll.v1': raise ValueError('unsupported D1 schema')
+    if report.get('schema') not in ('ssb.initial_unroll.v1', 'ssb.initial_unroll.v2'): raise ValueError('unsupported D1 schema')
     # Carry only public observation identities. Never dereference the archived
     # source paths; relocated D1 products remain sufficient for matching.
     allowed = ('config/observable_config.json', 'metadata/manifest.json', 'raw/index.json')
@@ -50,9 +53,13 @@ def verified_bands(root):
         if len(hashes) > 1: raise ValueError('ambiguous public observation identity')
         if hashes: identities[name] = hashes[0]
     report['source_observation_hashes'] = identities
-    sampler = load_bands(root)
-    if sampler.image.shape != (len(sampler.projection), len(sampler.offsets)):
+    sampler = load_bands(root, raw_root)
+    if tuple(sampler.native.shape) != (len(sampler.projection), len(sampler.offsets)):
         raise ValueError('inconsistent D1 native image dimensions')
+    if hasattr(sampler.native, 'verify_all'): sampler.native.verify_all()
+    if hasattr(sampler.native, 'blocks'):
+        # Raw blocks are public observations; they enter provenance by identity.
+        paths += [sampler.native.raw_dir/b['file'] for b in sampler.native.blocks]
     return sampler, report, paths
 
 
@@ -184,12 +191,12 @@ def write_review(sampler, grid, windows, table, output):
         html.extend([f'<h2>Bands {window["bands"]}, q={window["q_center_m"]:.3f} m</h2>',
             f'<p>Held-out P95 {window["holdout_p95_px"]:.3f} px; nominal displacement P95 {window["nominal_displacement_p95_px"]:.2f} px. Orange points were excluded from affine fitting.</p>',
             f'<a href="{name}"><img src="{name}"></a>'])
-        release_pages(sampler.image)
+        sampler.native.release()
     (output/'review.html').write_text('\n'.join(html))
 
 
-def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSettings(), halo_m=.25):
-    started = time.monotonic(); sampler, upstream, inputs = verified_bands(root)
+def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSettings(), halo_m=.25, raw_root=None):
+    started = time.monotonic(); sampler, upstream, inputs = verified_bands(root, raw_root)
     input_s = time.monotonic()-started; grid = upstream['grid']
     output = Path(output).resolve()
     if output.is_relative_to(Path(root).resolve()): raise ValueError('D2 output must be separate from D1 inputs')
@@ -205,7 +212,7 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
             diagnostic, matches = match_window(a, b, ma, mb, min(grid['dx_m'], grid['dq_m']), settings)
             matching_s += time.monotonic()-t; window.update(diagnostic)
             if window['status'] == 'accepted': tables.append(pack_matches(sampler, grid, window, matches))
-            release_pages(sampler.image)
+            sampler.native.release()
     finally:
         cv2.setNumThreads(previous_threads)
     table = np.concatenate(tables) if tables else np.empty(0, MATCH)
@@ -252,11 +259,12 @@ def main():
     parser.add_argument('--spacing-m', type=float, default=.4)
     parser.add_argument('--height', type=int, default=512); parser.add_argument('--max-width', type=int, default=1024)
     parser.add_argument('--max-shift-mm', type=float, default=40.)
+    parser.add_argument('--raw', help='relocated public raw directory of the source capture (hash-checked)')
     parser.add_argument('--halo-m', type=float, default=.25,
                         help='use already recorded native columns around ROI edges; no extra capture')
     args = parser.parse_args()
     report = run(args.unroll, args.output, args.spacing_m, args.height, args.max_width,
-                 MatchSettings(max_shift_mm=args.max_shift_mm), args.halo_m)
+                 MatchSettings(max_shift_mm=args.max_shift_mm), args.halo_m, args.raw)
     print(json.dumps({k:report[k] for k in ('status', 'windows', 'matches', 'performance')}))
     if report['status'] == 'unmeasurable': raise SystemExit(2)
 

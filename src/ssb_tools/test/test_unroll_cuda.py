@@ -2,33 +2,42 @@
 import json
 import numpy as np
 import pytest
-from test_initial_unroll import analytic_sampler, public_fixture
+from test_initial_unroll import analytic_sampler, public_fixture, read_products
 from ssb_tools.initial_unroll import rasterize, reconstruct, trace_pixel
+from ssb_tools.wall_coverage import RUN_DTYPE
 from ssb_tools.unroll_cuda import CudaRaster
 from ssb_tools.wall_coverage import target_grid
 
 
 @pytest.mark.parametrize('missing', [False, True])
-@pytest.mark.parametrize('tile', [1, 7, 32])
+@pytest.mark.parametrize('tile', [(1, 1), (7, 5), (32, 8192)])
 def test_cuda_matches_reference_with_missing_lines_and_native_saturation(tmp_path, missing, tile):
-    sampler = analytic_sampler(remove_centre=missing)
-    sampler.image[:, 16] = np.nan
+    sampler = analytic_sampler(remove_centre=missing, raw=True)
+    sampler.native.raw_rows[:, 16] = 255          # saturated native column
+    sampler.native.raw_rows[3, 9] = 255           # one saturated sample
+    sampler.native.valid[22] = False              # flat-invalid column
     sampler.geometry_valid[[0, 7, -1]] = False
     grid = target_grid([.35, .77], 1., [-.14, .14], .004)
+    mosaic = (0, grid['shape'][1])
     root = tmp_path/'cpu'; root.mkdir()
-    _, reference = rasterize(sampler, grid, root, tile)
+    _, cpu_cover = rasterize(sampler, grid, root, tile[0], mosaic=mosaic, tile_columns=tile[1])
+    reference = read_products(root)
     root = tmp_path/'cuda'; root.mkdir()
     accelerator = CudaRaster(sampler)
     try:
-        _, actual = rasterize(sampler, grid, root, tile, accelerator)
+        _, cuda_cover = rasterize(sampler, grid, root, tile[0], accelerator, mosaic, tile[1])
         info = accelerator.describe()
         assert info['allocated_peak_bytes'] < info['allocation_budget_bytes']
-        assert info['device'] and info['abi'] == 1
+        assert info['device'] and info['abi'] == 2
     finally:
         accelerator.close()
-    np.testing.assert_array_equal(np.isfinite(actual[0]), np.isfinite(reference[0]))
-    np.testing.assert_allclose(actual[0], reference[0], atol=1e-5, rtol=0, equal_nan=True)
+    actual = read_products(root)
+    # Mosaic codes: identical mask; values within one 1/64 DN rounding step.
+    np.testing.assert_array_equal(actual[0] == 65535, reference[0] == 65535)
+    assert np.max(np.abs(actual[0].astype(int)-reference[0].astype(int))) <= 1
     for expected, result in zip(reference[1:], actual[1:]): np.testing.assert_array_equal(expected, result)
+    np.testing.assert_array_equal(cpu_cover, cuda_cover)
+    assert np.any(reference[0] == 65535) and np.any(reference[1] > 1)
 
 
 def test_cuda_public_only_end_to_end_retains_provenance_and_trace(tmp_path):
@@ -43,22 +52,24 @@ def test_cuda_public_only_end_to_end_retains_provenance_and_trace(tmp_path):
     assert binary['library'] == report['backend']['library']
     assert all(str(root) in path for path in provenance['inputs'])
     assert provenance['performance']['wall_s'] >= report['performance']['wall_s']
-    counts = np.load(output/'coverage.npy')
-    for q, x in np.argwhere(counts > 0)[::max(1, np.count_nonzero(counts)//7)]:
-        trace = trace_pixel(output, int(q), int(x))
-        assert trace['valid'] and trace['error_dn'] <= 1e-5
+    runs = np.fromfile(output/'coverage_runs.bin', RUN_DTYPE)
+    covered = runs[runs['count'] > 0]
+    for run in covered[::max(1, len(covered)//7)]:
+        trace = trace_pixel(output, int(run['q_bin']), int(run['x_begin']))
+        assert trace['valid'] and trace['observations'] == run['count']
 
 
 def test_cuda_errors_do_not_fall_back_to_cpu(monkeypatch):
     import ssb_tools.unroll_cuda as adapter
-    sampler = analytic_sampler()
+    sampler = analytic_sampler(raw=True)
     def missing_library(*args): raise OSError('intentional missing CUDA library')
     monkeypatch.setattr(adapter.ct, 'CDLL', missing_library)
     with pytest.raises(OSError, match='intentional'): CudaRaster(sampler)
 
 
 def test_cuda_rejects_nonmonotonic_geometry_and_excessive_tile():
-    sampler = analytic_sampler()
+    with pytest.raises(ValueError, match='uint8'): CudaRaster(analytic_sampler())  # float cache: CPU only
+    sampler = analytic_sampler(raw=True)
     accelerator = CudaRaster(sampler)
     try:
         with pytest.raises(RuntimeError, match='tile dimensions'):

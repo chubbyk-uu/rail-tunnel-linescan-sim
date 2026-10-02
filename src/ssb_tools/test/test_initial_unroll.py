@@ -3,13 +3,20 @@ import math
 from pathlib import Path
 import numpy as np
 import pytest
-from ssb_tools.initial_unroll import BandSampler, PROJECTION, rasterize, reconstruct, trace_pixel, preview_sample
+from ssb_tools.initial_unroll import (BandSampler, PROJECTION, rasterize, reconstruct, trace_pixel, preview_sample,
+                                      cpu_tile, MOSAIC_INVALID)
+from ssb_tools.native_rows import MemoryRows, NativeRows, correct
+from ssb_tools.optical_calibration import flat_correct
+from ssb_tools.wall_coverage import RUN_DTYPE
 from ssb_tools.public_capture import PublicCapture
 from ssb_tools.session import sha256_file
 from ssb_tools.wall_coverage import target_grid
 
 
-def analytic_sampler(remove_centre=False):
+FLAT = dict(offset=[5.]*32, gain=[1.2]*32, valid=[True]*32)
+
+
+def analytic_sampler(remove_centre=False, raw=False):
     phase = np.arange(-5, 6)*.02
     ids = np.arange(len(phase))
     if remove_centre: phase = np.delete(phase, 5); ids = np.delete(ids, 5)
@@ -26,6 +33,8 @@ def analytic_sampler(remove_centre=False):
     # Independently chosen world-coordinate ramp: resampling must retain it.
     image = (55+90*(projection['x_axis_m'][:, None]+offsets)+
              11*np.tile(phase, 2)[:, None]).astype(np.float32)
+    if raw:  # production path: uint8 rows, flat-corrected on demand
+        image = MemoryRows(np.clip(np.rint(image/1.2+5), 0, 254).astype(np.uint8), FLAT)
     sampler = BandSampler(projection, image, offsets, np.linspace(offsets[0], offsets[-1], 32),
                           np.ones(32, bool), .022)
     return sampler
@@ -63,17 +72,65 @@ def test_missing_line_and_saturated_column_are_not_interpolated_away():
     assert not valid.any()
 
 
-def test_angular_tile_sizes_produce_identical_mosaic_counts_and_source_ids(tmp_path):
-    sampler = analytic_sampler()
+def read_products(root):
+    return [np.load(root/'mosaic_u16.npy'), np.load(root/'mosaic_count.npy'),
+            np.fromfile(root/'coverage_runs.bin', RUN_DTYPE)]
+
+
+@pytest.mark.parametrize('raw', [False, True])
+def test_two_dimensional_tile_shapes_produce_identical_mosaic_and_coverage(tmp_path, raw):
+    sampler = analytic_sampler(raw=raw)
     grid = target_grid([.53, .56], 1., [-.08, .08], .004)
     products = []
-    for tile in (1, 7, 32):
-        root = tmp_path/str(tile); root.mkdir()
-        report, arrays = rasterize(sampler, grid, root, tile)
+    for rows, columns in ((1, 1), (7, 3), (32, 8192)):
+        root = tmp_path/f'{rows}_{columns}'; root.mkdir()
+        report, cover = rasterize(sampler, grid, root, rows, mosaic=(0, grid['shape'][1]), tile_columns=columns)
         assert report['missing_pixels'] == 0 and report['overlapping_pixels'] == report['total_pixels']
-        products.append(tuple(np.asarray(a).copy() for a in arrays))
+        products.append(read_products(root)+[cover])
     for product in products[1:]:
         for expected, actual in zip(products[0], product): np.testing.assert_array_equal(expected, actual)
+
+
+def test_band_prefilter_matches_visiting_every_band():
+    sampler = analytic_sampler()
+    angles = np.linspace(-.08, .08, 9)
+    for xs in (np.linspace(.3, .4, 7), np.linspace(.53, .56, 11), np.linspace(.75, .9, 5)):
+        from ssb_tools.initial_unroll import candidate_bands
+        everything = cpu_tile(sampler, angles, xs, range(len(sampler.segments)))
+        filtered = cpu_tile(sampler, angles, xs, candidate_bands(sampler, xs))
+        for expected, actual in zip(everything, filtered): np.testing.assert_array_equal(expected, actual)
+
+
+def test_native_rows_equal_the_former_float_cache_and_verify_blocks(tmp_path):
+    rng = np.random.default_rng(5)
+    raw = rng.integers(0, 256, size=(40, 32), dtype=np.uint8); raw[3, 7] = 255
+    flat = dict(offset=rng.uniform(0, 8, 32).tolist(), gain=rng.uniform(.8, 1.6, 32).tolist(),
+                valid=(rng.uniform(size=32) > .1).tolist())
+    cache, valid = flat_correct(raw, flat); cache[~valid] = np.nan  # the former sensor_flat.npy content
+    (tmp_path/'raw').mkdir()
+    blocks = []
+    for first in (0, 16, 30):
+        rows = {0: 16, 16: 14, 30: 10}[first]
+        path = tmp_path/'raw'/f'b{first}.u8'; raw[first:first+rows].tofile(path)
+        blocks.append(dict(file=path.name, first_sequence=first, rows=rows, sha256=sha256_file(path)))
+    sequences = np.arange(4, 37)  # an ROI spanning three blocks
+    native = NativeRows(tmp_path/'raw', blocks, sequences, 32, flat)
+    expected = cache[sequences]
+    np.testing.assert_array_equal(native.rows(np.arange(len(sequences))), expected)
+    ids = np.array([5, 0, 30, 5]); cols = rng.integers(0, 32, size=(4, 6))
+    a, b = native.gather(ids, cols, cols[::-1])
+    np.testing.assert_array_equal(a, expected[ids[:, None], cols])
+    np.testing.assert_array_equal(b, expected[ids[:, None], cols[::-1]])
+    np.testing.assert_array_equal(MemoryRows(raw, flat).rows(np.arange(40)), cache)
+    with (tmp_path/'raw/b16.u8').open('r+b') as f: f.write(b'\x00')
+    with pytest.raises(ValueError, match='hash mismatch'):
+        NativeRows(tmp_path/'raw', blocks, sequences, 32, flat).rows([20])
+    escaped = [dict(blocks[0], file='../outside.u8')]
+    (tmp_path/'outside.u8').write_bytes(raw[:16].tobytes())
+    with pytest.raises(ValueError, match='escapes'):
+        NativeRows(tmp_path/'raw', escaped, np.arange(4), 32, flat).rows([0])
+    with pytest.raises(ValueError, match='not covered'):
+        NativeRows(tmp_path/'raw', blocks[:1], sequences, 32, flat)
 
 
 def public_fixture(root):
@@ -131,18 +188,25 @@ def test_end_to_end_public_only_preserves_raw_and_separate_masks(tmp_path):
     report = reconstruct(root, cal, out, pitch=.004, angular_tile_rows=3)
     assert not (root/'evaluation').exists() and report['bands'] == 2
     assert sha256_file(root/'raw/block.u8') == index['blocks'][0]['sha256']
-    native = np.load(out/'sensor_flat.npy'); bits = np.load(out/'sensor_valid_bits.npy')
-    assert np.array_equal(np.isfinite(native), np.unpackbits(bits, axis=1, count=32, bitorder='little').astype(bool))
-    image = np.load(out/'mosaic.npy'); counts = np.load(out/'coverage.npy'); source = np.load(out/'source_band.npy')
-    assert np.array_equal(np.isfinite(image), counts > 0)
-    assert np.array_equal(source >= 0, counts > 0)
-    assert report['coverage']['overlapping_pixels'] > 0
-    assert (out/'review.html').is_file() and (out/'provenance.json').is_file()
-    q, x = np.argwhere(counts > 0)[len(np.argwhere(counts > 0))//2]
-    traced = trace_pixel(out, int(q), int(x))
-    assert traced['valid'] and traced['error_dn'] < 1e-5
+    # No native float cache: rows come from the hash-recorded raw blocks on demand.
+    assert not (out/'sensor_flat.npy').exists() and not (out/'mosaic_u16.npy').exists()
+    source = json.loads((out/'native_source.json').read_text())
+    assert [b['file'] for b in source['blocks']] == ['block.u8'] and source['width'] == 32
+    runs = np.fromfile(out/'coverage_runs.bin', RUN_DTYPE)
+    assert np.sum(runs['x_end']-runs['x_begin']) == report['coverage']['total_pixels']
+    assert report['coverage']['overlapping_pixels'] > 0 and report['mosaic'] == dict(mode='none')
+    assert (out/'review.html').is_file() and (out/'provenance.json').is_file() and (out/'overlap.png').is_file()
+    full = tmp_path/'full'
+    reconstruct(root, cal, full, pitch=.004, angular_tile_rows=3, mosaic='full', tile_columns=5)
+    code = np.load(full/'mosaic_u16.npy'); count = np.load(full/'mosaic_count.npy')
+    np.testing.assert_array_equal(np.fromfile(full/'coverage_runs.bin', RUN_DTYPE), runs)
+    assert np.array_equal(code != MOSAIC_INVALID, count > 0)
+    q, x = np.argwhere(count > 0)[len(np.argwhere(count > 0))//2]
+    traced = trace_pixel(full, int(q), int(x))
+    assert traced['valid'] and traced['error_dn'] <= .5/64+1e-9
     assert sum(v['weight'] for v in traced['contributions']) == pytest.approx(1.)
-    assert sum(v['weight']*v['flat_dn'] for v in traced['contributions']) == pytest.approx(traced['stored_dn'], abs=1e-5)
+    assert sum(v['weight']*v['flat_dn'] for v in traced['contributions']) == pytest.approx(traced['recomputed_dn'], abs=1e-5)
+    assert trace_pixel(out, int(q), int(x))['recomputed_dn'] == traced['recomputed_dn']
     with pytest.raises(FileExistsError): reconstruct(root, cal, out, pitch=.004)
     with pytest.raises(ValueError, match='ROI'): reconstruct(root, cal, tmp_path/'outside', [.4, .6])
 

@@ -7,11 +7,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from ssb_tools.initial_unroll import trace_pixel, load_bands, release_pages
+from ssb_tools.initial_unroll import trace_pixel, load_bands
 from ssb_tools.session import sha256_file
+from ssb_tools.wall_coverage import RUN_DTYPE
 
 
-def run(source, reference, calibration, output, backend='cuda'):
+def run(source, reference, calibration, output, backend='cuda', mosaic='none'):
     source, reference, output = map(lambda p: Path(p).resolve(), (source, reference, output))
     output.mkdir(parents=True, exist_ok=False)
     public = output/'public_inputs'; public.mkdir()
@@ -35,10 +36,10 @@ def run(source, reference, calibration, output, backend='cuda'):
         subprocess.run([sys.executable, '-m', 'ssb_tools.initial_unroll', '--session', str(public),
             '--calibration', str(public/'calibration.json'), '--output', str(result),
             '--target-x', *map(str, baseline['grid']['target_x_m']), '--angular-tile-rows', '17',
-            '--backend', backend],
+            '--tile-columns', '3001', '--backend', backend, '--mosaic', mosaic],
             stdout=log, stderr=subprocess.STDOUT, check=True)
-    products = ['sensor_flat.npy', 'sensor_valid_bits.npy', 'projection.npy', 'mapping.npz',
-                'mosaic.npy', 'coverage.npy', 'source_band.npy', 'bands.json', 'calibration.json']
+    products = ['projection.npy', 'mapping.npz', 'coverage_runs.bin', 'preview.png', 'bands.json', 'calibration.json']
+    if mosaic != 'none' and (reference/'mosaic_u16.npy').exists(): products += ['mosaic_u16.npy', 'mosaic_count.npy']
     differing = [name for name in products if sha256_file(reference/name) != sha256_file(result/name)]
     # NPZ ZIP timestamps may differ despite identical arrays; compare contents explicitly.
     import numpy as np
@@ -47,23 +48,25 @@ def run(source, reference, calibration, output, backend='cuda'):
             assert a.files == b.files and all(np.array_equal(a[k], b[k]) for k in a.files)
         differing.remove('mapping.npz')
     assert not differing, differing
+    # Native sources: the same raw blocks by identity, read from the public copy.
+    expected, actual = (json.loads((root/'native_source.json').read_text()) for root in (reference, result))
+    assert expected['blocks'] == actual['blocks'] and expected['width'] == actual['width']
+    assert Path(actual['session_root']).resolve() == public
     provenance = json.loads((result/'provenance.json').read_text())
     assert all(Path(p).resolve().is_relative_to(public) for p in provenance['inputs'])
     assert not (public/'evaluation').exists()
-    counts = np.load(result/'coverage.npy', mmap_mode='r')
-    holes = []
-    for q in range(0, len(counts), 64):
-        row, column = np.nonzero(counts[q:q+64] == 0)
-        holes.extend(zip((row+q).tolist(), column.tolist()))
-        release_pages(counts)
-    # Check stored-pixel provenance and collect invalid-pixel locations, without
-    # loading the dense 864-million-pixel grid or using defect ground truth.
+    runs = np.fromfile(result/'coverage_runs.bin', RUN_DTYPE)
+    holes = [(int(r['q_bin']), x) for r in runs[runs['count'] == 0] for x in range(r['x_begin'], r['x_end'])]
+    # Check pixel provenance and collect invalid-pixel locations from exact run lengths,
+    # without a dense coverage grid or defect ground truth.
     traces = []
-    for q in np.linspace(100, len(counts)-101, 5, dtype=int):
-        x = int(np.flatnonzero(counts[q] > 0)[len(np.flatnonzero(counts[q] > 0))//2])
-        value = trace_pixel(result, int(q), x)
-        assert value['valid'] and value['error_dn'] < 1e-5
+    covered = runs[runs['count'] > 0]
+    for run in covered[np.linspace(0, len(covered)-1, 5, dtype=int)]:
+        x = int((run['x_begin']+run['x_end']-1)//2)
+        value = trace_pixel(result, int(run['q_bin']), x)
+        assert value['valid'] and value['observations'] == run['count']
         assert abs(sum(v['weight'] for v in value['contributions'])-1) < 1e-10
+        assert abs(sum(v['weight']*v['flat_dn'] for v in value['contributions'])-value['recomputed_dn']) < 1e-4
         traces.append(value)
     sampler = load_bands(result); grid = baseline['grid']
     native_mask_holes = 0
@@ -86,7 +89,7 @@ def run(source, reference, calibration, output, backend='cuda'):
                     geometric = False; break
                 u = np.interp(delta, sampler.offsets, np.arange(len(sampler.offsets)))
                 u0 = int(np.floor(u)); u1 = min(u0+1, len(sampler.offsets)-1)
-                invalid_native |= not np.isfinite(sampler.image[row, [u0, u1]]).all()
+                invalid_native |= not np.isfinite(sampler.native.rows([row])[0][[u0, u1]]).all()
             blocked |= geometric and invalid_native
         native_mask_holes += int(blocked)
     report = dict(public_only=True, no_evaluation_directory=True,
@@ -104,4 +107,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('session','reference','calibration','output'): parser.add_argument('--'+name, required=True)
     parser.add_argument('--backend', choices=['cpu', 'cuda'], default='cuda')
-    args = parser.parse_args(); run(args.session, args.reference, args.calibration, args.output, args.backend)
+    parser.add_argument('--mosaic', choices=['none', 'full'], default='none')
+    args = parser.parse_args(); run(args.session, args.reference, args.calibration, args.output, args.backend, args.mosaic)

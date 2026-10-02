@@ -48,11 +48,12 @@ struct Context {
   int width, rows = 0, columns = 0;
   std::string device;
   size_t peak = 0;
-  Buffer native_offsets, output_offsets, geometry_valid;
+  Buffer native_offsets, output_offsets, geometry_valid, flat_offset, flat_gain, flat_valid;
   Buffer pixels, axes, row_sources, xs;
   Buffer image, count, source, best;
   void reserve_begin(size_t n, size_t columns) {
     size_t total = native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
+                   flat_offset.capacity+flat_gain.capacity+flat_valid.capacity+
                    pixels.capacity+axes.capacity+row_sources.capacity;
     total += std::max(xs.capacity, columns*sizeof(double))+
              std::max(image.capacity, n*sizeof(float))+
@@ -63,6 +64,7 @@ struct Context {
   }
   void reserve_check(size_t pixels_bytes, size_t axes_bytes, size_t row_bytes) {
     size_t total = native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
+        flat_offset.capacity+flat_gain.capacity+flat_valid.capacity+
         xs.capacity+image.capacity+count.capacity+source.capacity+best.capacity;
     total += std::max(pixels.capacity, pixels_bytes)+std::max(axes.capacity, axes_bytes)+
              std::max(row_sources.capacity, row_bytes);
@@ -70,7 +72,7 @@ struct Context {
   }
   void account() {
     size_t total = 0;
-    for (auto* b : {&native_offsets, &output_offsets, &geometry_valid, &pixels,
+    for (auto* b : {&native_offsets, &output_offsets, &geometry_valid, &flat_offset, &flat_gain, &flat_valid, &pixels,
                     &axes, &row_sources, &xs, &image, &count, &source, &best})
       total += b->capacity;
     peak = std::max(peak, total);
@@ -91,23 +93,31 @@ __device__ double inverse_column(double x, const double* offsets, int width) {
   return slope*(x-offsets[left])+left;
 }
 
+struct Flat { const float* offset; const float* gain; const uint8_t* valid; };
+// Same float32 formula as ssb_tools.native_rows.correct; fmad is disabled for this library.
+__device__ float corrected(uint8_t raw, int column, const Flat& flat, bool* ok) {
+  *ok = flat.valid[column] && raw != 255;
+  return (static_cast<float>(raw)-flat.offset[column])*flat.gain[column];
+}
+
 struct Sample { float value; double column; bool valid; };
-__device__ Sample along(int row, double x, const float* pixels, const double* axes,
+__device__ Sample along(int row, double x, const uint8_t* pixels, const double* axes,
                         const double* native, const double* output,
-                        const uint8_t* geometry, int width) {
+                        const uint8_t* geometry, const Flat& flat, int width) {
   const double delta = x-axes[row];
   const double column = inverse_column(delta, native, width);
   const int left = static_cast<int>(floor(column));
   const int right = min(left+1, width-1);
   const float weight = static_cast<float>(column-left);
-  const float a = pixels[static_cast<size_t>(row)*width+left];
-  const float b = pixels[static_cast<size_t>(row)*width+right];
+  bool ok_a, ok_b;
+  const float a = corrected(pixels[static_cast<size_t>(row)*width+left], left, flat, &ok_a);
+  const float b = corrected(pixels[static_cast<size_t>(row)*width+right], right, flat, &ok_b);
   const double corrected = inverse_column(delta, output, width);
   const int c0 = static_cast<int>(floor(corrected));
   const int c1 = min(c0+1, width-1);
   const bool valid = delta >= native[0] && delta <= native[width-1] &&
       delta >= output[0] && delta <= output[width-1] &&
-      geometry[c0] && geometry[c1] && isfinite(a) && isfinite(b);
+      geometry[c0] && geometry[c1] && ok_a && ok_b;
   return {a*(1.f-weight)+b*weight, column, valid};
 }
 
@@ -118,9 +128,9 @@ __global__ void initialize(float* image, uint16_t* count, int16_t* source,
   image[i] = nanf(""); count[i] = 0; source[i] = -1; best[i] = -INFINITY;
 }
 
-__global__ void sample_band(const float* pixels, const double* axes, const Row* rows,
+__global__ void sample_band(const uint8_t* pixels, const double* axes, const Row* rows,
     const double* xs, const double* native, const double* output, const uint8_t* geometry,
-    int width, int nq, int nx, int left, int right, int band,
+    Flat flat, int width, int nq, int nx, int left, int right, int band,
     float* image, uint16_t* count, int16_t* source, float* best) {
   const int i = blockIdx.x*blockDim.x+threadIdx.x;
   const int span = right-left;
@@ -128,8 +138,8 @@ __global__ void sample_band(const float* pixels, const double* axes, const Row* 
   const int q = i/span, column = left+i%span;
   const Row row = rows[q];
   if (!row.supported) return;
-  const Sample a = along(row.lower, xs[column], pixels, axes, native, output, geometry, width);
-  const Sample b = along(row.upper, xs[column], pixels, axes, native, output, geometry, width);
+  const Sample a = along(row.lower, xs[column], pixels, axes, native, output, geometry, flat, width);
+  const Sample b = along(row.upper, xs[column], pixels, axes, native, output, geometry, flat, width);
   if (!a.valid || !b.valid) return;
   const int target = q*nx+column;
   ++count[target];
@@ -144,11 +154,12 @@ __global__ void sample_band(const float* pixels, const double* axes, const Row* 
 }  // namespace
 
 extern "C" {
-int ssb_unroll_abi() { return 1; }
+int ssb_unroll_abi() { return 2; }
 const char* ssb_unroll_error() { return last_error.c_str(); }
 
 void* ssb_unroll_create(int width, const double* native, const double* output,
-                        const uint8_t* geometry) {
+                        const uint8_t* geometry, const float* flat_offset, const float* flat_gain,
+                        const uint8_t* flat_valid) {
   Context* result = nullptr;
   guarded([&] {
     if (width < 2 || width > 65536) throw std::runtime_error("invalid sensor width");
@@ -159,6 +170,11 @@ void* ssb_unroll_create(int width, const double* native, const double* output,
     context->native_offsets.upload(native, width*sizeof(double));
     context->output_offsets.upload(output, width*sizeof(double));
     context->geometry_valid.upload(geometry, width);
+    for (int i = 0; i < width; ++i)
+      if (!std::isfinite(flat_offset[i]) || !std::isfinite(flat_gain[i])) throw std::runtime_error("nonfinite flat calibration");
+    context->flat_offset.upload(flat_offset, width*sizeof(float));
+    context->flat_gain.upload(flat_gain, width*sizeof(float));
+    context->flat_valid.upload(flat_valid, width);
     context->account(); result = context.release();
   });
   return result;
@@ -183,7 +199,7 @@ int ssb_unroll_begin(void* handle, int rows, int columns, const double* xs) {
     checked(cudaGetLastError());
   });
 }
-int ssb_unroll_band(void* handle, int native_rows, const float* pixels,
+int ssb_unroll_band(void* handle, int native_rows, const uint8_t* pixels,
     const double* axes, const void* row_data, int left, int right, int band) {
   return guarded([&] {
     auto& c = *static_cast<Context*>(handle);
@@ -191,7 +207,7 @@ int ssb_unroll_band(void* handle, int native_rows, const float* pixels,
     if (native_rows <= 0 || left < 0 || right > c.columns || right <= left ||
         band < 0 || band >= std::numeric_limits<int16_t>::max())
       throw std::runtime_error("invalid CUDA band dimensions");
-    const size_t bytes = static_cast<size_t>(native_rows)*c.width*sizeof(float);
+    const size_t bytes = static_cast<size_t>(native_rows)*c.width;
     if (bytes > kBudget/2) throw std::runtime_error("CUDA native input exceeds 128 MiB");
     c.reserve_check(bytes, native_rows*sizeof(double), c.rows*sizeof(Row));
     for (int i = 0; i < native_rows; ++i)
@@ -203,9 +219,10 @@ int ssb_unroll_band(void* handle, int native_rows, const float* pixels,
     c.pixels.upload(pixels, bytes); c.axes.upload(axes, native_rows*sizeof(double));
     c.row_sources.upload(rows, c.rows*sizeof(Row)); c.account();
     const int n = c.rows*(right-left);
-    sample_band<<<(n+255)/256,256>>>(c.pixels.as<float>(), c.axes.as<double>(), c.row_sources.as<Row>(),
+    const Flat flat{c.flat_offset.as<float>(), c.flat_gain.as<float>(), c.flat_valid.as<uint8_t>()};
+    sample_band<<<(n+255)/256,256>>>(c.pixels.as<uint8_t>(), c.axes.as<double>(), c.row_sources.as<Row>(),
         c.xs.as<double>(), c.native_offsets.as<double>(), c.output_offsets.as<double>(),
-        c.geometry_valid.as<uint8_t>(), c.width, c.rows, c.columns, left, right, band,
+        c.geometry_valid.as<uint8_t>(), flat, c.width, c.rows, c.columns, left, right, band,
         c.image.as<float>(), c.count.as<uint16_t>(), c.source.as<int16_t>(), c.best.as<float>());
     checked(cudaGetLastError());
   });

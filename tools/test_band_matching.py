@@ -24,8 +24,9 @@ sys.addaudithook(audit)
 from ssb_tools.match_bands import run
 from ssb_tools.band_matching import MatchSettings
 settings = json.loads(sys.argv[4])
+raw = public/'raw' if (public/'native_source.json').exists() else None
 run(public, output, settings['spacing_m'], settings['height'], settings['max_width'],
-    MatchSettings(**settings['settings']), settings['halo_m'])
+    MatchSettings(**settings['settings']), settings['halo_m'], raw)
 '''
 
 
@@ -33,10 +34,17 @@ def run(unroll, reference, output):
     unroll, reference, output = map(lambda p: Path(p).resolve(), (unroll, reference, output))
     output.mkdir(parents=True, exist_ok=False)
     public = output/'public_d1'; public.mkdir()
-    names = ['provenance.json','report.json','bands.json','projection.npy','mapping.npz','sensor_flat.npy']
-    for name in names:
-        try: os.link(unroll/name, public/name)
-        except OSError: shutil.copyfile(unroll/name, public/name)
+    names = ['provenance.json','report.json','bands.json','projection.npy','mapping.npz']
+    names.append('native_source.json' if (unroll/'native_source.json').exists() else 'sensor_flat.npy')
+    def place(source, target):
+        try: os.link(source, target)
+        except OSError: shutil.copyfile(source, target)
+    for name in names: place(unroll/name, public/name)
+    if (unroll/'native_source.json').exists():
+        # D1 v2 samples the capture's public raw blocks: relocate exactly those, by identity.
+        source = json.loads((unroll/'native_source.json').read_text())
+        (public/'raw').mkdir()
+        for block in source['blocks']: place(Path(source['session_root'])/'raw'/block['file'], public/'raw'/block['file'])
     parameters = json.loads((reference/'provenance.json').read_text())['parameters']
     # Locate only installed code's repository for the read audit, never sys.path.
     workspace = Path(subprocess.check_output(['git','-C',str(unroll),'rev-parse','--show-toplevel'],text=True).strip())
@@ -51,6 +59,7 @@ def run(unroll, reference, output):
     assert all(Path(p).is_relative_to(public) for p in provenance['inputs'])
     report = json.loads((result/'report.json').read_text())
     proof = dict(public_only=True, relocated_D1_products=len(names),
+        relocated_raw_blocks=len(list((public/'raw').iterdir())) if (public/'raw').exists() else 0,
         workspace_data_reads_denied_except_public_inputs_outputs_and_code=True,
         identical_products=products, input_paths_confined=True, status=report['status'],
         matches=report['matches'], windows=report['windows'], performance=provenance['performance'])

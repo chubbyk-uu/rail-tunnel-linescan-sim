@@ -1,4 +1,4 @@
-"""Bounded CUDA tile adapter; inputs are measured mappings and native pixels."""
+"""Bounded CUDA tile adapter; inputs are measured mappings, flat parameters and uint8 native rows."""
 import ctypes as ct
 from pathlib import Path
 import numpy as np
@@ -21,7 +21,7 @@ class CudaRaster:
         self.lib = ct.CDLL(str(self.path))
         signatures = {
             'abi': ([], ct.c_int), 'error': ([], ct.c_char_p),
-            'create': ([ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_void_p], ct.c_void_p),
+            'create': ([ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_void_p], ct.c_void_p),
             'destroy': ([ct.c_void_p], None), 'device': ([ct.c_void_p], ct.c_char_p),
             'peak_bytes': ([ct.c_void_p], ct.c_size_t),
             'begin': ([ct.c_void_p, ct.c_int, ct.c_int, ct.c_void_p], ct.c_int),
@@ -32,7 +32,7 @@ class CudaRaster:
         for name, (args, result) in signatures.items():
             function = getattr(self.lib, 'ssb_unroll_'+name)
             function.argtypes, function.restype = args, result
-        if self.lib.ssb_unroll_abi() != 1: raise RuntimeError('unsupported CUDA unroll ABI')
+        if self.lib.ssb_unroll_abi() != 2: raise RuntimeError('unsupported CUDA unroll ABI')
         native = np.ascontiguousarray(sampler.offsets, np.float64)
         output = np.ascontiguousarray(sampler.output_offsets, np.float64)
         valid = np.ascontiguousarray(sampler.geometry_valid, np.uint8)
@@ -41,9 +41,13 @@ class CudaRaster:
             not np.isfinite(output).all() or not np.all(np.diff(native) > 0) or
             not np.all(np.diff(output) > 0) or not valid.any()):
             raise ValueError('invalid measured CUDA mapping')
-        if sampler.pixels.dtype != np.float32 or sampler.pixels.shape[1] != len(native):
-            raise ValueError('CUDA requires native float32 samples')
-        self.handle = self.lib.ssb_unroll_create(len(native), pointer(native), pointer(output), pointer(valid))
+        source = sampler.native
+        if not hasattr(source, 'raw') or source.shape[1] != len(native):
+            raise ValueError('CUDA requires uint8 native rows with flat parameters')
+        self.flat = [np.ascontiguousarray(source.offset, np.float32), np.ascontiguousarray(source.gain, np.float32),
+                     np.ascontiguousarray(source.valid, np.uint8)]
+        self.handle = self.lib.ssb_unroll_create(len(native), pointer(native), pointer(output), pointer(valid),
+                                                 *map(pointer, self.flat))
         if not self.handle: raise RuntimeError(self.lib.ssb_unroll_error().decode())
 
     def check(self, result):
@@ -55,13 +59,13 @@ class CudaRaster:
 
     def describe(self):
         return dict(name='cuda', device=self.lib.ssb_unroll_device(self.handle).decode(),
-                    library=str(self.path), abi=1,
+                    library=str(self.path), abi=2, native_input='uint8 raw rows, flat-corrected in kernel',
                     library_sha256=sha256_file(self.path),
                     allocated_peak_bytes=self.lib.ssb_unroll_peak_bytes(self.handle),
                     allocation_budget_bytes=256 << 20,
                     geometry_precision='float64', radiometry_precision='float32; fmad disabled')
 
-    def tile(self, angles, xs):
+    def tile(self, angles, xs, bands=None):
         sampler = self.sampler
         angles = np.asarray(angles, np.float64)
         xs = np.ascontiguousarray(xs, np.float64)
@@ -69,7 +73,7 @@ class CudaRaster:
             raise ValueError('finite one-dimensional CUDA grid required')
         self.check(self.lib.ssb_unroll_begin(self.handle, len(angles), len(xs), pointer(xs)))
         usable = sampler.output_offsets[sampler.geometry_valid]
-        for band in range(len(sampler.segments)):
+        for band in (range(len(sampler.segments)) if bands is None else bands):
             lo, hi, weight, supported = sampler.row_sources(band, angles)
             if not np.any(supported): continue
             axes = sampler.projection['x_axis_m'][np.r_[lo[supported], hi[supported]]]
@@ -78,9 +82,9 @@ class CudaRaster:
             if right <= left: continue
             # Compact contiguous acquisition range: no full-image GPU upload.
             first = int(min(lo.min(), hi.min())); last = int(max(lo.max(), hi.max()))+1
-            if (last-first)*sampler.pixels.shape[1]*4 > 128 << 20:
+            if (last-first)*sampler.native.shape[1] > 128 << 20:
                 raise ValueError('CUDA native input exceeds 128 MiB')
-            samples = np.ascontiguousarray(sampler.pixels[first:last])
+            samples = np.ascontiguousarray(sampler.native.raw(np.arange(first, last)))
             axis = np.ascontiguousarray(sampler.projection['x_axis_m'][first:last])
             rows = np.zeros(len(angles), ROW)
             rows['lower'] = lo-first; rows['upper'] = hi-first
