@@ -54,6 +54,11 @@ class BandSampler:
         self.footprint = footprint
         self.segments = np.unique(projection['segment'])
         self.bounds = []
+        self.phases = []
+        self.columns = np.arange(len(offsets))
+        # Keep the owning mmap for page release, but gather through an ndarray
+        # view to avoid thousands of memmap subclass operations per tile.
+        self.pixels = np.asarray(image)
         for segment in self.segments:
             ids = np.flatnonzero(projection['segment'] == segment)
             if not np.array_equal(ids, np.arange(ids[0], ids[-1]+1)):
@@ -61,11 +66,12 @@ class BandSampler:
             if len(ids) < 2 or not np.all(np.diff(projection['theta_rad'][ids]) > 0):
                 raise ValueError('band angles must increase and contain at least two rows')
             self.bounds.append((int(ids[0]), int(ids[-1]+1)))
+            self.phases.append(projection['theta_rad'][ids]-2*math.pi*int(segment))
 
     def row_sources(self, band, angles):
         a, b = self.bounds[band]
         rows = self.projection[a:b]
-        phase = rows['theta_rad']-2*math.pi*int(self.segments[band])
+        phase = self.phases[band]
         right = np.searchsorted(phase, angles)
         left = np.clip(right-1, 0, len(rows)-1); right = np.clip(right, 0, len(rows)-1)
         gap = phase[right]-phase[left]
@@ -85,12 +91,12 @@ class BandSampler:
         lo, hi, weight, supported = self.row_sources(band, angles)
         def along(ids):
             delta = xs[None, :]-self.projection['x_axis_m'][ids, None]
-            u = np.interp(delta, self.offsets, np.arange(len(self.offsets)))
+            u = np.interp(delta, self.offsets, self.columns)
             left = np.floor(u).astype(np.int32); right = np.minimum(left+1, len(self.offsets)-1)
             w = (u-left).astype(np.float32)
-            v0, v1 = self.image[ids[:, None], left], self.image[ids[:, None], right]
+            v0, v1 = self.pixels[ids[:, None], left], self.pixels[ids[:, None], right]
             # Measured target domain: no extrapolation into uncalibrated edges.
-            cu = np.interp(delta, self.output_offsets, np.arange(len(self.offsets)))
+            cu = np.interp(delta, self.output_offsets, self.columns)
             c0 = np.floor(cu).astype(np.int32); c1 = np.minimum(c0+1, len(self.offsets)-1)
             valid = ((delta >= self.offsets[0]) & (delta <= self.offsets[-1]) &
                      (delta >= self.output_offsets[0]) & (delta <= self.output_offsets[-1]) &
