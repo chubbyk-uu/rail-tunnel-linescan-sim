@@ -2,6 +2,10 @@
 
 #include <dlfcn.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <cerrno>
+#include <chrono>
+#include <system_error>
 
 #include <array>
 #include <cstdio>
@@ -13,6 +17,21 @@
 
 namespace ssb {
 namespace {
+using Clock = std::chrono::steady_clock;
+double Elapsed(Clock::time_point start) {
+  return std::chrono::duration<double>(Clock::now()-start).count();
+}
+
+void SyncPath(const std::filesystem::path& path, bool directory) {
+  const int fd = ::open(path.c_str(), O_RDONLY|O_CLOEXEC|(directory ? O_DIRECTORY : 0));
+  if(fd<0) throw std::system_error(errno,std::generic_category(),"open for fsync: "+path.string());
+  int result;
+  do { result=::fsync(fd); } while(result<0 && errno==EINTR);
+  const int error=errno;
+  const int closed=::close(fd);
+  if(result<0) throw std::system_error(error,std::generic_category(),"fsync: "+path.string());
+  if(closed<0) throw std::system_error(errno,std::generic_category(),"close after fsync: "+path.string());
+}
 
 std::string RunCommand(const std::string& command) {
   std::array<char, 4096> buffer;
@@ -33,6 +52,23 @@ std::string ThisLibraryPath() {
 
 }  // namespace
 
+void SyncFile(const std::filesystem::path& path) { SyncPath(path,false); }
+void SyncDirectory(const std::filesystem::path& path) { SyncPath(path,true); }
+
+void IoStatistics::Merge(const IoStatistics& other) {
+  files+=other.files;bytes+=other.bytes;
+  write_seconds+=other.write_seconds;readback_seconds+=other.readback_seconds;
+  sync_seconds+=other.sync_seconds;
+  longest_write_s=std::max(longest_write_s,other.longest_write_s);
+  longest_sync_s=std::max(longest_sync_s,other.longest_sync_s);
+}
+
+nlohmann::json IoStatistics::Json() const {
+  return {{"files",files},{"bytes",bytes},{"write_seconds",write_seconds},
+          {"readback_seconds",readback_seconds},{"sync_seconds",sync_seconds},
+          {"longest_write_s",longest_write_s},{"longest_sync_s",longest_sync_s}};
+}
+
 nlohmann::json DtypeJson(const Fields& fields) {
   nlohmann::json j = nlohmann::json::array();
   for (const auto& [name, type] : fields) j.push_back({name, type});
@@ -45,9 +81,12 @@ void WriteTextAtomic(const std::filesystem::path& path, const std::string& text)
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
     out << text;
     out.flush();
-    if (!out) throw std::runtime_error("write failed: " + tmp);
+    out.close();
+    if (out.fail()) throw std::runtime_error("write failed: " + tmp);
   }
+  SyncFile(tmp);
   std::filesystem::rename(tmp, path);
+  SyncDirectory(path.parent_path().empty() ? "." : path.parent_path());
 }
 
 void WriteJsonAtomic(const std::filesystem::path& path, const nlohmann::json& value) {
@@ -63,20 +102,32 @@ TableWriter::TableWriter(std::filesystem::path path, nlohmann::json dtype, size_
 void TableWriter::Append(const void* records, size_t count) {
   if (closed_) throw std::logic_error("append to closed table " + path_.string());
   const size_t bytes = count * record_size_;
+  const auto begin=Clock::now();
   out_.write(static_cast<const char*>(records), static_cast<std::streamsize>(bytes));
   if (!out_) throw std::runtime_error("write failed: " + path_.string());
+  const double elapsed=Elapsed(begin);
   hash_.Update(records, bytes);
   count_ += count;
+  statistics_.write_seconds+=elapsed;
+  statistics_.longest_write_s=std::max(statistics_.longest_write_s,elapsed);
+  statistics_.bytes+=bytes;
 }
 
 nlohmann::json TableWriter::Close() {
   if (closed_) throw std::logic_error("table closed twice");
   closed_ = true;
+  const auto flush_begin=Clock::now();
   out_.flush();
   out_.close();
   if (out_.fail()) throw std::runtime_error("close failed: " + path_.string());
+  statistics_.write_seconds+=Elapsed(flush_begin);
   const std::string digest = hash_.Final();
+  auto begin=Clock::now();
   if (Sha256File(path_) != digest) throw std::runtime_error("read-back hash mismatch: " + path_.string());
+  statistics_.readback_seconds=Elapsed(begin);
+  begin=Clock::now();SyncFile(path_);
+  statistics_.sync_seconds=statistics_.longest_sync_s=Elapsed(begin);
+  statistics_.files=1;
   return {{"file", path_.filename().string()}, {"dtype", dtype_}, {"record_size", record_size_},
           {"count", count_}, {"sha256", digest}};
 }
@@ -106,13 +157,20 @@ void BlockWriter::Flush() {
   const size_t bytes = buffered_ * width_;
   const std::string digest = Sha256Hex(buffer_.data(), bytes);
   const auto tmp = path.string() + ".tmp";
+  const auto begin=Clock::now();
   {
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
     out.write(reinterpret_cast<const char*>(buffer_.data()), static_cast<std::streamsize>(bytes));
     out.close();
     if (out.fail()) throw std::runtime_error("block write failed: " + tmp);
   }
+  const double write_s=Elapsed(begin);
+  statistics_.write_seconds+=write_s;
+  statistics_.longest_write_s=std::max(statistics_.longest_write_s,write_s);
+  const auto read_begin=Clock::now();
   if (Sha256File(tmp) != digest) throw std::runtime_error("block read-back hash mismatch: " + tmp);
+  statistics_.readback_seconds+=Elapsed(read_begin);
+  statistics_.bytes+=bytes;++statistics_.files;
   std::filesystem::rename(tmp, path);
   blocks_.push_back({{"file", name.str()}, {"first_sequence", block_first_}, {"rows", buffered_},
                      {"sha256", digest}});
@@ -123,6 +181,15 @@ void BlockWriter::Flush() {
 nlohmann::json BlockWriter::Close() {
   if (closed_) throw std::logic_error("block writer closed twice");
   Flush();  // the tail block is kept, however short
+  // Sync once per completed block at the task boundary, never per row/preview.
+  for(const auto& block:blocks_) {
+    const auto begin=Clock::now();SyncFile(dir_/block.at("file").get<std::string>());
+    const double seconds=Elapsed(begin);
+    statistics_.sync_seconds+=seconds;
+    statistics_.longest_sync_s=std::max(statistics_.longest_sync_s,seconds);
+  }
+  const auto begin=Clock::now();SyncDirectory(dir_);
+  statistics_.sync_seconds+=Elapsed(begin);
   closed_ = true;
   return {{"schema", "ssb.raw_blocks.v1"}, {"width", width_}, {"block_rows", block_rows_},
           {"pixel_format", "mono8"}, {"rows", next_sequence_}, {"blocks", blocks_}};

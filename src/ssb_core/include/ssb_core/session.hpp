@@ -15,6 +15,16 @@ namespace ssb {
 nlohmann::json DtypeJson(const Fields& fields);
 void WriteJsonAtomic(const std::filesystem::path& path, const nlohmann::json& value);
 void WriteTextAtomic(const std::filesystem::path& path, const std::string& text);
+void SyncFile(const std::filesystem::path& path);
+void SyncDirectory(const std::filesystem::path& path);
+
+struct IoStatistics {
+  size_t files = 0, bytes = 0;
+  double write_seconds = 0, readback_seconds = 0, sync_seconds = 0;
+  double longest_write_s = 0, longest_sync_s = 0;
+  void Merge(const IoStatistics& other);
+  nlohmann::json Json() const;
+};
 
 // Append-only table of fixed-size records; Close() returns its manifest entry.
 class TableWriter {
@@ -27,6 +37,7 @@ class TableWriter {
     Append(records.data(), records.size());
   }
   nlohmann::json Close();
+  const IoStatistics& Statistics() const { return statistics_; }
 
  private:
   std::filesystem::path path_;
@@ -35,6 +46,7 @@ class TableWriter {
   std::ofstream out_;
   Sha256Stream hash_;
   bool closed_ = false;
+  IoStatistics statistics_;
 };
 
 // Raw pixel rows in fixed-size blocks (the tail block may be shorter). Each block is
@@ -44,7 +56,9 @@ class BlockWriter {
   BlockWriter(std::filesystem::path directory, int width, int block_rows);
   void Append(const uint8_t* rows, size_t count, int64_t first_sequence);
   nlohmann::json Close();
+  const IoStatistics& Statistics() const { return statistics_; }
   int64_t RowsWritten() const { return next_sequence_; }
+  // Flushed and hash-verified rows; durable only after Close's batch sync.
   int64_t RowsPersisted() const { return next_sequence_ - static_cast<int64_t>(buffered_); }
 
  private:
@@ -56,6 +70,7 @@ class BlockWriter {
   int64_t next_sequence_ = 0, block_first_ = 0;
   nlohmann::json blocks_ = nlohmann::json::array();
   bool closed_ = false;
+  IoStatistics statistics_;
 };
 
 // Build-time and run-time identity of the code producing a session (DESIGN.md §12.1).

@@ -66,6 +66,8 @@ struct Pipeline::Impl {
 
   nlohmann::json metadata_tables, evaluation_tables, raw_index, timing_stats;
   double render_seconds = 0, write_seconds = 0;
+  double render_queue_wait_s = 0, write_queue_wait_s = 0;
+  IoStatistics raw_io, table_io, physical_io;
   int64_t batches = 0;
   nlohmann::json progress = nlohmann::json::array();
 
@@ -213,9 +215,11 @@ void Pipeline::Impl::TimingLoop() {
         batch.push_back(job);
         if (batch.size() == static_cast<size_t>(config.batch_rows)) {
           std::unique_lock<std::mutex> lock(mutex);
+          const auto waiting=Clock::now();
           cv.wait(lock, [&] {
             return failed || render_queue.size() < static_cast<size_t>(config.max_queued_batches);
           });
+          render_queue_wait_s+=Seconds(waiting,Clock::now());
           if (failed) return false;
           render_queue.push_back(std::move(batch));
           render_queue_peak = std::max(render_queue_peak, render_queue.size());
@@ -263,6 +267,8 @@ void Pipeline::Impl::TimingLoop() {
     std::lock_guard<std::mutex> lock(mutex);
     if (failed) return;
     if (!batch.empty()) render_queue.push_back(std::move(batch));
+    for(const auto* table:{&rows_table,&scan_table,&odo_table,&right_odo_table,&gate_table,
+                          &drop_table,&pose_table,&truth_table}) table_io.Merge(table->Statistics());
     metadata_tables = meta;
     evaluation_tables = evalj;
     timing_stats = {{"samples", st.samples}, {"scan_edges", st.scan_edges}, {"odometer_edges", st.odo_edges},
@@ -303,9 +309,11 @@ void Pipeline::Impl::RenderLoop() {
       std::unique_lock<std::mutex> lock(mutex);
       render_seconds += dt;
       const size_t bytes = b.Bytes();
+      const auto waiting=Clock::now();
       cv.wait(lock, [&] {
         return failed || write_queue.empty() || write_queue_bytes + bytes <= config.write_queue_bytes;
       });
+      write_queue_wait_s+=Seconds(waiting,Clock::now());
       if (failed) return;
       write_queue_bytes += bytes;
       write_queue_peak = std::max(write_queue_peak, write_queue_bytes);
@@ -343,12 +351,14 @@ void Pipeline::Impl::WriteLoop() {
       const auto t0 = Clock::now();
       blocks.Append(b.pixels.data(), b.rows, b.first_sequence);
       rows_persisted = blocks.RowsPersisted();
+      record.resize(b.rows*(8+columns*16));
       for (size_t i = 0; i < b.rows; ++i) {
+        auto* target=record.data()+i*(8+columns*16);
         const int64_t seq = b.first_sequence + static_cast<int64_t>(i);
-        std::memcpy(record.data(), &seq, 8);
-        if (columns) std::memcpy(record.data() + 8, b.hits.data() + i * columns * 2, columns * 16);
-        hit_table.Append(record.data(), 1);
+        std::memcpy(target, &seq, 8);
+        if (columns) std::memcpy(target + 8, b.hits.data() + i * columns * 2, columns * 16);
       }
+      hit_table.Append(record.data(), b.rows);
       const auto t1 = Clock::now();
       latest_written_center = b.last_center;
       std::lock_guard<std::mutex> lock(mutex);
@@ -362,6 +372,8 @@ void Pipeline::Impl::WriteLoop() {
     nlohmann::json hits = hit_table.Close();
     hits["columns"] = debug_columns;
     std::lock_guard<std::mutex> lock(mutex);
+    raw_io=blocks.Statistics();
+    table_io.Merge(hit_table.Statistics());
     raw_index = raw;
     evaluation_tables["debug_hits"] = hits;
   } catch (...) {
@@ -377,7 +389,6 @@ nlohmann::json Pipeline::Wait() {
   s.timing_thread.join();
   s.render_thread.join();
   s.write_thread.join();
-  const auto end = Clock::now();
   if (s.failed) {
     std::string what = "unknown error";
     try {
@@ -390,37 +401,9 @@ nlohmann::json Pipeline::Wait() {
                                               {"error", what}, {"pose_source", s.options.pose_source}});
     std::rethrow_exception(s.error);
   }
-  const double wall = Seconds(s.start_wall, end);
-  const double imaging_wall = s.have_first ? Seconds(s.first_push_wall, end) : 0;
-  const double producer_wall = s.have_first && s.finish_called ? Seconds(s.first_push_wall, s.finish_called_wall) : 0;
+  try {
   const int64_t rows = s.raw_index.at("rows").get<int64_t>();
   const double sim_first = s.first_pushed;
-  double sim_last = sim_first;
-  if (!s.progress.empty()) sim_last = s.progress.back().at("sim_time_written").get<double>();
-  const nlohmann::json performance = {
-      {"wall_seconds", wall},
-      {"rows", rows},
-      {"average_rows_per_wall_second", wall > 0 ? rows / wall : 0},
-      {"render_seconds", s.render_seconds},
-      {"render_rows_per_second", s.render_seconds > 0 ? rows / s.render_seconds : 0},
-      {"write_seconds", s.write_seconds},
-      // DESIGN.md §11, both measured from the first pose sample (excludes start-up):
-      // dynamics = pose stream span per wall second while it was produced; imaging =
-      // the same span per wall second until the last row was on disk.
-      {"dynamics_rtf", producer_wall > 0 ? (s.pushed_at_finish - sim_first) / producer_wall : 0},
-      {"imaging_progress_rtf", imaging_wall > 0 ? (s.latest_pushed.load() - sim_first) / imaging_wall : 0},
-      {"last_row_center", sim_last},
-      {"sim_time_pushed_at_finish", s.pushed_at_finish},
-      {"sim_time_written_at_finish", s.written_at_finish},
-      {"wall_seconds_after_finish", s.finish_called ? Seconds(s.finish_called_wall, end) : 0},
-      {"write_queue_peak_bytes", s.write_queue_peak},
-      {"render_queue_peak_batches", s.render_queue_peak},
-      {"render_queue_limit_batches", s.config.max_queued_batches},
-      {"batches", s.batches},
-      {"batch_rows", s.config.batch_rows},
-      {"backend_final", s.renderer->Describe()},
-      {"note", "wall_seconds starts after the backend self-check; the rates start at the first pose sample"}};
-  WriteJsonAtomic(s.root / "logs" / "performance.json", {{"summary", performance}, {"progress", s.progress}});
   WriteJsonAtomic(s.root / "metadata" / "manifest.json", s.metadata_tables);
   WriteJsonAtomic(s.root / "evaluation" / "manifest.json", s.evaluation_tables);
   WriteJsonAtomic(s.root / "raw" / "index.json", s.raw_index);
@@ -449,11 +432,56 @@ nlohmann::json Pipeline::Wait() {
   // Protect the complete archived physical input set, including SDF, spec, config and images.
   const auto physical = s.root / "evaluation" / "physical";
   if (std::filesystem::exists(physical)) {
+    std::vector<std::filesystem::path> directories{physical};
     for (const auto& entry : std::filesystem::recursive_directory_iterator(physical)) {
-      if (entry.is_regular_file())
-        files[entry.path().lexically_relative(s.root).generic_string()] = Sha256File(entry.path());
+      if (entry.is_directory()) directories.push_back(entry.path());
+      if (!entry.is_regular_file()) continue;
+      files[entry.path().lexically_relative(s.root).generic_string()] = Sha256File(entry.path());
+      const auto begin=Clock::now();SyncFile(entry.path());
+      const double seconds=Seconds(begin,Clock::now());
+      s.physical_io.sync_seconds+=seconds;
+      s.physical_io.longest_sync_s=std::max(s.physical_io.longest_sync_s,seconds);
+      ++s.physical_io.files;s.physical_io.bytes+=entry.file_size();
     }
+    for(auto directory=directories.rbegin();directory!=directories.rend();++directory) SyncDirectory(*directory);
   }
+  // Persist directory entries for initial files, snapshots and the session itself.
+  for(const char* name:{"metadata","evaluation","config","logs"}) SyncDirectory(s.root/name);
+  SyncDirectory(s.root);
+  SyncDirectory(s.root.parent_path().empty() ? "." : s.root.parent_path());
+  const auto end=Clock::now();
+  const double wall = Seconds(s.start_wall, end);
+  const double imaging_wall = s.have_first ? Seconds(s.first_push_wall, end) : 0;
+  const double producer_wall = s.have_first && s.finish_called ? Seconds(s.first_push_wall, s.finish_called_wall) : 0;
+  double sim_last = sim_first;
+  if (!s.progress.empty()) sim_last = s.progress.back().at("sim_time_written").get<double>();
+  const nlohmann::json performance = {
+      {"wall_seconds", wall},
+      {"rows", rows},
+      {"average_rows_per_wall_second", wall > 0 ? rows / wall : 0},
+      {"render_seconds", s.render_seconds},
+      {"render_rows_per_second", s.render_seconds > 0 ? rows / s.render_seconds : 0},
+      {"write_seconds", s.write_seconds},
+      {"io", {{"raw",s.raw_io.Json()},{"tables",s.table_io.Json()},
+               {"physical_snapshot",s.physical_io.Json()},
+               {"render_queue_wait_s",s.render_queue_wait_s},{"write_queue_wait_s",s.write_queue_wait_s}}},
+      // DESIGN.md §11, both measured from the first pose sample (excludes start-up):
+      // dynamics = pose stream span per wall second while it was produced; imaging =
+      // the same span per wall second until the last row was on disk.
+      {"dynamics_rtf", producer_wall > 0 ? (s.pushed_at_finish - sim_first) / producer_wall : 0},
+      {"imaging_progress_rtf", imaging_wall > 0 ? (s.latest_pushed.load() - sim_first) / imaging_wall : 0},
+      {"last_row_center", sim_last},
+      {"sim_time_pushed_at_finish", s.pushed_at_finish},
+      {"sim_time_written_at_finish", s.written_at_finish},
+      {"wall_seconds_after_finish", s.finish_called ? Seconds(s.finish_called_wall, end) : 0},
+      {"write_queue_peak_bytes", s.write_queue_peak},
+      {"render_queue_peak_batches", s.render_queue_peak},
+      {"render_queue_limit_batches", s.config.max_queued_batches},
+      {"batches", s.batches},
+      {"batch_rows", s.config.batch_rows},
+      {"backend_final", s.renderer->Describe()},
+      {"note", "wall_seconds starts after the backend self-check; rates include payload/index durability and end before the final completion marker"}};
+  WriteJsonAtomic(s.root / "logs" / "performance.json", {{"summary", performance}, {"progress", s.progress}});
   nlohmann::json summary = {{"schema", "ssb.session.v1"},
                                   {"status", s.producer_error.empty() ? "complete" : "failed"},
                                   {"files", files},
@@ -469,6 +497,17 @@ nlohmann::json Pipeline::Wait() {
   WriteJsonAtomic(s.root / "session.json", summary);
   if (!s.producer_error.empty()) throw std::runtime_error(s.producer_error);
   return summary;
+  } catch(const std::exception& error) {
+    // Commit failures also leave an explicitly failed session when the filesystem
+    // still permits it. Preserve any already-written recovery indices and counts.
+    try {
+      nlohmann::json failed;
+      std::ifstream(s.root/"session.json")>>failed;
+      failed["status"]="failed";failed["error"]=error.what();
+      WriteJsonAtomic(s.root/"session.json",failed);
+    } catch(...) { /* The original persistence error remains authoritative. */ }
+    throw;
+  }
 }
 
 }  // namespace ssb
