@@ -25,7 +25,7 @@ def export_demo(demo, output):
         if not check(config,spec,demo/'world/world.sdf')['passed']:
             raise ValueError('source physical world differs from its configuration')
     output.mkdir(parents=True);assets=output/'assets';assets.mkdir()
-    copied={};hashes={}
+    copied={};hashes={};sources={};target_hashes={}
 
     def copy_asset(source):
         source=Path(source).resolve()
@@ -36,6 +36,11 @@ def export_demo(demo, output):
         old_hash=sha256_file(source)
         if source.suffix=='.json':
             data=json.loads(source.read_text())
+            if data.get('schema')=='ssb.surface_runtime.v1':
+                # These are historical preparation labels, not loader inputs.
+                # Do not copy today's configuration and rewrite its old identity.
+                for entry in data.get('inputs',{}).values():
+                    if 'file' in entry:entry['source_file']=entry.pop('file')
             def relocate(node):
                 if isinstance(node,dict):
                     # Guard manifests refer to the defect hash: copy that dependency first.
@@ -43,7 +48,7 @@ def export_demo(demo, output):
                     if isinstance(node.get('file'),str):
                         child=copy_asset(source.parent/node['file'])
                         node['file']=child.name
-                        if 'sha256' in node:node['sha256']=sha256_file(child)
+                        if 'sha256' in node:node['sha256']=target_hashes[child]
                     for key,value in list(node.items()):
                         # Normalized source.bin is the runtime input. Original scanned
                         # image names are provenance labels, not recipe dependencies.
@@ -52,9 +57,14 @@ def export_demo(demo, output):
                 elif isinstance(node,str):return hashes.get(node,node)
                 return node
             data=relocate(data)
-            target.write_text(json.dumps(data,indent=2)+'\n')
+            target.write_text(json.dumps(data,separators=(',',':'))+'\n')
         else:shutil.copyfile(source,target)
-        hashes[old_hash]=sha256_file(target)
+        target_hashes[target]=sha256_file(target)
+        if source.suffix!='.json' and target_hashes[target]!=old_hash:
+            raise ValueError(f'copied dependency identity mismatch: {source}')
+        hashes[old_hash]=target_hashes[target]
+        sources[str(target.relative_to(output))]=dict(source_file=str(source),source_sha256=old_hash,
+                                                     bytes=target.stat().st_size)
         return target
 
     scene=copy_asset(demo/config['render']['optical_scene'])
@@ -77,7 +87,7 @@ def export_demo(demo, output):
         for rail in physical['actual']['rails']:
             model=world.getroot().find(f"world/model[@name='{rail['name']}']")
             image=output/'world'/model.findtext('link/collision/geometry/heightmap/uri')
-            if sha256_file(image)!=rail['sha256']:
+            if target_hashes[image.resolve()]!=rail['sha256']:
                 raise ValueError(f"bundled heightmap content changed: {rail['name']}")
             rail['file']=image.name
         (output/'world/physical_manifest.json').write_text(json.dumps(physical,indent=2)+'\n')
@@ -87,7 +97,9 @@ def export_demo(demo, output):
         if not (demo/name).is_file():raise ValueError(f'missing prepared demo {name}')
         shutil.copyfile(demo/name,output/name)
     manifest=dict(schema='ssb.demo_bundle.v1',
-                  files={str(p.relative_to(output)):sha256_file(p) for p in output.rglob('*') if p.is_file()},
+                  files={str(p.relative_to(output)):target_hashes[p] if p in target_hashes else sha256_file(p)
+                         for p in output.rglob('*') if p.is_file()},
+                  dependencies=sources,
                   note='Contains private simulation truth for generating captures; reconstruction uses session observable data.')
     (output/'bundle.json').write_text(json.dumps(manifest,indent=2)+'\n')
     return manifest

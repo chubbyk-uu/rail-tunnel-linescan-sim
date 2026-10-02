@@ -22,16 +22,18 @@ from ssb_tools.stage_b_robot import WHEEL_MASS_KG, AXLE_MASS_KG, running_wheel_l
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--world',type=Path,default=REPO/'local_data/stage_b/gui_strip_shadow_final_v10/world/world.sdf')
-    p.add_argument('--config',type=Path,default=REPO/'local_data/stage_b/gui_optics_v11/capture.yaml')
-    p.add_argument('--spec',type=Path,default=REPO/'src/ssb_tools/config/stage_b_scene.yaml')
+    p.add_argument('--demo',type=Path,default=REPO/'local_data/stage_b/contact_demo',
+                   help='complete prepared input bundle; individual inputs may be overridden')
+    p.add_argument('--world',type=Path)
+    p.add_argument('--config',type=Path)
+    p.add_argument('--spec',type=Path)
     p.add_argument('--output',required=True,type=Path)
     p.add_argument('--calibrate',action='store_true',help='render independent targets and fit this demo rig')
     p.add_argument('--calibration',type=Path,help='reuse a compatible measured calibration')
-    p.add_argument('--geometry',type=Path,default=REPO/'local_data/stage_b/geometry_b2_v5',
+    p.add_argument('--geometry',type=Path,
                    help='lining meshes (prepare_stage_b_scene output, same layout) replacing those the source scene and '
                         'world name; optical settings, key and calibration are kept (meshes are not in the optical '
-                        'signature). Default: the watertight geometry_b2_v5')
+                        'signature). Default: retain the input bundle meshes')
     p.add_argument('--track-chord-mm',type=float,choices=(0.,2.,5.),default=0.,
                    help='vertical rail irregularity tier: max 10 m mid-chord offset (0 = flat rails)')
     p.add_argument('--track-cross-level-mm',type=float,choices=(0.,2.,4.),default=0.,
@@ -46,6 +48,12 @@ def main():
     p.add_argument('--wheel-deflection-mm',type=float,default=.2,
                    help='realized polyurethane tread static deflection (assumption, >=0.15; 0 = rigid wheels)')
     a=p.parse_args();out=a.output.resolve()
+    a.demo=a.demo.resolve()
+    a.world=a.world or a.demo/'world/world.sdf'
+    a.config=a.config or a.demo/'capture.yaml'
+    a.spec=a.spec or a.demo/'spec.yaml'
+    if not a.calibrate and not a.calibration and (a.demo/'calibration.json').is_file():
+        a.calibration=a.demo/'calibration.json'
     if a.calibrate and a.calibration:
         p.error('choose --calibrate or --calibration')
     if out.exists():raise ValueError('refuse to overwrite prepared demo')
@@ -100,7 +108,11 @@ def main():
         # The whole lining is replaced, or nothing: a complete, audited, unmodified set built for
         # this tunnel and panel layout.
         from ssb_tools.stage_b_scene import LINING_MESHES, lining_layout
-        names=sorted(Path(m['file']).name for m in meshes)
+        def lining_name(mesh):
+            name=Path(mesh['file']).name
+            prefix,_,suffix=name.partition('_')
+            return suffix if prefix.isdigit() else name
+        names=sorted(lining_name(m) for m in meshes)
         if names!=sorted(LINING_MESHES):raise ValueError(f'source scene lining {names} is not the four lining meshes')
         missing=[n for n in (*LINING_MESHES,'manifest.json','mesh_audit.json') if not (geometry/n).is_file()]
         if missing:raise ValueError(f'replacement geometry {geometry} is incomplete; missing {missing}')
@@ -113,7 +125,7 @@ def main():
         if built.get('layout')!=lining_layout(c,spec):
             raise ValueError('replacement geometry was built for a different tunnel, panel layout or seed')
         for mesh in meshes:
-            new=geometry/Path(mesh['file']).name
+            new=geometry/lining_name(mesh)
             replaced[mesh['file']]=str(new);mesh['file']=str(new);mesh['sha256']=digest(new)
         scene['geometry_replacement']=dict(folder=str(geometry),manifest_sha256=digest(geometry/'manifest.json'),
             light_leak_edges=0,reason='watertight lining (no T-junction gaps); same layout, joints and seed')
@@ -122,7 +134,8 @@ def main():
     scene['indirect_fill_relative']=spec['preview']['indirect_fill_relative']
     scene['work_light_preview']={k:v for k,v in spec['preview'].items() if k.startswith('work_light')}
     scene['work_light_preview']['direct_transport_in_capture']=False
-    scene['limitations']+=' GUI work lights illuminate the side wall ahead and behind the current camera stripe; their direct illumination is not yet rendered in acquisition. Reflected fill is an uncalibrated weak diffuse sensitivity term.'
+    note=' GUI work lights illuminate the side wall ahead and behind the current camera stripe; their direct illumination is not yet rendered in acquisition. Reflected fill is an uncalibrated weak diffuse sensitivity term.'
+    if note.strip() not in scene['limitations']:scene['limitations']+=note
     (out/'scene.json').write_text(json.dumps(scene,indent=2)+'\n')
     c['render']['optical_scene']=str(out/'scene.json')
     (out/'capture.yaml').write_text(yaml.safe_dump(c,sort_keys=False))
@@ -131,7 +144,11 @@ def main():
     # GUI visuals of the lining follow the same replacement, whatever folder the source world named.
     lining={Path(new).name:new for new in replaced.values()}
     for uri in w.iter('uri'):
-        if uri.text and Path(uri.text.strip()).name in lining:uri.text=lining[Path(uri.text.strip()).name]
+        if uri.text:
+            name=Path(uri.text.strip()).name
+            prefix,_,suffix=name.partition('_')
+            if prefix.isdigit():name=suffix
+            if name in lining:uri.text=lining[name]
     replace_track(w,out/'world',c,spec)
     missing=sorted({u.text.strip() for u in w.iter('uri') if u.text and '://' not in u.text and not Path(u.text.strip()).is_file()})
     if missing:raise ValueError(f'world references missing files: {missing[:5]}')

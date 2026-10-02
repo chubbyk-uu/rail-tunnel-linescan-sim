@@ -29,7 +29,7 @@ tools/run_gz_gui.sh sessions/my_run       # 指定会话目录（不得已存在
 tools/run_gz_gui.sh SESSION path/to/capture.yaml   # 其他演示目录，世界与标定取同目录
 ```
 
-演示资产是 `local_data/stage_b/contact_demo/`，内含 `capture.yaml`（含私密光学密钥）、`scene.json`、`world/world.sdf`、`calibration.json` 和 `gui.config`，几者成套使用。
+演示资产是 `local_data/stage_b/contact_demo/`，现已直接采用可迁移的完整导出包，内含 `capture.yaml`（含私密光学密钥）、`assets/` 中的光学场景及依赖、`world/world.sdf`、`spec.yaml`、`calibration.json`、`gui.config` 和 `bundle.json`，几者成套使用。运行引用全部相对；`bundle.json.dependencies` 的 `source_file` 和配方 `input_channels` 只是历史来源记录。
 
 运行流程：
 
@@ -46,7 +46,7 @@ tools/run_gz_gui.sh SESSION path/to/capture.yaml   # 其他演示目录，世界
 python3 tools/prepare_contact_demo.py --output local_data/stage_b/NEW_DEMO --calibrate
 ```
 
-默认输入是 `gui_optics_v11/capture.yaml` 和 `gui_strip_shadow_final_v10/world/world.sdf`。脚本会补上接触配置、装配高度和私密密钥，并重新生成轨道。
+默认输入是完整的 `contact_demo` 包，可用 `--demo /path/to/bundle` 指定迁移后的副本；不依赖 v10/v11 中间目录。脚本重新生成机器人和轨道，默认保留来源包的衬面网格，并自动复用匹配的标定；`--calibrate` 用于重新标定。派生目录还需要下述导出步骤才能再次独立迁移。
 
 轨道起伏与车轮柔性（§11）也在这里设定，二者都会写进配置的真值段并决定世界的生成：
 
@@ -66,13 +66,14 @@ python3 tools/prepare_contact_demo.py --output local_data/stage_b/NEW_DEMO \
 **可移植资产包**：把演示及其全部依赖导出为一个相对引用的独立目录，可以复制到新克隆的仓库里使用：
 
 ```bash
-PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
+source install/setup.bash
+python3 -m ssb_tools.demo_bundle \
   --demo local_data/stage_b/contact_demo --output /tmp/subway_demo_bundle
 ```
 
 接触模式资产包同时导出 `spec.yaml` 和 `world/physical_manifest.json`，同步高度场改名后的引用并保留图像内容哈希；导出前后都检查物理世界与配置一致。缺少规格或物理清单的旧包需从完整演示重新导出。
 
-复制为新克隆的 `local_data/stage_b/contact_demo` 即可运行。资产包含有生成端真值（HMAC 密钥、畸变），只用于生成采集，不能作为盲重建评估的输入。已验证的副本是 `local_data/stage_b/review_portable_relocated/`（327 个文件，约 1.8 GiB）。该历史副本仍从 −130° 开始，现行 `contact_demo` 从 180° 开始；恢复资产包后须核对起始相位和配置哈希。要保留新相位，应从现行演示重新导出成套资产包。
+复制为新克隆的 `local_data/stage_b/contact_demo` 即可运行。资产包含有生成端真值（HMAC 密钥、畸变），只用于生成采集，不能作为盲重建评估的输入。2026-10-02 默认包已迁移并在隔离原 `stage_b` 目录后通过 344 个文件哈希、运行引用边界、物理世界、标定身份检查，并从迁移副本派生新演示。约 1.70 GiB 运行依赖（1,827,116,136 字节）。原默认目录保留为 `contact_demo_unbundled_20261002`，历史 `review_portable_relocated` 已删除，不作为现行入口。联合短程采集在本轮修复的集成验收中复核。
 
 ## 3. 现行场景与成像配置
 
@@ -95,7 +96,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.demo_bundle \
 
 ## 4. 重新生成资产
 
-除非另行说明，命令都在仓库根目录执行，需要先 `source install/setup.bash`，或设置 `PYTHONPATH=src/ssb_tools`。输出目录已存在时工具拒绝覆盖，失败的输出会标记 `FAILED`，复现时请换用新目录。以下是现行资产的生成链。
+除非另行说明，命令都在仓库根目录执行，需要先 `source install/setup.bash`。输出目录已存在时工具拒绝覆盖，失败的输出会标记 `FAILED`，复现时请换用新目录。以下是现行资产的生成链。
 
 ```bash
 CFG=src/ssb_core/config/stage_b.yaml
@@ -138,7 +139,7 @@ python3 tools/prepare_contact_demo.py --world $OUT/NEW_GUI_LIGHT/world.sdf \
 说明：
 
 - 第 3 步生成网格后自动做漏光审计（`ssb_tools.mesh_audit`，结果写入 `mesh_audit.json`）：全部板缝已填时，只要有一处从隧道内能看到背衬就判失败。
-- 第 6 步的 `--geometry` 默认为 `geometry_b2_v5`：源场景和源世界里引用的衬面网格会被替换，光学设置和标定保留（网格不在光学签名内）。换新几何时指向 `$OUT/NEW_GEOMETRY`。旧网格 `geometry_b2_v4` 已删除，`gui_optics_v11` 和 `gui_strip_shadow_final_v10` 里对它的引用只能经由这个替换使用。
+- 第 6 步默认保留来源网格。需要替换时显式传 `--geometry $OUT/NEW_GEOMETRY`，验证四个衬面网格及完整性清单，光学身份与标定保留。完整来源重建还需传 `--spec $SPEC`；原始素材下载和 AI 裂缝素材不随 Git 提供，当前验证的是从完整包派生，不等于已重跑全部素材生成链。
 - 新生成的裂缝索引用 double 端点格式（`xq64_radius32_le`，20 m 场景约 35 MB，预算 64 MiB）。现行 `defects_dev_v5` 是旧 float 格式，3 m 演示精度足够。
 - 重新生成会得到新的资产哈希和新的光学密钥，旧标定随之失效，必须重新标定。
 - 重复度可独立测量：`python3 -m ssb_tools.stage_b_repetition --surface SURFACE.json --area 0 21 -6 6 --size 3 --windows 150`。

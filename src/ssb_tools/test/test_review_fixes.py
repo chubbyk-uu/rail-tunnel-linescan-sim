@@ -83,7 +83,9 @@ def test_bundle_relocates_dependencies_and_guard_hashes(tmp_path):
     defects=source/'defects.json'
     defects.write_text(json.dumps({'files':{'segments.bin':{'file':str(blob),'sha256':sha256_file(blob)}}}))
     surface=source/'surface.json'
-    surface.write_text(json.dumps({'adaptive_defects_sha256':sha256_file(defects)}))
+    surface.write_text(json.dumps({'schema':'ssb.surface_runtime.v1',
+        'adaptive_defects_sha256':sha256_file(defects),
+        'inputs':{'config':{'file':str(source/'deleted_historical_config.yaml'),'sha256':'original'}}}))
     scene=source/'scene.json';scene.write_text(json.dumps({
         'surface':{'file':str(surface),'sha256':sha256_file(surface)},
         'defects':{'file':str(defects),'sha256':sha256_file(defects)}}))
@@ -100,6 +102,8 @@ def test_bundle_relocates_dependencies_and_guard_hashes(tmp_path):
         assert sha256_file(scene_path.parent/entry['file'])==entry['sha256']
     guard=json.loads((scene_path.parent/packed['surface']['file']).read_text())
     assert guard['adaptive_defects_sha256']==packed['defects']['sha256']
+    assert guard['inputs']['config']['sha256']=='original'
+    assert 'file' not in guard['inputs']['config']
     assert str(source) not in (moved/'world/world.sdf').read_text()
 
 

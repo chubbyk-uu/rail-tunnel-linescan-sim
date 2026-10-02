@@ -14,6 +14,11 @@ def prepare(world,config,spec,output,mode):
     config=Path(config).resolve();spec=Path(spec).resolve();world=Path(world).resolve()
     c=yaml.safe_load(config.read_text());s=load_spec(spec);tree=ET.parse(world)
     w=tree.getroot().find('world')
+    # Resolve against the source world before moving it to the generation directory.
+    for tag in ('uri','albedo_map','normal_map','roughness_map','metalness_map'):
+        for item in w.iter(tag):
+            if item.text and '://' not in item.text:
+                item.text=str((world.parent/item.text).resolve())
     rgb=s['preview']['ambient_rgb']
     if len(rgb)!=3 or not all(math.isfinite(v) and 0<=v<=1 for v in rgb):
         raise ValueError('GUI ambient must be three values in [0,1]')

@@ -97,7 +97,9 @@ Details, asset regeneration, replay and validation: [docs/STAGE_B.md](docs/STAGE
 ## Data
 
 `local_data/` (assets) and `sessions/` (captures) are not tracked by Git. A fresh checkout
-needs the demo bundle exported with `ssb_tools.demo_bundle` (docs/STAGE_B.md §2).
+needs a complete demo bundle at `local_data/stage_b/contact_demo` (docs/STAGE_B.md §2).
+The default now uses this portable bundle directly; `bundle.json` records runtime file
+hashes and historical sources. Derivation uses `--demo`, without legacy intermediate directories.
 Generated `capture.yaml` files and bundles contain private simulation truth (the HMAC
 optical key and lens distortion): use them to generate captures, never as reconstruction
 input. On 2026-10-01 unused data was removed; the list is in
