@@ -7,7 +7,9 @@ the former cache: float32 (raw - offset) * gain, NaN where the column is invalid
 raw sample is saturated (255).
 """
 import mmap
+from collections import OrderedDict
 from pathlib import Path
+import resource
 import numpy as np
 from .session import sha256_file
 
@@ -50,7 +52,15 @@ class FloatRows:
 
 class NativeRows:
     """Projection rows backed by hash-verified uint8 raw blocks of one capture."""
-    def __init__(self, raw_dir, blocks, sequences, width, flat, verified=()):
+    def __init__(self, raw_dir, blocks, sequences, width, flat, verified=(), max_open_blocks=128):
+        if not isinstance(max_open_blocks, int) or max_open_blocks < 1:
+            raise ValueError('positive raw mapping cache capacity required')
+        soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        # Leave descriptors for ROS, CUDA, outputs and temporary hash reads. Keep
+        # enough blocks for adjacent angular tiles without reopening every tile.
+        self.max_open_blocks = max_open_blocks
+        if soft_limit != resource.RLIM_INFINITY:
+            self.max_open_blocks = min(max_open_blocks, max(1, soft_limit // 2))
         self.raw_dir = Path(raw_dir).resolve(); self.width = int(width)
         self.offset, self.gain, self.valid = flat_parameters(flat, self.width)
         self.blocks = sorted(blocks, key=lambda b: b['first_sequence'])
@@ -67,24 +77,35 @@ class NativeRows:
             raise ValueError('projection rows are not covered by the recorded raw blocks')
         self.block_of = block; self.local = self.sequences-self.first[block]
         self.shape = (len(self.sequences), self.width)
-        self.verified = set(verified); self.maps = {}
+        self.verified = set(verified); self.maps = OrderedDict()
+
+    def _verify_block(self, index):
+        entry = self.blocks[index]
+        path = self.raw_dir/entry['file']
+        if not path.resolve().is_relative_to(self.raw_dir):
+            raise ValueError('raw block escapes the public raw directory: '+str(entry['file']))
+        if path.stat().st_size != entry['rows']*self.width:
+            raise ValueError('raw block size mismatch: '+str(path))
+        if entry['file'] not in self.verified:
+            if sha256_file(path) != entry['sha256']:
+                raise ValueError('raw block hash mismatch: '+str(path))
+            self.verified.add(entry['file'])
+        return path
 
     def _block(self, index):
         if index not in self.maps:
+            path = self._verify_block(index)
+            if len(self.maps) >= self.max_open_blocks:
+                _, evicted = self.maps.popitem(last=False)
+                evicted._mmap.close()
             entry = self.blocks[index]
-            path = self.raw_dir/entry['file']
-            if not path.resolve().is_relative_to(self.raw_dir):
-                raise ValueError('raw block escapes the public raw directory: '+str(entry['file']))
-            if path.stat().st_size != entry['rows']*self.width: raise ValueError('raw block size mismatch: '+str(path))
-            if entry['file'] not in self.verified:
-                if sha256_file(path) != entry['sha256']: raise ValueError('raw block hash mismatch: '+str(path))
-                self.verified.add(entry['file'])
             self.maps[index] = np.memmap(path, np.uint8, mode='r', shape=(entry['rows'], self.width))
+        self.maps.move_to_end(index)
         return self.maps[index]
 
     def verify_all(self):
         """Hash every recorded block now (fail before any output is created)."""
-        for index in range(len(self.blocks)): self._block(index)
+        for index in range(len(self.blocks)): self._verify_block(index)
 
     def raw(self, ids):
         """uint8 native rows for projection row ids, in the order given."""
@@ -111,6 +132,12 @@ class NativeRows:
         for array in self.maps.values():
             mapping = getattr(array, '_mmap', None)
             if mapping is not None and hasattr(mapping, 'madvise'): mapping.madvise(mmap.MADV_DONTNEED)
+
+    def close(self):
+        """Close cached descriptors; subsequent reads may reopen verified blocks."""
+        while self.maps:
+            _, array = self.maps.popitem(last=False)
+            array._mmap.close()
 
 
 class MemoryRows(NativeRows):
