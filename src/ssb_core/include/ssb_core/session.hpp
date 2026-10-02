@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,12 @@ class BlockWriter {
   IoStatistics statistics_;
   std::function<void()> progress_;
 };
+
+// Planned motion end of the completed session that archived `pose_stream`, accepted only
+// through session.json -> evaluation/manifest.json -> pose stream hashes. A replay of that
+// stream re-images the same motion; unlinked or altered streams return nullopt.
+std::optional<double> ArchivedPlannedEnd(const std::filesystem::path& pose_stream,
+                                         std::filesystem::path* session_file = nullptr);
 
 // Build-time and run-time identity of the code producing a session (DESIGN.md §12.1).
 nlohmann::json ProvenanceJson(const std::vector<std::string>& argv);

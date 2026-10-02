@@ -431,6 +431,7 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
     s.params.target_width=a.target_width;s.params.target_albedo=a.target_albedo;
     s.params.area_samples=a.area_samples;s.params.time_samples=a.time_samples;s.params.light_samples=a.light_samples;
     s.params.pixel_step=config.pixel_pitch_m/config.FocalLength();s.params.response_gain=a.response_gain;s.params.indirect_fill=a.indirect_fill;
+    s.params.normal_scale=float(a.normal_map_scale);
     s.params.light_enabled=a.light_enabled;s.params.shadows=a.shadows;s.params.lamp_length=a.lamp_length;
     s.params.adaptive_area=a.adaptive_area;s.params.area_rooks=a.area_rooks;
     s.params.crack_area_samples=a.crack_area_samples;s.params.crack_area_rooks=a.crack_area_rooks;
@@ -552,6 +553,7 @@ nlohmann::json OptixRenderer::Describe() const {
           {"complex_crack_area_samples",s.params.integrated_cracks?s.params.crack_area_samples:0},
           {"crack_optics_model",s.assets&&s.assets->crack_cavity?"cavity_v2":"flat_v1"},
           {"texture_footprint_samples",s.params.texture_footprint_samples},
+          {"normal_map_scale",s.assets?s.assets->normal_map_scale:1.},
           {"joint_filler_texture",bool(s.params.filler)},{"texture_prefilter",bool(s.params.texture_prefilter)},
           {"optix_abi_version", OPTIX_VERSION},
           {"device", s.device.name},

@@ -257,8 +257,10 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
     float3 bitangent=Unit(Cross(normal,tangent));
     // At theta=0 the positive q tangent is +y; inward normal cross +x is -y.
     bitangent=Mul(bitangent,-1.f);
-    float nz=sqrtf(fmaxf(0.f,1.f-tex.z*tex.z-tex.w*tex.w));
-    normal=Unit(Add(Mul(normal,nz),Add(Mul(tangent,tex.z),Mul(bitangent,tex.w))));
+    // normal_scale is 1 in production (exact); 0 isolates normal-map shading in diagnostics.
+    const float nx=tex.z*params.normal_scale,nq=tex.w*params.normal_scale;
+    float nz=sqrtf(fmaxf(0.f,1.f-nx*nx-nq*nq));
+    normal=Unit(Add(Mul(normal,nz),Add(Mul(tangent,nx),Mul(bitangent,nq))));
   }
   double dqx=q-row.optical_q;
   if(dqx>params.tex_period*.5) dqx-=params.tex_period;

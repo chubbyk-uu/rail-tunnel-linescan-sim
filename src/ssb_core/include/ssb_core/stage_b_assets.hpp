@@ -32,6 +32,9 @@ struct StageBAssets {
   unsigned texture_footprint_samples=1;
   bool texture_prefilter=false;
   double indirect_fill=0;
+  // Wall property, not part of the optical rig signature: 1 uses the authored normal map,
+  // 0 renders the lining with its flat facet normals (diagnostic variants only).
+  double normal_map_scale=1;
   double response_gain=1, lamp_length=.3, footprint_x=1.2, footprint_q=.12;
   double lamp_tangential=.2, lamp_radial=.025, lamp_axial=0, lamp_width=0;
   size_t gpu_budget=0, cpu_budget=0, tile_bytes=0, cache_slots=0;

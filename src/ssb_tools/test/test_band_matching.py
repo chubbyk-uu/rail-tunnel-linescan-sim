@@ -92,3 +92,21 @@ def test_invalid_window_settings_are_rejected():
     with pytest.raises(ValueError): match_window(a, a, mask, mask, .0002, MatchSettings(coarse_factor=0))
     with pytest.raises(ValueError): match_window(a, a, mask[:, :1], mask, .0002)
     with pytest.raises(ValueError): MatchSettings(max_shift_mm=float('nan'))
+
+
+@pytest.mark.parametrize('shift', [(.25, 0.), (.5, 0.), (0., .5), (12.25, -3.5), (50.5, 7.25)])
+def test_mean_translation_is_unbiased_for_known_subpixel_shifts(shift):
+    # Band-limited spline shift of the same content: any residual mean offset is
+    # the matcher's own bias (pixel locking), not image formation or geometry.
+    from scipy.ndimage import shift as spline_shift
+    sx, sy = shift; pad = 64
+    big = texture(seed=21, shape=(512+2*pad, 1024+2*pad)).astype(np.float64)
+    a = big[pad:-pad, pad:-pad].astype(np.float32)
+    b = spline_shift(big, (sy, sx), order=5, mode='nearest')[pad:-pad, pad:-pad].astype(np.float32)
+    mask = np.ones(a.shape, bool)
+    report, matches = match_window(a, b, mask, mask, .0002)
+    assert report['status'] == 'accepted', report
+    inlier = matches['inlier']
+    bias = (matches['points_b'][inlier]-matches['points_a'][inlier]).mean(axis=0)-np.array([sx, sy])
+    # Phase-dependent locking stays near 0.03 px; the D2 shading bias was 0.26 px.
+    assert np.all(abs(bias) < .05), bias

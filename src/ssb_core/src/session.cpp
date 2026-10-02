@@ -205,6 +205,28 @@ nlohmann::json BlockWriter::Close() {
           {"pixel_format", "mono8"}, {"rows", next_sequence_}, {"blocks", blocks_}};
 }
 
+std::optional<double> ArchivedPlannedEnd(const std::filesystem::path& pose_stream,
+                                         std::filesystem::path* session_file) {
+  const auto evaluation = pose_stream.parent_path();
+  const auto source = evaluation.parent_path() / "session.json", manifest_path = evaluation / "manifest.json";
+  if (!std::filesystem::is_regular_file(source) || !std::filesystem::is_regular_file(manifest_path) ||
+      !std::filesystem::is_regular_file(pose_stream)) return std::nullopt;
+  nlohmann::json summary, manifest;
+  std::ifstream(source) >> summary;
+  std::ifstream(manifest_path) >> manifest;
+  const auto files = summary.value("files", nlohmann::json::object());
+  const auto motion = summary.value("motion", nlohmann::json::object());
+  const auto entry = manifest.value("pose_stream", nlohmann::json::object());
+  if (summary.value("status", "") != "complete" || motion.value("complete", nlohmann::json()) != true ||
+      !motion.contains("planned_end_s") || !motion.at("planned_end_s").is_number() ||
+      files.value("evaluation/manifest.json", "") != Sha256File(manifest_path) ||
+      entry.value("file", "") != pose_stream.filename().string() ||
+      entry.value("sha256", "") != Sha256File(pose_stream))
+    return std::nullopt;
+  if (session_file) *session_file = source;
+  return motion.at("planned_end_s").get<double>();
+}
+
 nlohmann::json ProvenanceJson(const std::vector<std::string>& argv) {
   const std::string source = SSB_SOURCE_DIR;
   std::istringstream state(RunCommand("sh '" + source + "/cmake/source_state.sh' '" + source + "' 2>/dev/null"));

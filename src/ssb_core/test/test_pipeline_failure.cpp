@@ -197,3 +197,28 @@ TEST(Persistence, DurableCommitReportsWorkWhenSavedRowsDoNotChange) {
   for(const auto rows:saved) EXPECT_EQ(rows,12);
   std::filesystem::remove_all(root);
 }
+
+TEST(Replay, ArchivedPlannedEndRequiresTheCompleteHashChain) {
+  const auto root=std::filesystem::temp_directory_path()/("ssb_replay_chain_"+std::to_string(getpid()));
+  std::filesystem::remove_all(root);std::filesystem::create_directories(root/"evaluation");
+  const auto poses=root/"evaluation"/"pose_stream.bin";
+  std::ofstream(poses,std::ios::binary)<<"pose bytes";
+  auto write=[&](bool complete,bool good_manifest,bool good_pose) {
+    nlohmann::json manifest={{"pose_stream",{{"file","pose_stream.bin"},
+        {"sha256",good_pose?ssb::Sha256File(poses):std::string(64,'0')}}}};
+    ssb::WriteJsonAtomic(root/"evaluation"/"manifest.json",manifest);
+    ssb::WriteJsonAtomic(root/"session.json",{{"status",complete?"complete":"failed"},
+        {"motion",{{"complete",complete},{"planned_end_s",12.5}}},
+        {"files",{{"evaluation/manifest.json",good_manifest?ssb::Sha256File(root/"evaluation"/"manifest.json"):"x"}}}});
+  };
+  write(true,true,true);
+  std::filesystem::path source;
+  const auto planned=ssb::ArchivedPlannedEnd(poses,&source);
+  ASSERT_TRUE(planned.has_value());EXPECT_DOUBLE_EQ(*planned,12.5);EXPECT_EQ(source,root/"session.json");
+  write(false,true,true);EXPECT_FALSE(ssb::ArchivedPlannedEnd(poses));   // incomplete source capture
+  write(true,false,true);EXPECT_FALSE(ssb::ArchivedPlannedEnd(poses));   // manifest not the archived one
+  write(true,true,false);EXPECT_FALSE(ssb::ArchivedPlannedEnd(poses));   // stream altered after capture
+  write(true,true,true);std::filesystem::remove(root/"session.json");
+  EXPECT_FALSE(ssb::ArchivedPlannedEnd(poses));                          // unlinked stream
+  std::filesystem::remove_all(root);
+}

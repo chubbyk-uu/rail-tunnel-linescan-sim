@@ -1,7 +1,9 @@
 """Independent truth-side scoring, never imported by reconstruction.
 
-This uses analytic cylinder intersections, not the grooved optical mesh; its
-scores are explicitly a cylindrical reference and not final seam accuracy.
+Each match side is traced back to the true rays of its native source pixels. Two
+references are reported: the analytic cylinder, and the archived float64 optical mesh
+(panels, chamfers, groove walls and recessed filler). Signed B-A displacements expose
+common biases that the D2 affine translation absorbs. Neither is optimized seam accuracy.
 """
 import argparse
 import json
@@ -12,6 +14,7 @@ from .session import Session, read_json, sha256_file
 from .ref_geometry import head_pose, evaluation_pixel_tangents
 from .provenance import stage_record
 from .public_capture import confined_file
+from .ref_mesh import OpticalMesh
 
 
 def paired_hits(origin, optical, line, tangents, radius, axis_z):
@@ -24,10 +27,16 @@ def paired_hits(origin, optical, line, tangents, radius, axis_z):
                            radius*np.arctan2(y+distance*dy, z+distance*dz)])
 
 
-def world_points(table, side, rows, camera, truth):
-    result = np.zeros((len(table), 2))
+def native_rays(table, side, rows, camera, truth):
+    """Centre rays of the four native samples behind each match side, with their weights.
+
+    Returns origins/directions (n, 4, 3) and weights (n, 4): lower/upper exposure row x
+    left/right native column. The renderer integrates each pixel over its area and the
+    exposure; these centre rays are the conventional point reference for that average.
+    """
+    n = len(table); origins = np.zeros((n, 4, 3)); directions = np.zeros((n, 4, 3)); weights = np.zeros((n, 4))
     angular = table[side+'_angular_weight']
-    for name, row_weight in [('lower', 1-angular), ('upper', angular)]:
+    for r, (name, row_weight) in enumerate([('lower', 1-angular), ('upper', angular)]):
         ids = table[side+'_'+name+'_sequence']
         if np.any(ids < 0) or np.any(ids >= len(rows)) or not np.array_equal(rows['sequence'][ids], ids):
             raise ValueError('match source does not identify an evaluation exposure')
@@ -37,15 +46,62 @@ def world_points(table, side, rows, camera, truth):
         if not np.isfinite(column).all() or np.any(column < 0) or np.any(column > camera['width']-1):
             raise ValueError('invalid native evaluation column')
         left = np.floor(column).astype(int); alpha = column-left
-        for columns, column_weight in [(left, 1-alpha), (np.minimum(left+1, camera['width']-1), alpha)]:
+        for c, (columns, column_weight) in enumerate([(left, 1-alpha), (np.minimum(left+1, camera['width']-1), alpha)]):
             tangents = evaluation_pixel_tangents(camera, truth, columns)
-            hit = paired_hits(origin, optical, line, tangents,
-                              truth['tunnel']['radius_m'], truth['tunnel']['axis_z_m'])
-            result += (row_weight*column_weight)[:, None]*hit
+            k = 2*r+c
+            origins[:, k] = origin; directions[:, k] = optical+tangents[:, None]*line
+            weights[:, k] = row_weight*column_weight
+    return origins, directions, weights
+
+
+def world_points(table, side, rows, camera, truth):
+    """Analytic-cylinder reference point (x, q) of one match side."""
+    origins, directions, weights = native_rays(table, side, rows, camera, truth)
+    radius, axis_z = truth['tunnel']['radius_m'], truth['tunnel']['axis_z_m']
+    result = np.zeros((len(table), 2))
+    for k in range(4):
+        hit = paired_hits(origins[:, k], directions[:, k], np.zeros_like(directions[:, k]),
+                          np.zeros(len(table)), radius, axis_z)
+        result += weights[:, k, None]*hit
     return result
 
 
-def run(session_root, matches_root, output):
+def mesh_points(table, side, rows, camera, truth, mesh):
+    """Optical-mesh reference point (x, q) and dominant hit material of one match side."""
+    origins, directions, weights = native_rays(table, side, rows, camera, truth)
+    points, _, material = mesh.intersect(origins.reshape(-1, 3), directions.reshape(-1, 3))
+    radius, axis_z = truth['tunnel']['radius_m'], truth['tunnel']['axis_z_m']
+    xq = np.column_stack([points[:, 0], radius*np.arctan2(points[:, 1], points[:, 2]-axis_z)]).reshape(-1, 4, 2)
+    dominant = material.reshape(-1, 4)[np.arange(len(table)), np.argmax(weights, axis=1)]
+    return np.einsum('nk,nkd->nd', weights, xq), dominant
+
+
+def signed_summary(delta, table, pitch):
+    """Bias and spread of B-A reference displacements, in output pixels."""
+    d = delta/pitch
+    windows = np.unique(table['window'])
+    means = np.array([d[table['window'] == w].mean(0) for w in windows])
+    counts = np.array([np.count_nonzero(table['window'] == w) for w in windows])
+    pairs = {int(b): d[table['band_a'] == b].mean(0).tolist() for b in np.unique(table['band_a'])}
+    column = table['a_lower_column']; edges = np.linspace(0, column.max()+1e-9, 9)
+    by_column = []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        selected = (column >= lo) & (column < hi)
+        if selected.any():
+            by_column.append(dict(a_column=[float(lo), float(hi)], matches=int(selected.sum()),
+                                  mean_dx_px=float(d[selected, 0].mean()), mean_dq_px=float(d[selected, 1].mean())))
+    norm = np.hypot(*d.T)
+    return dict(norm_px=dict(zip(('p50', 'p95', 'p99', 'max'), map(float, np.percentile(norm, [50, 95, 99, 100])))),
+        mean_px=dict(dx=float(d[:, 0].mean()), dq=float(d[:, 1].mean())),
+        std_px=dict(dx=float(d[:, 0].std()), dq=float(d[:, 1].std())),
+        window_mean_px=dict(dx=dict(zip(('min', 'p50', 'max'), map(float, np.percentile(means[:, 0], [0, 50, 100])))),
+                            dq=dict(zip(('min', 'p50', 'max'), map(float, np.percentile(means[:, 1], [0, 50, 100]))))),
+        window_mean_standard_error_px=float(np.median(np.hypot(*d.std(0))/np.sqrt(counts))),
+        adjacent_pair_mean_px={str(k): v for k, v in pairs.items()},
+        by_a_native_column=by_column)
+
+
+def run(session_root, matches_root, output, mesh_reference=True, scene=None):
     started = time.monotonic(); session = Session(session_root)
     output = Path(output).resolve()
     if 'evaluation' not in output.parts: raise ValueError('truth-side outputs must be inside evaluation/')
@@ -77,22 +133,48 @@ def run(session_root, matches_root, output):
     if not np.isfinite(error).all(): raise ValueError('nonfinite independent geometry score')
     pitch = match_report['upstream_grid']['requested_pitch_m']
     nominal = np.hypot(table['x_b_m']-table['x_a_m'], table['q_b_m']-table['q_a_m'])
-    scores = np.zeros(len(table), dtype=[('window', '<i4'), ('error_m', '<f8'), ('nominal_displacement_m', '<f8')])
-    scores['window'], scores['error_m'], scores['nominal_displacement_m'] = table['window'], error, nominal
-    report = dict(schema='ssb.band_matches_evaluation.v1', evaluation_only=True, matches=len(table),
-        cylindrical_reference_error_px=dict(zip(('p50', 'p95', 'p99', 'max'), map(float, np.percentile(error/pitch, [50, 95, 99, 100])))),
+    fields = [('window', '<i4'), ('band_a', '<i2'), ('error_m', '<f8'), ('nominal_displacement_m', '<f8'),
+              ('cylinder_dx_m', '<f8'), ('cylinder_dq_m', '<f8')]
+    if mesh_reference:
+        fields += [('mesh_dx_m', '<f8'), ('mesh_dq_m', '<f8'), ('material_a', '<i2'), ('material_b', '<i2')]
+    scores = np.zeros(len(table), dtype=fields)
+    scores['window'], scores['band_a'] = table['window'], table['band_a']
+    scores['error_m'], scores['nominal_displacement_m'] = error, nominal
+    scores['cylinder_dx_m'], scores['cylinder_dq_m'] = (b-a).T
+    references = dict(cylinder=signed_summary(b-a, table, pitch))
+    mesh_info = None; mesh_sources = []
+    if mesh_reference:
+        mesh_start = time.monotonic()
+        mesh = OpticalMesh.from_session(session, scene); mesh_sources = mesh.sources
+        ma, material_a = mesh_points(table, 'a', rows, config['camera'], truth, mesh)
+        mb, material_b = mesh_points(table, 'b', rows, config['camera'], truth, mesh)
+        scores['mesh_dx_m'], scores['mesh_dq_m'] = (mb-ma).T
+        scores['material_a'], scores['material_b'] = material_a, material_b
+        references['optical_mesh'] = signed_summary(mb-ma, table, pitch)
+        same = material_a == material_b
+        references['optical_mesh']['by_material'] = {str(int(m)): dict(matches=int(np.count_nonzero(same & (material_a == m))),
+            mean_dx_px=float(((mb-ma)[same & (material_a == m), 0]/pitch).mean()))
+            for m in np.unique(material_a[same])}
+        references['optical_mesh']['mixed_material_matches'] = int(np.count_nonzero(~same))
+        mesh_info = dict(triangles=len(mesh.faces), rays=8*len(table), seconds=time.monotonic()-mesh_start,
+                         index='0.25 degree angular strips with axial bounds; float64 source triangles')
+    report = dict(schema='ssb.band_matches_evaluation.v2', evaluation_only=True, matches=len(table),
+        cylindrical_reference_error_px=references['cylinder']['norm_px'],
         nominal_displacement_px=dict(zip(('p50', 'p95'), map(float, np.percentile(nominal/pitch, [50, 95])))),
-        assumption='analytic cylinder at archived radius; filled-joint recess and optical mesh faceting are not included',
-        limitation='not an exact optical-mesh ground truth and not optimized seam accuracy',
+        signed_b_minus_a=references, mesh_reference=mesh_info,
+        sign_convention='B-A in nominal (x, q=R*theta); +dx means B sees the point further along +x',
+        assumption='centre rays of native pixels at exposure-centre truth poses; the renderer integrates pixel area and exposure',
+        limitation='reference correspondence error, not optimized seam accuracy; never fed back to matching',
         wall_s=time.monotonic()-started)
     output.mkdir(parents=True, exist_ok=False)
-    np.save(output/'cylindrical_scores.npy', scores)
+    np.save(output/'reference_scores.npy', scores)
     (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
     manifest = read_json(session.root/'evaluation/manifest.json')
     inputs = [table_path, provenance_path, matches_root/'report.json', truth_path,
               session.root/'evaluation/manifest.json', session.root/'evaluation'/manifest['row_truth']['file'],
-              session.root/'config/observable_config.json']
-    record = stage_record('evaluate_band_matching', inputs, sorted(output.iterdir()), dict(assumption=report['assumption']))
+              session.root/'config/observable_config.json', session.root/'config/backend.json',
+              session.root/'evaluation/config_source.yaml', *mesh_sources]
+    record = stage_record('evaluate_band_matching', inputs, sorted(output.iterdir()), dict(assumption=report['assumption'], mesh_reference=mesh_reference))
     (output/'provenance.json').write_text(json.dumps(record, indent=2)+'\n')
     return report
 
@@ -100,7 +182,13 @@ def run(session_root, matches_root, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('session', 'matches', 'output'): parser.add_argument('--'+name, required=True)
-    args = parser.parse_args(); print(json.dumps(run(args.session, args.matches, args.output)))
+    parser.add_argument('--no-mesh', action='store_true', help='cylinder reference only')
+    parser.add_argument('--scene', help='relocated optical scene; must hash-match the capture record')
+    args = parser.parse_args()
+    report = run(args.session, args.matches, args.output, not args.no_mesh, args.scene)
+    print(json.dumps({k: report[k] for k in ('matches', 'cylindrical_reference_error_px', 'mesh_reference')}))
+    for name, summary in report['signed_b_minus_a'].items():
+        print(name, json.dumps(dict(mean=summary['mean_px'], std=summary['std_px'], window_mean=summary['window_mean_px'])))
 
 
 if __name__ == '__main__': main()

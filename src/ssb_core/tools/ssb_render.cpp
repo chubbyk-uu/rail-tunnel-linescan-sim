@@ -11,6 +11,7 @@
 #include "ssb_core/kinematic.hpp"
 #include "ssb_core/optix_renderer.hpp"
 #include "ssb_core/pipeline.hpp"
+#include "ssb_core/session.hpp"
 #include "ssb_core/sha256.hpp"
 
 namespace {
@@ -82,7 +83,14 @@ int main(int argc, char** argv) {
     ssb::PipelineOptions options{session, args, poses.empty() ? "kinematic" : "file:" + poses};
     options.inputs["config"] = ssb::FileIdentity(config_path);
     if (poses.empty()) options.planned_end_s = config.profile.back()[0];
-    else options.inputs["pose_stream"] = ssb::FileIdentity(poses);
+    else {
+      options.inputs["pose_stream"] = ssb::FileIdentity(poses);
+      std::filesystem::path source;
+      if (const auto planned = ssb::ArchivedPlannedEnd(poses, &source)) {
+        options.planned_end_s = *planned;
+        options.inputs["pose_source_session"] = ssb::FileIdentity(source);
+      }
+    }
     ssb::Pipeline pipeline(config, std::move(renderer), options);
     const auto start = std::chrono::steady_clock::now();
     for (const auto& s : samples) {

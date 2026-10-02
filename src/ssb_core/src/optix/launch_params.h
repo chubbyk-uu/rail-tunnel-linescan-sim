@@ -31,7 +31,7 @@ struct LaunchParams {
   unsigned debug_count;
   double* debug_hits;            // [row][slot][x, q]
   unsigned stage_b, row_stride, area_samples, time_samples, light_samples;
-  float pixel_step, response_gain, indirect_fill;
+  float pixel_step, response_gain, indirect_fill, normal_scale;
   unsigned calibration_target;
   double target_origin, target_pitch, target_width;
   float target_albedo;

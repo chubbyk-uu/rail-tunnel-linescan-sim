@@ -524,3 +524,29 @@ TEST_F(SurfaceFixture, GeometrySelfCheckRunsWhenArchiveDebugColumnsAreDisabled) 
   EXPECT_TRUE(renderer.SelfCheck().at("passed"));
   EXPECT_TRUE(renderer.Describe().at("debug_columns").empty());
 }
+
+TEST_F(SurfaceFixture, NormalMapScaleIsExactAtOneAndRemovesTiltedShadingAtZero) {
+  // Rewrite every tile with a strong axial normal tilt so lit shading depends on it.
+  nlohmann::json surface;std::ifstream(root/"surface.json")>>surface;
+  for(auto& tile:surface["tiles"]) {
+    std::vector<SurfaceTexel> texels(tile["bytes"].get<size_t>()/sizeof(SurfaceTexel),{32768,0,0,int16_t(16000),0});
+    Binary(tile["file"].get<std::string>(),texels);tile["sha256"]=Sha256File(root/tile["file"].get<std::string>());
+  }
+  Json("surface.json",surface);
+  scene["surface"]=Entry("surface.json");scene["lamp"]["enabled"]=true;SaveScene();
+  std::vector<RowJob> jobs(4);
+  for(size_t i=0;i<jobs.size();++i){jobs[i].pose.x=8;jobs[i].pose.theta=.2+i*.00002;}
+  auto render=[&](const nlohmann::json& scale) {
+    if(scale.is_null()) scene.erase("normal_map_scale");else scene["normal_map_scale"]=scale;
+    SaveScene();OptixRenderer renderer(c,DefaultPtxPath(),jobs.size());
+    std::vector<uint8_t> pixels;std::vector<double> hits;renderer.Render(jobs,pixels,hits);
+    EXPECT_EQ(renderer.Describe().at("normal_map_scale").get<double>(),scale.is_null()?1.:scale.get<double>());
+    return std::make_pair(pixels,hits);
+  };
+  const auto authored=render(nullptr),one=render(1.),flat=render(0.);
+  EXPECT_EQ(authored,one);                       // production default: bit-identical
+  EXPECT_EQ(flat.second,authored.second);         // geometry unchanged
+  size_t changed=0;for(size_t i=0;i<flat.first.size();++i) changed+=flat.first[i]!=authored.first[i];
+  EXPECT_GT(changed,flat.first.size()/2);         // shading actually depends on the normal map
+  for(double invalid:{-.1,1.1}) {scene["normal_map_scale"]=invalid;SaveScene();EXPECT_THROW(StageBAssets bad(c),std::runtime_error);}
+}
