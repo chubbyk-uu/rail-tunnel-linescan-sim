@@ -73,6 +73,38 @@ def test_nearest_surface_wins_and_recess_reports_its_material():
     assert mat[0] == 0 and abs(point[0, 2]-AXIS_Z-2.75*math.cos(.1)) < 1e-12
 
 
+@pytest.mark.parametrize('origin_y', [0., .03])
+def test_coarse_facet_with_axial_ray_slope_is_not_filtered_out(origin_y):
+    radius, half_angle, slope = 2.75, .1, .1
+    distance = radius*math.cos(half_angle)
+    expected = np.array([slope*distance, origin_y, AXIS_Z+distance])
+    vertices, faces = strip(radius, x=(expected[0]-.0001, expected[0]+.0001),
+                            angles=(-half_angle, half_angle))
+    mesh = OpticalMesh(vertices, faces, [0, 0], AXIS_Z)
+    origin = np.array([0., origin_y, AXIS_Z])
+    direction = np.array([slope, 0., 1.])
+    # The plane is >13 mm inside the vertex radius. A fixed 1 mm allowance
+    # excludes this narrow patch when the ray also advances along x.
+    assert mesh.r_inner < distance
+    point, _, material = mesh.intersect(origin[None, :], direction[None, :])
+    np.testing.assert_allclose(point[0], expected, atol=1e-12)
+    assert material[0] == 0
+
+
+def test_radial_bound_includes_a_triangle_interior_crossing_the_axis():
+    # Plane x=y+1, whose yz projection contains the tunnel axis. Its interior
+    # reaches radius zero, even though every edge stays at positive radius.
+    vertices = np.array([[0., -1., AXIS_Z-1.], [2., 1., AXIS_Z-1.], [1., 0., AXIS_Z+1.]])
+    mesh = OpticalMesh(vertices, [[0, 1, 2]], [2], AXIS_Z)
+    assert mesh.r_inner == 0.
+    origin = np.array([0., .1, AXIS_Z])
+    direction = np.array([1., 0., .2])
+    expected = np.array([1.1, .1, AXIS_Z+.22])
+    point, _, material = mesh.intersect(origin[None, :], direction[None, :])
+    np.testing.assert_allclose(point[0], expected, atol=1e-12)
+    assert material[0] == 2
+
+
 def test_a_ray_without_a_triangle_is_rejected():
     vertices, faces, material = faceted_lining(x=(0., 1.))
     mesh = OpticalMesh(vertices, faces, material, AXIS_Z)

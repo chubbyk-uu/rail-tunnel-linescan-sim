@@ -47,6 +47,33 @@ def session_scene(session, override=None):
     return path, read_json(path)
 
 
+def radial_bounds(triangles, axis_z):
+    """Radial extent of triangle interiors, including degenerate yz projections.
+
+    The radial norm is convex: its maximum is at a vertex, while its minimum is
+    at the projected origin (when inside the triangle), or on a projected edge.
+    Bounded batches avoid duplicating a large mesh's full projected geometry.
+    """
+    minimum_squared, maximum = math.inf, 0.
+    for first in range(0, len(triangles), 1 << 16):
+        radial = triangles[first:first+(1 << 16), :, 1:].copy()
+        radial[..., 1] -= axis_z
+        end = np.roll(radial, -1, axis=1)
+        edge = end-radial
+        length_squared = np.einsum('nki,nki->nk', edge, edge)
+        numerator = -np.einsum('nki,nki->nk', radial, edge)
+        fraction = np.divide(numerator, length_squared, out=np.zeros_like(numerator),
+                             where=length_squared > 0)
+        closest = radial+np.clip(fraction, 0., 1.)[..., None]*edge
+        distance_squared = np.einsum('nki,nki->nk', closest, closest).min(axis=1)
+        cross = radial[..., 0]*end[..., 1]-radial[..., 1]*end[..., 0]
+        inside = ((cross >= 0).all(axis=1) | (cross <= 0).all(axis=1)) & (cross.sum(axis=1) != 0)
+        distance_squared[inside] = 0.
+        minimum_squared = min(minimum_squared, float(distance_squared.min()))
+        maximum = max(maximum, float(np.hypot(radial[..., 0], radial[..., 1]).max()))
+    return math.sqrt(minimum_squared), maximum
+
+
 class OpticalMesh:
     def __init__(self, vertices, faces, material, axis_z, bin_rad=math.radians(.25)):
         self.vertices, self.faces = np.asarray(vertices, np.float64), np.asarray(faces, np.int64)
@@ -56,10 +83,12 @@ class OpticalMesh:
         self.axis_z = float(axis_z)
         triangles = self.vertices[self.faces]
         self.a = triangles[:, 0]; self.e1 = triangles[:, 1]-self.a; self.e2 = triangles[:, 2]-self.a
-        radius = np.hypot(triangles[..., 1], triangles[..., 2]-self.axis_z)
+        minimum_radius, maximum_radius = radial_bounds(triangles, self.axis_z)
         theta = np.arctan2(triangles[..., 1], triangles[..., 2]-self.axis_z)
-        # Flat facets dip inside their vertices' radius; 1 mm margins bound the path.
-        self.r_inner = float(radius.min())-1e-3; self.r_outer = float(radius.max())+1e-3
+        # The padding is numerical slack; the triangle interiors already bound
+        # geometric chord sag, even for coarse facets or projections over the axis.
+        self.r_inner = max(0., minimum_radius-1e-3)
+        self.r_outer = maximum_radius+1e-3
         self.x_min, self.x_max = triangles[..., 0].min(1), triangles[..., 0].max(1)
         lo, hi = theta.min(1), theta.max(1)
         wrapped = hi-lo > math.pi  # the bottom seam at +-pi; few, always tested
@@ -103,7 +132,9 @@ class OpticalMesh:
         origins = np.asarray(origins, np.float64); directions = np.asarray(directions, np.float64)
         points = np.empty_like(origins); hit_ids = np.empty(len(origins), np.int64)
         for i, (origin, direction) in enumerate(zip(origins, directions)):
-            near, far = (self._radius_distance(origin, direction, r) for r in (self.r_inner, self.r_outer))
+            origin_radius = math.hypot(origin[1], origin[2]-self.axis_z)
+            near = self._radius_distance(origin, direction, self.r_inner) if origin_radius < self.r_inner else 0.
+            far = self._radius_distance(origin, direction, self.r_outer)
             path = origin+np.outer([near, far], direction)
             theta = np.arctan2(path[:, 1], path[:, 2]-self.axis_z)
             if abs(theta[1]-theta[0]) > math.pi: raise ValueError('ray path crosses the bottom seam')
