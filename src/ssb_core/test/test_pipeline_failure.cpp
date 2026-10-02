@@ -97,3 +97,20 @@ TEST(PipelineFailure, ProducerFailureDrainsAcceptedInputAndKeepsTailIndex) {
     EXPECT_EQ(ssb::Sha256File(root/"raw"/block.at("file").get<std::string>()),block.at("sha256"));
   std::filesystem::remove_all(root);
 }
+
+TEST(PipelineCompletion, WaitFinishesInputWithoutExplicitFinish) {
+  auto c=ssb::Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_a.yaml");
+  c.profile={{0,1},{.002,1}};c.start_theta_rad=0;c.batch_rows=4096;c.debug_column_stride=0;
+  const auto root=std::filesystem::temp_directory_path()/("ssb_wait_"+std::to_string(getpid()));
+  std::filesystem::remove_all(root);
+  ssb::Pipeline p(c,std::make_unique<FailingRenderer>(c.width),{root,{"test"},"kinematic"});
+  const auto samples=ssb::KinematicSource(c).Sample();
+  for(const auto& sample:samples)p.Push(sample);
+  const auto summary=p.Wait();
+  EXPECT_EQ(summary.at("status"),"complete");
+  EXPECT_GT(summary.at("rows").get<int64_t>(),0);
+  EXPECT_THROW(p.Push(samples.back()),std::logic_error);
+  p.Finish();p.Finish();
+  EXPECT_THROW(p.Wait(),std::logic_error);
+  std::filesystem::remove_all(root);
+}

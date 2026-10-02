@@ -578,6 +578,54 @@ nlohmann::json OptixRenderer::EvaluationAssets() const {
 nlohmann::json OptixRenderer::SelfCheck() {
   auto& s = *impl_;
   const Config& c = s.config;
+  // A one-row probe reuses the renderer and textures. Its columns and buffers
+  // are independent of archive settings and are restored on all exit paths.
+  struct ProbeColumns {
+    Impl& state;
+    std::vector<int> columns;
+    int* slots = nullptr;
+    double *device_hits = nullptr, *host_hits = nullptr;
+    const int* saved_slots;
+    double *saved_device_hits, *saved_host_hits;
+    unsigned saved_count;
+    bool active = false;
+    explicit ProbeColumns(Impl& value) : state(value), saved_slots(value.params.debug_slot),
+      saved_device_hits(value.params.debug_hits), saved_host_hits(value.host_hits),
+      saved_count(value.params.debug_count) {}
+    void SetUp() {
+      const int width = state.config.width;
+      std::vector<int> probe;
+      for(int u=0; u<width; u+=std::max(1,width/8)) probe.push_back(u);
+      if(probe.back()!=width-1) probe.push_back(width-1);
+      std::vector<int> slot(width,-1);
+      for(size_t i=0;i<probe.size();++i) slot[probe[i]]=int(i);
+      SSB_CUDA(cudaMalloc(reinterpret_cast<void**>(&slots),width*sizeof(int)));
+      SSB_CUDA(cudaMemcpy(slots,slot.data(),width*sizeof(int),cudaMemcpyHostToDevice));
+      SSB_CUDA(cudaMalloc(reinterpret_cast<void**>(&device_hits),2*probe.size()*sizeof(double)));
+      SSB_CUDA(cudaMallocHost(reinterpret_cast<void**>(&host_hits),2*probe.size()*sizeof(double)));
+      columns.swap(state.debug_columns);
+      state.debug_columns.swap(probe);
+      state.params.debug_slot=slots;
+      state.params.debug_hits=device_hits;
+      state.params.debug_count=unsigned(state.debug_columns.size());
+      state.host_hits=host_hits;
+      active=true;
+    }
+    ~ProbeColumns() {
+      cudaStreamSynchronize(state.stream);
+      if(active) {
+        state.debug_columns.swap(columns);
+        state.params.debug_slot=saved_slots;
+        state.params.debug_hits=saved_device_hits;
+        state.params.debug_count=saved_count;
+        state.host_hits=saved_host_hits;
+      }
+      if(slots) cudaFree(slots);
+      if(device_hits) cudaFree(device_hits);
+      if(host_hits) cudaFreeHost(host_hits);
+    }
+  } probes(s);
+  probes.SetUp();
   RowJob job{};
   // Generic probe: not on a texture cell edge (theta = 0.3 put the whole line on a
   // 1 mm edge, where 1e-12 m decides the cell).
@@ -598,6 +646,7 @@ nlohmann::json OptixRenderer::SelfCheck() {
     auto range=std::minmax_element(pixels.begin(),pixels.end());
     bool ok=worst<5e-6 && (s.assets->calibration_target==3 ? *range.second==0 : *range.second>0);
     nlohmann::json result={{"passed",ok},{"max_debug_hit_error_m",worst},{"min_code",*range.first},
+                           {"geometry_probe_columns",s.debug_columns},
                            {"max_code",*range.second},{"geometry_reference","independent double triangle intersections"},
                            {"radiometry_reference","not covered by this self-check; separate optical tests required"}};
     if(!ok) throw std::runtime_error("Stage B self-check failed: "+result.dump());
@@ -618,6 +667,7 @@ nlohmann::json OptixRenderer::SelfCheck() {
   // Float ray directions may move a hit across a 1 mm noise cell edge on a few pixels.
   const bool ok = mismatched <= c.width / 100 && max_hit_error < 1e-5;
   nlohmann::json result = {{"probe_theta_rad", job.pose.theta},
+                           {"geometry_probe_columns",s.debug_columns},
                            {"pixels_differing_from_host", mismatched},
                            {"max_debug_hit_error_m", max_hit_error},
                            {"passed", ok}};

@@ -7,9 +7,8 @@ namespace ssb_gazebo {
 inline void CheckAssembly(const gz::sim::Model& model,const gz::sim::EntityComponentManager& ecm,
                           const ssb::Config& c) {
   const auto base=model.LinkByName(ecm,"base"),head=model.LinkByName(ecm,"head");
-  // Legacy fixtures without named assembly links cannot be checked here.
-  // Both Stage A and Stage B have these links and must match the configuration.
-  if(base==gz::sim::kNullEntity || head==gz::sim::kNullEntity) return;
+  if(base==gz::sim::kNullEntity || head==gz::sim::kNullEntity)
+    throw std::runtime_error("robot assembly requires base and head links");
   const auto* bp=ecm.Component<gz::sim::components::Pose>(base);
   const auto* hp=ecm.Component<gz::sim::components::Pose>(head);
   if(!bp || !hp || std::abs(bp->Data().Pos().Z()-c.base_reference_z_m)>1e-9 ||

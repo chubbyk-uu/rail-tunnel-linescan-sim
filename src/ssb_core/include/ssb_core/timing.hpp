@@ -31,13 +31,13 @@ struct TimingStats {
 };
 
 // Streaming hardware timing model (DESIGN.md §4.2, §8.1): quadrature edges from the
-// true scan axis, x64 sub-ticks by causal period estimate, /7 row triggers, gate
+// true scan axis, xM sub-ticks by causal period estimate, /D row triggers, gate
 // sensors on the true axis angle, and camera line-rate limit. Output depends only on
 // the sequence of samples, never on how Push calls are grouped in time.
 //
-// Rescaler model (stage A, not a firmware replica): every forward edge beyond the
-// high-water count c is sub-tick 64c. With T the time since edge c-1, sub-ticks
-// 64c+j (j=1..63) fall at t_c + jT/64 if they precede the next edge; the rest are
+// Rescaler model (not a firmware replica): every forward edge beyond the
+// high-water count c is sub-tick M*c. With T the time since edge c-1, sub-ticks
+// M*c+j (j=1..M-1) fall at t_c + jT/M if they precede the next edge; the rest are
 // dropped. No sub-ticks are interpolated without a valid T (<= max_period_s), after a
 // reversal, or below the high-water count.
 class TimingEngine {

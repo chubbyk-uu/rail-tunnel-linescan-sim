@@ -233,3 +233,14 @@ TEST(Control, MissingOrEmptyJointVectorsAreRejected) {
   EXPECT_FALSE(ssb_gazebo::HasValues(good,missing));
   EXPECT_FALSE(ssb_gazebo::HasValues(empty,good));
 }
+
+TEST(Assembly, MissingRequiredLinksRejectTheModel) {
+  gz::sim::EntityComponentManager ecm;
+  auto model=ecm.CreateEntity();ecm.CreateComponent(model,gz::sim::components::Model());
+  ssb::Config c;
+  EXPECT_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c),std::runtime_error);
+  auto base=ecm.CreateEntity();ecm.CreateComponent(base,gz::sim::components::Link());
+  ecm.CreateComponent(base,gz::sim::components::Name("base"));
+  ecm.CreateComponent(base,gz::sim::components::ParentEntity(model));
+  EXPECT_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c),std::runtime_error);
+}

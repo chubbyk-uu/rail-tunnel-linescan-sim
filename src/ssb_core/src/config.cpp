@@ -65,10 +65,9 @@ Config Config::Parse(const std::string& text) {
   c.tunnel_axis_z_m = Get<double>(tunnel, "axis_z_m", "tunnel.");
   c.tunnel_x_min_m = Get<double>(tunnel, "x_min_m", "tunnel.");
   c.tunnel_x_max_m = Get<double>(tunnel, "x_max_m", "tunnel.");
-  const auto robot = root["robot"];
-  c.base_reference_z_m = robot && robot["base_reference_z_m"] ? robot["base_reference_z_m"].as<double>() : .3;
-  c.scan_axis_height_m = robot && robot["scan_axis_height_m"] ? robot["scan_axis_height_m"].as<double>() :
-      c.tunnel_axis_z_m-c.base_reference_z_m;
+  const auto robot = Require(root, "robot", "");
+  c.base_reference_z_m = Get<double>(robot, "base_reference_z_m", "robot.");
+  c.scan_axis_height_m = Get<double>(robot, "scan_axis_height_m", "robot.");
 
   const auto enc = Require(root, "scan_encoder", "");
   c.scan_ppr = Get<int>(enc, "ppr", "scan_encoder.");

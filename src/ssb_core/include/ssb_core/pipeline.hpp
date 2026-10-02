@@ -44,7 +44,7 @@ class Pipeline {
   void Finish(const std::string& producer_error = "");
   // Low-rate UI snapshot; does not expose truth or copy image buffers.
   nlohmann::json Progress() const;
-  // Blocks until everything is on disk; returns the session summary. Rethrows the
+  // Ends input (idempotent Finish), then blocks until everything is on disk. Rethrows the
   // first worker error after marking the session failed.
   nlohmann::json Wait();
 

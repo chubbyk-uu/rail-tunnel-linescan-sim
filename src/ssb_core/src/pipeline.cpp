@@ -372,6 +372,7 @@ void Pipeline::Impl::WriteLoop() {
 nlohmann::json Pipeline::Wait() {
   auto& s = *impl_;
   if (s.waited) throw std::logic_error("Pipeline::Wait called twice");
+  Finish();
   s.waited = true;
   s.timing_thread.join();
   s.render_thread.join();

@@ -507,3 +507,19 @@ TEST_F(SurfaceFixture, LongDistanceLocalFramesMatchSourceMeshAndReplayAcrossBoun
     }
   }
 }
+
+TEST_F(SurfaceFixture, GeometrySelfCheckRunsWhenArchiveDebugColumnsAreDisabled) {
+  c.debug_column_stride=0;
+  OptixRenderer renderer(c,DefaultPtxPath(),16);
+  const auto result=renderer.SelfCheck();
+  EXPECT_TRUE(result.at("passed"));
+  EXPECT_GE(result.at("geometry_probe_columns").size(),8u);
+  EXPECT_LT(result.at("max_debug_hit_error_m").get<double>(),5e-6);
+  EXPECT_TRUE(renderer.Describe().at("debug_columns").empty());
+  RowJob job{};job.pose.x=10.;job.pose.theta=.3123;
+  std::vector<uint8_t> pixels;std::vector<double> hits;
+  renderer.Render({job},pixels,hits);
+  EXPECT_EQ(pixels.size(),size_t(c.width));EXPECT_TRUE(hits.empty());
+  EXPECT_TRUE(renderer.SelfCheck().at("passed"));
+  EXPECT_TRUE(renderer.Describe().at("debug_columns").empty());
+}

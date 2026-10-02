@@ -250,3 +250,12 @@ TEST(Timing, BodyAndIndependentRearEncodersInterpolateThroughYawWrap) {
   }
   EXPECT_GT(rows,100);EXPECT_GT(right,100);EXPECT_NEAR(double(left),2.*right,2);
 }
+
+TEST(Config, AssemblyHeightsAreRequiredInsteadOfGuessed) {
+  const auto c=Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_a.yaml");
+  for(const std::string name:{"robot:","base_reference_z_m:","scan_axis_height_m:"}) {
+    auto text=c.source_text;const auto at=text.find(name);ASSERT_NE(at,std::string::npos);
+    text.replace(at,name.size(),"missing_"+name);
+    EXPECT_THROW(Config::Parse(text),std::runtime_error)<<name;
+  }
+}
