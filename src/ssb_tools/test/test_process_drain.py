@@ -227,3 +227,44 @@ def test_close_respects_extended_drain_deadline(monkeypatch):
     fake.fail = lambda error: pytest.fail(str(error))
     module.MissionManager.close(fake)
     assert now[0] == 100. and fake.closing.is_set()
+
+
+@pytest.mark.parametrize('newer_topic', ['physics', 'capture'])
+@pytest.mark.parametrize('older_sequence', [9, 10])
+def test_interleaved_topics_never_roll_back_capture_and_still_update_pose(tmp_path, newer_topic, older_sequence):
+    pytest.importorskip('rclpy')
+    import threading
+    from types import SimpleNamespace
+    from gz.msgs10.stringmsg_pb2 import StringMsg
+    from ssb_tools.mission_manager import MissionManager
+    fake = SimpleNamespace(lock=threading.RLock(), session=tmp_path/'current',
+        latest={'sim_time': 1., 'base_pose': [1, 0, 0]}, drain_activity=0)
+    newest = dict(activity_sequence=10, rows_saved=200, rows_generated=300,
+                  sim_time_pushed=3., sim_time_written=2., phase='syncing')
+    older = dict(activity_sequence=older_sequence, rows_saved=100, rows_generated=250,
+                 sim_time_pushed=2., sim_time_written=1., phase='draining')
+    def send(topic, capture, x):
+        value = dict(session=str(fake.session), capture=capture, sim_time=float(x), base_pose=[x, 0, 0])
+        callback = MissionManager.receive if topic == 'physics' else MissionManager.receive_capture
+        callback(fake, StringMsg(data=json.dumps(value)))
+    send(newer_topic, newest, 2)
+    send('capture' if newer_topic == 'physics' else 'physics', older, 3)
+    assert fake.latest['capture'] == newest and fake.drain_activity == 10
+    assert fake.latest['base_pose'][0] == (2 if newer_topic == 'physics' else 3)
+    # A terminal count installed from session.json is also immune to late delivery.
+    fake.latest['capture'].update(rows_saved=400, rows_generated=400)
+    send('physics', older, 4)
+    assert fake.latest['capture']['rows_saved'] == 400 and fake.latest['base_pose'][0] == 4
+    send('physics', {}, 5)
+    assert fake.latest['capture']['rows_saved'] == 400 and fake.drain_activity == 10
+
+
+def test_older_failure_snapshot_remains_visible_and_cannot_be_cleared():
+    from ssb_tools.mission_manager import merge_capture
+    latest = dict(activity_sequence=20, rows_saved=200, failed=False, phase='syncing')
+    failure = dict(activity_sequence=19, rows_saved=100, failed=True, error='step changed')
+    merged = merge_capture(latest, failure)
+    assert merged['rows_saved'] == 200 and merged['failed'] and merged['error'] == 'step changed'
+    healthy = dict(activity_sequence=21, rows_saved=201, failed=False, phase='finalizing')
+    merged = merge_capture(merged, healthy)
+    assert merged['failed'] and merged['error'] == 'step changed' and merged['rows_saved'] == 201

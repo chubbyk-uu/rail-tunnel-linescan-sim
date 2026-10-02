@@ -45,6 +45,32 @@ def initial_state(config, base_pose):
                 s_hat=0., speed=0., scan_rate=0., motion_complete=False, capture={})
 
 
+def merge_capture(previous, incoming):
+    """Merge same-session snapshots; late delivery cannot undo capture work."""
+    if not isinstance(incoming, dict): raise ValueError('Invalid capture snapshot')
+    sequence = incoming.get('activity_sequence', -1)
+    if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < -1:
+        raise ValueError('Invalid capture activity counter')
+    old_sequence = previous.get('activity_sequence', -1)
+    merged = dict(previous)
+    if sequence >= old_sequence:
+        merged.update(incoming)
+        # A snapshot can observe updated rows before the work counter advances.
+        phases = ('capturing', 'draining', 'syncing', 'joining', 'finalizing', 'complete')
+        old_phase, new_phase = previous.get('phase'), incoming.get('phase')
+        if sequence == old_sequence and old_phase in phases and new_phase in phases:
+            if phases.index(old_phase) > phases.index(new_phase): merged['phase'] = old_phase
+    for name in ('rows_generated', 'rows_saved', 'sim_time_pushed', 'sim_time_written'):
+        if name in previous and name in incoming:
+            merged[name] = max(previous[name], incoming[name])
+    # Runtime producer failure may reach the physics topic before the work
+    # counter changes; never discard that failure because its snapshot is older.
+    if previous.get('failed') or incoming.get('failed'):
+        merged['failed'] = True
+        if incoming.get('failed') and incoming.get('error'): merged['error'] = incoming['error']
+    return merged
+
+
 class MissionManager(Node):
     def __init__(self, args):
         super().__init__('ssb_mission_manager')
@@ -101,9 +127,11 @@ class MissionManager(Node):
         try:
             data = json.loads(message.data)
             with self.lock:
-                if data.get('session') != str(self.session): return
+                if self.session is None or data.get('session') != str(self.session): return
+                data['capture'] = merge_capture(self.latest.get('capture', {}), data.get('capture', {}))
+                self.drain_activity = max(self.drain_activity, data['capture'].get('activity_sequence', 0))
                 self.latest = data; self.last_received = time.monotonic()
-        except (ValueError, KeyError) as e:
+        except (ValueError, KeyError, TypeError) as e:
             self.get_logger().error(str(e))
 
     def enqueue(self, message):
@@ -137,9 +165,9 @@ class MissionManager(Node):
                 raise ValueError('Invalid capture activity counter')
             with self.lock:
                 if self.session is None or data.get('session') != str(self.session): return
-                if sequence < self.drain_activity: return  # stale delivery
-                self.drain_activity = sequence
-                self.latest['capture'] = capture
+                merged = merge_capture(self.latest.get('capture', {}), capture)
+                self.drain_activity = max(self.drain_activity, sequence)
+                self.latest['capture'] = merged
         except (ValueError, KeyError, TypeError) as e:
             self.get_logger().error(str(e))
 
