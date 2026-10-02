@@ -8,9 +8,9 @@ Status (2026-10-02): stage A (geometry and timing) is accepted. Stage B (scene,
 lighting, rail contact, lens calibration) has a validated 3 m capture and a user-accepted
 visual baseline ([review record](docs/STAGE_B.md#71-画面复核与基线冻结2026-10-01)).
 The RViz mission UI is implemented ([usage](docs/STAGE_B.md#10-rviz-与任务控制));
-stage C now plans full wall targets with overscan and checks nominal coverage from public
-encoders and measured calibration ([usage](docs/STAGE_C.md)). Full 20 m optical capture
-and stitching are still pending.
+stage C has accepted a full 20 m raw capture with Gazebo and RViz open, public-only
+nominal coverage checks and byte-identical replay ([results](docs/STAGE_C.md#6-完整-20-m-采集验收2026-10-02)).
+Stitching and global optimization are still pending.
 
 ## Documentation
 
