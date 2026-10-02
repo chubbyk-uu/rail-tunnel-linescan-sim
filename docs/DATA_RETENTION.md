@@ -16,6 +16,7 @@
 | 最终 CUDA 展开 | `sessions/stage_d1_3m_cuda_final_20261002/` | 后续匹配输入与 CPU 一致性参考 |
 | 最终 D2 与公开输入证明 | `sessions/stage_d2_public_verified_20261002/` | 对应点、带真值的独立评价及公开数据隔离证明，8766 复核页 |
 | D2 偏置来源对照 | `sessions/bias_study_20261003/`、`local_data/bias_study_20261003/` | 平法线/仅反照率变体采集、D1/D2 与带符号网格评价（约 42 GiB）；原光照重放仅保留逐字节一致记录，重复原图已删除 |
+| D1 v2 验收 | `sessions/stage_d1_3m_v2_20261003/` | v2 展开（25 MB）、D2、CUDA/CPU 公开复现及 D2 公开复现；`public_cuda` 内原图为硬链接 |
 | 早期采集基线 | `sessions/gz_a/`、`sessions/default_acceptance/` 及其 dynamics | 阶段 A/B 基线，不保留重复的重放原图 |
 | 双测量轮试验 | `sessions/measuring_trials/` | 轨道起伏、横滚/俯仰及里程基线 |
 | README 源视频 | `local_data/readme_media_20261002/` | 可重新生成已入 Git 的 GIF/PNG；任务原始行图另已清理 |
