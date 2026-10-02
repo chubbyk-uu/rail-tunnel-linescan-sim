@@ -385,6 +385,8 @@ python3 tools/with_mesa_runtime.py bash tools/with_optix_runtime.sh bash -c '
 
 ### 10.2 任务数据保留
 
+2026-10-02 再次清理重复展开、重放和界面测试数据，释放约 70.02 GiB；保留 20 m 原始基线、最终 CPU/CUDA 展开和 D2。原有任务演示与修复测试目录已归档后删除，现行保留清单见 [DATA_RETENTION](DATA_RETENTION.md)。
+
 当前采用手动清理，不自动删除任务。每个 3 m 原始任务约 1.3 GB，20 m 约 8–9 GB；离线 float32 校正、重放副本和复核材料另计。任务原始数据在 `sessions/mission/`，对应生成端私有输入在 `local_data/mission_runs/`，运行日志在 `local_data/mission_logs/`。采集前检查可用空间；保留已接受的画质/验收基线和用户仍在检查的会话。临时试验验证完成后保留小型报告、必要配置和截图，再手动删除不再需要的原始数据及匹配的输入目录；运行中的会话不可清理。可用 `du -sh sessions/mission local_data/mission_runs local_data/mission_logs` 查看增长。
 
 ### 10.3 任务验收与回执修复回归（2026-10-01）

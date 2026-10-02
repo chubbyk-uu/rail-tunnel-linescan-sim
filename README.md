@@ -116,7 +116,7 @@ source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src --ignore-src -r -y --rosdistro jazzy
 ```
 
-仓库需要对应的 GitHub 访问权限。`gz.transport13`、`gz.msgs10` 来自 Jazzy 的 Gazebo vendor 环境，先加载 ROS，再检查 Python 导入；不要用其他 Python/Conda 环境替代系统 Python。
+本仓库已公开，克隆无需 GitHub 登录；WSL 私有 Mesa 构建来源的独立仓库权限要求见部署补充。`gz.transport13`、`gz.msgs10` 来自 Jazzy 的 Gazebo vendor 环境，先加载 ROS，再检查 Python 导入；不要用其他 Python/Conda 环境替代系统 Python。
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -343,4 +343,5 @@ docs/             设计、部署、验收、后续计划和界面媒体
 | [阶段 D 与后续计划](docs/STAGE_D.md) | CUDA 展开、图像匹配、全局优化和受控误差场景 |
 | [开发规范](docs/DEVELOPMENT_RULES.md) | 邻近项目教训、真值隔离与 WSL I/O 要求 |
 | [审核修复记录](docs/REPAIR_PLAN_2026-10-02.md) | 稳定性、运行完整性和照明遮挡验证 |
+| [数据保留与清理](docs/DATA_RETENTION.md) | 当前基线、已清理数据与本地报告归档 |
 | [历史资料](docs/history/README.md) | 选材、画质实验与早期开发记录 |

@@ -57,7 +57,9 @@
       "status": "complete",
       "rows": 284443,
       "raw_blocks": 70,
-      "public_metadata_and_raw_hashes_verified": true
+      "public_metadata_and_raw_hashes_verified": true,
+      "raw_retention": "removed_after_verification_2026-10-02",
+      "metadata_archive": "local_data/evaluation/cleanup_20261002_public/reports_and_configs.tar.gz"
     },
     {
       "viewer": "rviz",
@@ -65,7 +67,9 @@
       "status": "complete",
       "rows": 284443,
       "raw_blocks": 70,
-      "public_metadata_and_raw_hashes_verified": true
+      "public_metadata_and_raw_hashes_verified": true,
+      "raw_retention": "removed_after_verification_2026-10-02",
+      "metadata_archive": "local_data/evaluation/cleanup_20261002_public/reports_and_configs.tar.gz"
     }
   ],
   "outputs": [

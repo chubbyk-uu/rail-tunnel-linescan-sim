@@ -132,10 +132,10 @@ sessions/stage_c_20m_acceptance_20261002/
     reconstruction/public_inputs/    # 可独立复核的公开输入
     reconstruction/public_only_coverage/
   sessions/20261002_113730_eae97f12_dynamics/
-  wall_replay/                       # 重放原图及元数据
+  wall_replay/                       # 已清理的重放副本，历史报告保留
 ```
 
-原始采集、接触诊断及公开复核副本共约 8.61 GiB，重放约 8.32 GiB；两份均保留。私有任务生成配置和世界仍在 `local_data/mission_runs/20261002_113730_eae97f12/`，只供生成端/评估端使用。新克隆仍须恢复阶段 B 资产包；Git 不包含这些大文件。
+原始采集、接触诊断及公开复核副本共约 8.61 GiB，重放约 8.32 GiB。2026-10-02 清理时删除了可由原始位姿重建的重放副本，原始 20 m 会话和验收报告仍保留，详见 [DATA_RETENTION](DATA_RETENTION.md)。私有任务生成配置和世界仍在 `local_data/mission_runs/20261002_113730_eae97f12/`，只供生成端/评估端使用。新克隆按 [ASSETS.md](ASSETS.md) 下载公开原图并生成阶段 B 演示；Git 不包含这些大文件。
 
 复现需要新的目录；入口会自动启动两种 GUI、运行完整目标、排空图像、关闭自身窗口、执行覆盖及重放检查。运行完整输出应重定向到日志：
 
