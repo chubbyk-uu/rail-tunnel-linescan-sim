@@ -8,15 +8,15 @@
 
 ### Gazebo：轨道接触、车载照明与旋转扫描
 
-![Gazebo 运行画面](docs/media/gazebo.png)
-
 ![Gazebo 旋转扫描动图](docs/media/gazebo_scan.gif)
+
+[查看高清静态图：扫描架、车体与轨道](docs/media/gazebo.png)
 
 ### RViz：任务控制、车辆显示与原始图像预览
 
-![RViz 任务界面](docs/media/rviz.png)
-
 ![RViz 采集任务动图](docs/media/rviz_capture.gif)
+
+[查看高清静态图：任务面板与原图预览](docs/media/rviz.png)
 
 以上由实际 3 米任务的窗口视频转换，取景跟随车体。RViz 环境为轻量预览，左下角是未经光学校正的原图缩略图；界面清晰度不代表 OptiX 原始成像精度。录制方式与版本见 [媒体说明](docs/media/README.md)。
 
