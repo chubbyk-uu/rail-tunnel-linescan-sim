@@ -60,6 +60,7 @@ class MissionManager(Node):
         fcntl.flock(self.ownership, fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.lock = threading.RLock()
         self.state = 'idle'; self.error = ''; self.task = {}; self.session = None
+        self.inputs = None
         self.server = None; self.gui = None; self.log_handles = []
         self.commands = queue.Queue(maxsize=16); self.seen = deque(maxlen=256)
         self.command_result = {}; self.events = []
@@ -148,12 +149,22 @@ class MissionManager(Node):
         start, distance = start_values(command)
         mode = command.get('mode', 'travel')
         if mode not in ('travel', 'wall'): raise ValueError('Unknown task mode')
+        token = time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
+        inputs = self.data_root/'mission_runs'/token
+        # From this point all diagnostics belong to this attempt, even if
+        # preparation fails before a capture session is created.
+        with self.lock:
+            self.session = None
+            self.inputs = inputs
+            self.task = dict(start_m=start, distance_m=distance, mode=mode)
+            self.events = []
+            self.error = ''
+            self.latest = initial_state(self.config,
+                [start, 0., self.config['robot']['base_reference_z_m'], 0., 0., 0., 1.])
         if mode == 'wall':
             wall_plan(self.config, start, distance, json.loads((self.demo/'calibration.json').read_text()))
         else:
             plan(self.config, start, distance)  # Reject before creating any files/processes.
-        token = time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
-        inputs = self.data_root/'mission_runs'/token
         config, task = prepare(self.demo, inputs, start, distance, mode=mode)
         check_calibration(inputs/'capture.yaml', self.demo/'calibration.json')
         from .physical_world import check as physical_check, spec_for
@@ -290,8 +301,12 @@ class MissionManager(Node):
             with self.lock: self.error += '; shutdown: '+str(stop_error)
         if self.server is None or self.server.poll() is not None: self.server = None
         # Do not relabel or modify raw capture evidence after a forced exit.
-        if self.session is not None:
+        destination = None
+        if self.session is not None and (self.session/'session.json').is_file():
             destination = self.session/'evaluation'
+        elif self.inputs is not None:
+            destination = self.inputs
+        if destination is not None:
             destination.mkdir(parents=True, exist_ok=True)
             (destination/'mission_failure.json').write_text(json.dumps(dict(
                 status='failed', error=self.error, shutdown=shutdown, events=self.events), indent=2)+'\n')
