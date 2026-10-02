@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export only public ROI inputs; reproduce D1 with another angular tile size."""
+"""Export only public ROI inputs; reproduce D1 with another backend/tile size."""
 import argparse
 import json
 import os
@@ -11,7 +11,7 @@ from ssb_tools.initial_unroll import trace_pixel, load_bands, release_pages
 from ssb_tools.session import sha256_file
 
 
-def run(source, reference, calibration, output):
+def run(source, reference, calibration, output, backend='cuda'):
     source, reference, output = map(lambda p: Path(p).resolve(), (source, reference, output))
     output.mkdir(parents=True, exist_ok=False)
     public = output/'public_inputs'; public.mkdir()
@@ -34,7 +34,8 @@ def run(source, reference, calibration, output):
     with (output/'unroll.log').open('w') as log:
         subprocess.run([sys.executable, '-m', 'ssb_tools.initial_unroll', '--session', str(public),
             '--calibration', str(public/'calibration.json'), '--output', str(result),
-            '--target-x', *map(str, baseline['grid']['target_x_m']), '--angular-tile-rows', '17'],
+            '--target-x', *map(str, baseline['grid']['target_x_m']), '--angular-tile-rows', '17',
+            '--backend', backend],
             stdout=log, stderr=subprocess.STDOUT, check=True)
     products = ['sensor_flat.npy', 'sensor_valid_bits.npy', 'projection.npy', 'mapping.npz',
                 'mosaic.npy', 'coverage.npy', 'source_band.npy', 'bands.json', 'calibration.json']
@@ -92,7 +93,9 @@ def run(source, reference, calibration, output):
         identical_products=len(products), pixel_traces=traces, invalid_pixels=len(holes),
         invalid_sample_coordinates=holes[:16],
         holes_with_invalid_native_support=native_mask_holes,
-        result=str(result), performance=json.loads((result/'report.json').read_text())['performance'])
+        result=str(result), backend=backend,
+        performance=json.loads((result/'report.json').read_text())['performance'],
+        performance_including_hashes=provenance.get('performance'))
     (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps({k: report[k] for k in ('public_only','identical_products','invalid_pixels','performance')}))
 
@@ -100,4 +103,5 @@ def run(source, reference, calibration, output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('session','reference','calibration','output'): parser.add_argument('--'+name, required=True)
-    args = parser.parse_args(); run(args.session, args.reference, args.calibration, args.output)
+    parser.add_argument('--backend', choices=['cpu', 'cuda'], default='cuda')
+    args = parser.parse_args(); run(args.session, args.reference, args.calibration, args.output, args.backend)

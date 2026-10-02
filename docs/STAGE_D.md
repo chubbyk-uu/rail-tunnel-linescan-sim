@@ -24,7 +24,7 @@ source install/setup.bash
 python3 -m ssb_tools.initial_unroll \
   --session sessions/stage_c_20m_acceptance_20261002/sessions/20261002_113730_eae97f12 \
   --calibration local_data/stage_b/contact_demo/calibration.json \
-  --target-x 3 6 --output sessions/d1_NEW > /tmp/d1_NEW.log 2>&1
+  --target-x 3 6 --backend cuda --output sessions/d1_NEW > /tmp/d1_NEW.log 2>&1
 ```
 
 | 文件 | 内容 |
@@ -70,6 +70,36 @@ python3 tools/test_initial_unroll.py \
   --calibration local_data/stage_b/contact_demo/calibration.json \
   --output sessions/d1_PUBLIC_NEW > /tmp/d1_PUBLIC_NEW.log 2>&1
 ```
+
+## CUDA 加速与性能复核
+
+命令行默认 `--backend cuda`，通过 ament 索引加载已安装的 `ssb_core/lib/libssb_unroll_cuda.so`；缺库、设备不可用或计算出错直接报错，不静默改用 CPU。可显式选 `--backend cpu` 运行 NumPy 参考实现；Python `reconstruct()` 的默认后端仍为 CPU，供独立测试使用。新增库需要重新构建 `ssb_core`，无需安装 CuPy、PyTorch 或 Numba。
+
+CPU 参考实现缓存逐圈相位和列坐标，并通过普通数组视图读取仍由 mmap 持有的样本。CUDA 在每个角向块中仅上传需要的连续曝光行，合并镜头逆映射、双线性取样、无效判断、覆盖计数和条带选择；相邻条带按原顺序处理，平分时仍沿用原来源选择规则。CPU 和 GPU 都保留 float64 几何和 float32 原始列亮度，CUDA 编译关闭 FMA 合并。不使用近似镜头查找表，不降低网格精度，不修改采集数据。
+
+设备输出块上限一百万像素，原始列上传块上限 128 MiB，后端所有可复用设备缓冲总预算 256 MiB；预算在扩容前检查。结果仍以少量连续文件写盘，映射页按块释放，不生成额外小瓦片或逐行状态文件。GPU 缓冲统计不包含驱动和 CUDA 上下文的开销。
+
+首次完整复核为 `sessions/stage_d1_3m_cuda_20261002/`，以此前 CPU 的公开输入复核结果为基准，继续采用 `[3,6] m`、0.2 mm、完整 240°：
+
+| 环节 | 用时 |
+|---|---:|
+| 读取和核对公开元数据、建立编码器投影 | 0.50 s |
+| 原始块校验及暗场/平场缓存 | 7.65 s |
+| CUDA 展开、覆盖/来源输出及刷新 | 9.94 s |
+| 预览和相邻圈窗口 | 0.22 s |
+| 上述主流程，含少量其他记录操作 | 18.31 s |
+| 最终阶段输入/输出哈希 | 6.91 s |
+| 主流程及最终哈希 | 25.22 s |
+
+此前 CPU 主流程为 74.30 s，按相同计时范围约提速 4.06 倍；此前没有记录包含末尾哈希的总时间，不能直接将 74.30 s 与 25.22 s 作同比。首次 CUDA 全链峰值 RSS 为 396.79 MiB，后端设备缓冲峰值 3.38 MiB。上述测试使用本机 RTX 5080、Linux 文件系统和已有缓存，不是冷盘或同时运行 Gazebo 的性能保证。
+
+公开输入副本仍不含真值目录或非 ROI 原图块。9 项核心数据内容与 CPU 基准一致：NPZ 按数组比较，其余按文件哈希比较，因此这批完整 3 m 的展开像素、有效掩码、来源索引没有变化；324 个无效像素仍保留。GPU 回归另覆盖解析图、非线性映射、缺行、饱和、坏列、不支持的角度/轴向区域、不同块尺寸、过大块拒绝和缺后端时不得回退。
+
+`report.json` 记录各处理环节，`provenance.json` 另记录包括阶段边界哈希的总时间和峰值 RSS。后端库路径、ABI、实际设备、二进制哈希和显存缓冲峰值均写入结果；库是实现依赖，不作为图像/观测输入，公开输入隔离检查仍严格适用。公开输入复核脚本可用 `--backend cpu|cuda` 选择后端。
+
+最终复测目录为 `sessions/stage_d1_3m_cuda_final_20261002/`，主流程 19.86 s，边界哈希 7.01 s，总计 26.87 s；9 项核心数据仍与 CPU 基准一致，5 个来源回溯的 DN 重算误差为零。两次完整运行的主流程范围为 18.31–19.86 s、含哈希总时间为 25.22–26.87 s。完整回归包括 270 项 Python 用例和 65 项 C++ 用例，全部通过，无跳过；设备缓冲扩容保护补充后，19 项展开相关用例和完整 3 m 公开输入复核再次通过。
+
+剩余耗时主要为大数组读写、平场缓存和校验。后续如需进一步优化，应先测量这些环节；匹配和优化可以直接读取独立条带的小窗口，不必每轮重建完整浮点全图。
 
 ## 后续 D2
 

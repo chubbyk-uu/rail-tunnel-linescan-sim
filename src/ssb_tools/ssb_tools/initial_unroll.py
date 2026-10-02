@@ -156,7 +156,7 @@ def prepare_sensor(capture, output, target, chunk_rows=256):
         selected_rows=len(selected), raw_blocks=raw_blocks, saturated_samples=saturated, invalid_native_samples=invalid)
 
 
-def rasterize(sampler, grid, output, angular_tile_rows=32):
+def rasterize(sampler, grid, output, angular_tile_rows=32, accelerator=None):
     nq, nx = grid['shape']
     image = np.lib.format.open_memmap(output/'mosaic.npy', 'w+', np.float32, shape=(nq, nx))
     counts = np.lib.format.open_memmap(output/'coverage.npy', 'w+', np.uint16, shape=(nq, nx))
@@ -168,9 +168,12 @@ def rasterize(sampler, grid, output, angular_tile_rows=32):
         b = min(nq, a+angular_tile_rows)
         angles = grid['theta_rad'][0]+(np.arange(a, b)+.5)*grid['dq_m']/grid['radius_m']
         shape = (b-a, nx)
-        values = np.full(shape, np.nan, np.float32); number = np.zeros(shape, np.uint16)
-        chosen = np.full(shape, -1, np.int16); best = np.full(shape, -np.inf, np.float32)
-        for band in range(len(sampler.segments)):
+        if accelerator is not None:
+            values, number, chosen = accelerator.tile(angles, xs)
+        else:
+            values = np.full(shape, np.nan, np.float32); number = np.zeros(shape, np.uint16)
+            chosen = np.full(shape, -1, np.int16); best = np.full(shape, -np.inf, np.float32)
+        for band in range(len(sampler.segments) if accelerator is None else 0):
             lo, hi, _, supported = sampler.row_sources(band, angles)
             if not np.any(supported): continue
             axes = sampler.projection['x_axis_m'][np.r_[lo[supported], hi[supported]]]
@@ -304,8 +307,10 @@ def write_review(sampler, grid, output, mosaic):
     return reviews
 
 
-def reconstruct(root, calibration_path, output, target_x=None, pitch=.0002, angular_tile_rows=32):
+def reconstruct(root, calibration_path, output, target_x=None, pitch=.0002, angular_tile_rows=32, backend='cpu'):
     started = time.monotonic(); capture = PublicCapture(root, calibration_path)
+    timings = dict(public_inputs_s=time.monotonic()-started)
+    if backend not in ('cpu', 'cuda'): raise ValueError('unknown unroll backend')
     inspection = capture.config.get('inspection', {})
     full_target = inspection.get('target_x_m')
     if full_target is None: raise ValueError('capture has no predeclared wall target')
@@ -323,7 +328,9 @@ def reconstruct(root, calibration_path, output, target_x=None, pitch=.0002, angu
         if not output.is_relative_to(capture.root/'reconstruction'):
             raise ValueError('outputs inside a session must stay in reconstruction/')
     output.mkdir(parents=True, exist_ok=False)
+    phase_start = time.monotonic()
     sampler, inputs, sensor_report = prepare_sensor(capture, output, target)
+    timings['prepare_sensor_s'] = time.monotonic()-phase_start
     bands = []
     for band, (a, b) in enumerate(sampler.bounds):
         rows = sampler.projection[a:b]
@@ -333,9 +340,22 @@ def reconstruct(root, calibration_path, output, target_x=None, pitch=.0002, angu
             axis_x_m=[float(rows['x_axis_m'].min()), float(rows['x_axis_m'].max())]))
     (output/'bands.json').write_text(json.dumps(dict(schema='ssb.nominal_bands.v1', bands=bands,
         grid=grid, source_convention='native sensor image plus measured inverse mapping; sample with BandSampler'), indent=2)+'\n')
-    statistics, mosaic = rasterize(sampler, grid, output, angular_tile_rows)
+    accelerator = None
+    backend_info = dict(name='cpu', geometry_precision='float64')
+    phase_start = time.monotonic()
+    try:
+        if backend == 'cuda':
+            from .unroll_cuda import CudaRaster
+            accelerator = CudaRaster(sampler)
+        statistics, mosaic = rasterize(sampler, grid, output, angular_tile_rows, accelerator)
+        if accelerator is not None: backend_info = accelerator.describe()
+    finally:
+        if accelerator is not None: accelerator.close()
+    timings['rasterize_s'] = time.monotonic()-phase_start
     if statistics['missing_pixels'] == statistics['total_pixels']: raise ValueError('no valid projected pixels')
+    phase_start = time.monotonic()
     reviews = write_review(sampler, grid, output, mosaic)
+    timings['review_s'] = time.monotonic()-phase_start
     (output/'calibration.json').write_text(json.dumps(capture.calibration, indent=2)+'\n')
     report = dict(schema='ssb.initial_unroll.v1', stage='D1', grid=grid,
         declared_target_x_m=full_target, diagnostic_roi=target != full_target,
@@ -345,11 +365,16 @@ def reconstruct(root, calibration_path, output, target_x=None, pitch=.0002, angu
         provenance_mapping='source_band pixel + grid + projection.npy + mapping.npz recover raw row/column interpolation weights',
         limitations=['nominal centered cylinder; no IMU or actual body pose', 'no matching, optimization or seam blending',
                      'calibration assumes radial lens and square pixels; sensor is currently noiseless'],
-        performance=dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes(),
+        backend=backend_info,
+        performance=dict(wall_s=time.monotonic()-started, stages=timings, peak_rss_bytes=peak_rss_bytes(),
                          rss_source='current executable /proc/self/status VmHWM'))
     (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
     outputs = sorted(p for p in output.iterdir() if p.is_file())
-    provenance = stage_record('initial_unroll', inputs, outputs, dict(grid=grid, angular_tile_rows=angular_tile_rows))
+    hash_start = time.monotonic()
+    provenance = stage_record('initial_unroll', inputs, outputs,
+                              dict(grid=grid, angular_tile_rows=angular_tile_rows, backend=backend_info))
+    provenance['performance'] = dict(hash_s=time.monotonic()-hash_start, wall_s=time.monotonic()-started,
+                                    peak_rss_bytes=peak_rss_bytes())
     (output/'provenance.json').write_text(json.dumps(provenance, indent=2)+'\n')
     return report
 
@@ -360,9 +385,11 @@ def main():
     parser.add_argument('--output', required=True); parser.add_argument('--target-x', type=float, nargs=2)
     parser.add_argument('--pitch-mm', type=float, default=.2)
     parser.add_argument('--angular-tile-rows', type=int, default=32)
+    parser.add_argument('--backend', choices=['cpu', 'cuda'], default='cuda',
+                        help='CUDA is explicit and mandatory by default; CPU remains the reference')
     args = parser.parse_args()
     report = reconstruct(args.session, args.calibration, args.output, args.target_x,
-                         args.pitch_mm/1000, args.angular_tile_rows)
+                         args.pitch_mm/1000, args.angular_tile_rows, args.backend)
     print(json.dumps({k: report[k] for k in ('bands', 'coverage', 'performance')}))
 
 

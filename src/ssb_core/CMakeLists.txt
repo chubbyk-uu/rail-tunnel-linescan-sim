@@ -43,6 +43,14 @@ set(CMAKE_CUDA_ARCHITECTURES 75)
 set(CMAKE_CUDA_COMPILER "${CUDAToolkit_NVCC_EXECUTABLE}")
 enable_language(CUDA)
 set(CMAKE_CUDA_STANDARD 17)
+
+# Reconstruction uses CUDA directly; no OptiX scene or private geometry enters
+# this library. A small C ABI lets the installed Python tools pass NumPy tiles.
+add_library(ssb_unroll_cuda SHARED src/unroll_cuda.cu)
+target_compile_options(ssb_unroll_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
+target_link_libraries(ssb_unroll_cuda PRIVATE CUDA::cudart)
+install(TARGETS ssb_unroll_cuda LIBRARY DESTINATION lib)
+
 set(SSB_PTX "${CMAKE_CURRENT_BINARY_DIR}/ssb_scan.ptx")
 add_custom_command(OUTPUT "${SSB_PTX}"
   COMMAND ${CUDAToolkit_NVCC_EXECUTABLE} --ptx -O3 -std=c++17 -arch=compute_75
