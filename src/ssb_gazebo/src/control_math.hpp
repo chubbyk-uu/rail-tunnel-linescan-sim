@@ -5,6 +5,12 @@
 
 namespace ssb_gazebo {
 
+template<class... Values>
+bool HasValues(const Values&... values) {
+  return (... && (values && !values->empty()));
+}
+
+
 inline std::array<double,3> EulerRates(double pitch,double yaw,const std::array<double,3>& world_omega) {
   const double horizontal=std::cos(yaw)*world_omega[0]+std::sin(yaw)*world_omega[1];
   return {horizontal/std::cos(pitch),

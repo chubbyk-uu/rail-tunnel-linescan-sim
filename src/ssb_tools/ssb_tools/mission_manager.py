@@ -33,6 +33,7 @@ from .mission_preview import Preview, pose_values, transform
 from .mission_image_preview import RawImagePreview
 from .optical_identity import check_calibration
 from .session import sha256_file
+from .process_drain import stop_group, positive_timeout
 
 
 TERMINAL = ('idle', 'complete', 'stopped', 'failed')
@@ -87,7 +88,7 @@ class MissionManager(Node):
         if not self.gz.subscribe(StringMsg, self.status_topic, self.receive):
             raise RuntimeError('Gazebo status subscription failed')
         self.closing = threading.Event()
-        self.worker = threading.Thread(target=self.work, daemon=False); self.worker.start()
+        self.worker = threading.Thread(target=self.work, daemon=True); self.worker.start()
         self.timer = self.create_timer(1/30, self.tick)   # TF and status at the RViz frame rate
 
     def receive(self, message):
@@ -160,6 +161,7 @@ class MissionManager(Node):
         if not physical['passed']:
             raise ValueError('physical world differs from the configuration: '+
                              ', '.join(n for n, v in physical['checks'].items() if not v['passed']))
+        if self.closing.is_set(): raise RuntimeError('Manager is shutting down')
         self.session = self.root/token; self.task = task; self.events = []
         self.error = ''; self.expected_exit = False
         self.inputs = inputs
@@ -180,6 +182,7 @@ class MissionManager(Node):
                                          stderr=subprocess.STDOUT, start_new_session=True)
         started_at = time.monotonic(); deadline = started_at+60
         while time.monotonic() < deadline:
+            if self.closing.is_set(): raise RuntimeError('Manager is shutting down')
             if self.server.poll() is not None: raise RuntimeError('Gazebo failed to start; see '+str(inputs/'server.log'))
             with self.lock:
                 if self.last_received > started_at: break
@@ -194,9 +197,9 @@ class MissionManager(Node):
         self.expected_exit = True
         if self.server.poll() is None:
             self.control(True)
-            os.killpg(self.server.pid, signal.SIGINT)
-            # Preserve tail blocks and error evidence; do not kill a draining writer.
-            self.server.wait()
+            shutdown = self.stop_server()
+            if shutdown['forced']:
+                raise RuntimeError('Gazebo exceeded raw drain deadline; forced shutdown: '+str(shutdown))
         if self.server.returncode != 0:
             raise RuntimeError('Gazebo exited abnormally; check mission server.log')
         self.server = None
@@ -270,13 +273,28 @@ class MissionManager(Node):
                 self.fail(e)
                 with self.lock: self.command_result = dict(id=command['id'], ok=False, error=str(e))
 
+    def stop_server(self):
+        result = stop_group(self.server, self.args.drain_timeout_s,
+                            self.args.terminate_timeout_s, self.args.kill_timeout_s)
+        self.events.append(dict(shutdown=result, wall_monotonic_s=time.monotonic()))
+        return result
+
     def fail(self, error):
         with self.lock: self.error = str(error)
-        if self.server and self.server.poll() is None:
-            os.killpg(self.server.pid, signal.SIGINT); self.server.wait()
-        self.server = None
-        self.transition('failed')
-        self.get_logger().error(str(error))
+        self.transition('failed')  # Visible even while the writer is draining.
+        shutdown = None
+        try:
+            if self.server is not None: shutdown = self.stop_server()
+        except Exception as stop_error:
+            with self.lock: self.error += '; shutdown: '+str(stop_error)
+        if self.server is None or self.server.poll() is not None: self.server = None
+        # Do not relabel or modify raw capture evidence after a forced exit.
+        if self.session is not None:
+            destination = self.session/'evaluation'
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination/'mission_failure.json').write_text(json.dumps(dict(
+                status='failed', error=self.error, shutdown=shutdown, events=self.events), indent=2)+'\n')
+        self.get_logger().error(self.error)
 
     def tick(self):
         with self.lock:
@@ -314,12 +332,20 @@ class MissionManager(Node):
         self.image_preview.publish(String(data=json.dumps(data)))
 
     def close(self):
-        self.closing.set(); self.worker.join()
+        self.closing.set()
+        bound = 70+self.args.drain_timeout_s+self.args.terminate_timeout_s+self.args.kill_timeout_s
+        self.worker.join(timeout=bound)
+        if self.worker.is_alive():
+            self.fail(RuntimeError('Mission worker exceeded shutdown deadline'))
+            # A stuck Python preparation operation must not keep the process alive.
+            # Its daemon thread is abandoned; leave its handles open until process exit.
+            if self.gui: stop_group(self.gui, 15., self.args.terminate_timeout_s, self.args.kill_timeout_s)
+            return
         if self.server is not None:
             try: self.finish(early=True)
-            except Exception as e: self.get_logger().error(str(e))
+            except Exception as e: self.fail(e)
         if self.gui and self.gui.poll() is None:
-            os.killpg(self.gui.pid, signal.SIGINT); self.gui.wait()
+            stop_group(self.gui, 15., self.args.terminate_timeout_s, self.args.kill_timeout_s)
         for log in self.log_handles: log.close()
         self.ownership.close()
 
@@ -331,6 +357,9 @@ def main():
     p.add_argument('--data-root', default='local_data', help='writable assets/cache/lock root; Linux filesystem preferred')
     p.add_argument('--gz-gui', action='store_true')
     p.add_argument('--dynamics-only', action='store_true', help='test mode, NO image acquisition')
+    p.add_argument('--drain-timeout-s', type=positive_timeout, default=180.)
+    p.add_argument('--terminate-timeout-s', type=positive_timeout, default=10.)
+    p.add_argument('--kill-timeout-s', type=positive_timeout, default=5.)
     args = p.parse_args()
     rclpy.init(); node = MissionManager(args)
     try: rclpy.spin(node)

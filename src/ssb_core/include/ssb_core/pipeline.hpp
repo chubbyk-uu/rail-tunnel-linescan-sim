@@ -40,7 +40,8 @@ class Pipeline {
 
   // After a worker failure input is discarded; Wait reports the original error.
   void Push(const PoseSample& sample);
-  void Finish();
+  // Producer failure drains accepted input and preserves indices, then marks failed.
+  void Finish(const std::string& producer_error = "");
   // Low-rate UI snapshot; does not expose truth or copy image buffers.
   nlohmann::json Progress() const;
   // Blocks until everything is on disk; returns the session summary. Rethrows the

@@ -44,6 +44,7 @@ struct Pipeline::Impl {
   std::condition_variable cv;
   std::deque<PoseSample> poses;
   bool input_finished = false;
+  std::string producer_error;
   std::deque<std::vector<RowJob>> render_queue;
   size_t render_queue_peak = 0;
   bool timing_done = false;
@@ -154,9 +155,10 @@ void Pipeline::Push(const PoseSample& sample) {
   s.cv.notify_all();
 }
 
-void Pipeline::Finish() {
+void Pipeline::Finish(const std::string& producer_error) {
   auto& s = *impl_;
   std::lock_guard<std::mutex> lock(s.mutex);
+  if (!producer_error.empty() && s.producer_error.empty()) s.producer_error = producer_error;
   if (s.input_finished) return;
   s.input_finished = true;
   s.finish_called = true;
@@ -173,7 +175,7 @@ nlohmann::json Pipeline::Progress() const {
           {"rows_saved", s.rows_persisted.load()},
           {"sim_time_pushed", s.latest_pushed.load()},
           {"sim_time_written", s.latest_written_center.load()},
-          {"failed", s.failed}};
+          {"failed", s.failed || !s.producer_error.empty()}};
 }
 
 void Pipeline::Impl::TimingLoop() {
@@ -451,15 +453,20 @@ nlohmann::json Pipeline::Wait() {
         files[entry.path().lexically_relative(s.root).generic_string()] = Sha256File(entry.path());
     }
   }
-  const nlohmann::json summary = {{"schema", "ssb.session.v1"},
-                                  {"status", "complete"},
+  nlohmann::json summary = {{"schema", "ssb.session.v1"},
+                                  {"status", s.producer_error.empty() ? "complete" : "failed"},
                                   {"files", files},
                                   {"motion", motion},
                                   {"pose_source", s.options.pose_source},
                                   {"rows", rows},
                                   {"timing", s.timing_stats},
                                   {"performance", performance}};
+  if (!s.producer_error.empty()) {
+    summary["error"] = s.producer_error;
+    summary["motion"]["complete"] = false;
+  }
   WriteJsonAtomic(s.root / "session.json", summary);
+  if (!s.producer_error.empty()) throw std::runtime_error(s.producer_error);
   return summary;
 }
 

@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <optional>
+#include <vector>
 #include <gz/sim/components/Link.hh>
 #include <gz/sim/components/Model.hh>
 #include <gz/sim/components/Name.hh>
@@ -222,4 +224,12 @@ TEST(WorldCheck, LoadedRailBoxesCheckPosesSizesAndCompleteSet) {
   EXPECT_THROW(link.Check(),std::runtime_error);
   PhysicalFixture missing;missing.ecm.RemoveComponent<gz::sim::components::Collision>(missing.left_box);
   EXPECT_THROW(missing.Check(),std::runtime_error);
+}
+
+TEST(Control, MissingOrEmptyJointVectorsAreRejected) {
+  std::optional<std::vector<double>> good(std::vector<double>{1.});
+  std::optional<std::vector<double>> missing,empty(std::vector<double>{});
+  EXPECT_TRUE(ssb_gazebo::HasValues(good,good));
+  EXPECT_FALSE(ssb_gazebo::HasValues(good,missing));
+  EXPECT_FALSE(ssb_gazebo::HasValues(empty,good));
 }

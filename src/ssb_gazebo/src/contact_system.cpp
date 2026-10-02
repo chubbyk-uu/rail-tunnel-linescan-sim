@@ -17,6 +17,7 @@
 #include <iostream>
 #include <vector>
 #include "ssb_core/pipeline.hpp"
+#include "ssb_core/session.hpp"
 #include "ssb_core/optix_renderer.hpp"
 #include "control_math.hpp"
 #include "assembly_check.hpp"
@@ -64,8 +65,16 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
   }
   void PreUpdate(const gz::sim::UpdateInfo& info,gz::sim::EntityComponentManager& ecm) override {
     if(info.paused)return;
+    if(finished_) {
+      scan_.SetVelocity(ecm,{0});
+      for(auto& drive:drive_) drive.SetForce(ecm,{0});
+      return;
+    }
     const double dt=std::chrono::duration<double>(info.dt).count(),t=std::chrono::duration<double>(info.simTime).count()-settle_;
-    if(std::abs(dt-c_.sample_period_s)>1e-10){std::cerr<<"contact timestep mismatch";std::_Exit(2);}
+    if(std::abs(dt-c_.sample_period_s)>1e-10) {
+      StopCapture("contact physics step changed during acquisition");
+      return;
+    }
     if(!world_checked_){
       // Models after the vehicle in the SDF do not exist yet during Configure.
       try{
@@ -89,7 +98,10 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     }
     double factor=t>=0&&t<=c_.profile.back()[0]?ssb::EvaluateProfile(c_.profile,t).factor:0;
     double speed=c_.advance_per_rev_m*c_.NominalOmega()/(2*M_PI)*factor;
-    for(int i=0;i<2;++i){auto v=drive_[i].Velocity(ecm);if(!v||v->empty())continue;
+    for(int i=0;i<2;++i){auto v=drive_[i].Velocity(ecm);if(!HasValues(v)) {
+        if(started_) StopCapture("drive velocity unavailable during acquisition");
+        return;
+      }
       const double error=2*speed/drive_diameter_-v->front();
       torque_[i]=std::clamp(12*error,-8.,8.);drive_[i].SetForce(ecm,{torque_[i]});}
     if(t<0){scan_.SetVelocity(ecm,{0});return;}
@@ -100,14 +112,14 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
         catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}}
     }
     double s=0;
-    for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;
+    for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!HasValues(p)) {StopCapture("encoder position unavailable during acquisition");return;}
       count_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_))-zero_[i];s+=.5*count_[i]/counts_per_rad_*diameter_[i]/2;}
     s_hat_=s;
     auto p=scan_.Position(ecm);if(p&&!p->empty()){
       const double command=servo_.Update(s_hat_,p->front(),dt,c_.start_theta_rad,c_.advance_per_rev_m);
       target_theta_=servo_.Target();
       scan_.SetVelocity(ecm,{command});
-    }
+    } else {StopCapture("scan position unavailable during acquisition");}
   }
   void PostUpdate(const gz::sim::UpdateInfo& info,const gz::sim::EntityComponentManager& ecm) override {
     PublishStatus(info, ecm);
@@ -115,7 +127,15 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     const double t=std::chrono::duration<double>(info.simTime).count()-settle_;
     auto pose=gz::sim::worldPose(base_.Entity(),ecm);auto linear=base_.WorldLinearVelocity(ecm);
     auto a=enc_[0].Position(ecm),b=enc_[1].Position(ecm),av=enc_[0].Velocity(ecm),bv=enc_[1].Velocity(ecm),th=scan_.Position(ecm),w=scan_.Velocity(ecm);
-    if(!linear||!a||!b||!av||!bv||!th||!w||a->empty()||b->empty()||th->empty())return;
+    if(!linear || !HasValues(a,b,av,bv,th,w)) {
+      if(started_) StopCapture("joint position or velocity unavailable during acquisition");
+      return;
+    }
+    const auto angular=base_.WorldAngularVelocity(ecm);
+    if(started_ && !angular) {
+      StopCapture("body angular velocity unavailable during acquisition");
+      return;
+    }
     auto rpy=pose.Rot().Euler();
     truth_<<t<<','<<pose.Pos().X()<<','<<pose.Pos().Y()<<','<<pose.Pos().Z()<<','<<rpy.X()<<','<<rpy.Y()<<','<<rpy.Z()<<','<<linear->X()<<','<<linear->Y()<<','<<linear->Z()<<','<<a->front()<<','<<b->front()<<','<<av->front()<<','<<bv->front()<<','<<th->front()<<','<<w->front();
     for(const auto& j:slide_){auto q=j.Position(ecm);truth_<<','<<(q&&!q->empty()?q->front():std::nan(""));}
@@ -127,7 +147,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
         ssb::PoseSample sample{t,pose.Pos().X(),linear->X(),th->front(),w->front(),a->front(),av->front()};
         sample.body_valid=1;sample.y=pose.Pos().Y();sample.z=pose.Pos().Z();
         sample.roll=rpy.X();sample.pitch=rpy.Y();sample.yaw=rpy.Z();sample.vy=linear->Y();sample.vz=linear->Z();
-        if(auto angular=base_.WorldAngularVelocity(ecm)){
+        if(angular){
           const auto rates=EulerRates(sample.pitch,sample.yaw,{angular->X(),angular->Y(),angular->Z()});
           sample.roll_rate=rates[0];sample.pitch_rate=rates[1];sample.yaw_rate=rates[2];
         }
@@ -146,6 +166,19 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     }
   }
  private:
+  void StopCapture(const std::string& error) {
+    if(finished_) return;
+    runtime_error_=error;
+    finished_=true;
+    obs_.close();
+    truth_.close();
+    ssb::WriteJsonAtomic(log_root_+"/summary.json", {{"complete",false},{"error",error}});
+    if(pipeline_) {
+      pipeline_->Finish(error);
+      completion_=std::async(std::launch::async,[this]{return pipeline_->Wait();});
+    }
+    std::cerr<<"[contact] "<<error<<"; draining accepted input"<<std::endl;
+  }
   void PublishStatus(const gz::sim::UpdateInfo& info,
                      const gz::sim::EntityComponentManager& ecm) {
     if (!status_pub_) return;
@@ -164,7 +197,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     nlohmann::json status = {
       {"session", session_},
       {"sim_time", std::chrono::duration<double>(info.simTime).count()},
-      {"paused", info.paused}, {"started", started_}, {"motion_complete", finished_},
+      {"paused", info.paused}, {"started", started_}, {"motion_complete", finished_ && runtime_error_.empty()},
       {"s_hat", s_hat_}, {"scan", position(scan_)},
       {"scan_rate", rate && !rate->empty() ? rate->front() : 0.},
       {"speed", velocity ? velocity->X() : 0.},
@@ -175,6 +208,10 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       {"measure_slides", {position(slide_[0]), position(slide_[1])}},
       {"suspension", [&]{nlohmann::json v=nlohmann::json::array();for(const auto& j:springs_)v.push_back(position(j));return v;}()},
       {"capture", pipeline_ ? pipeline_->Progress() : nlohmann::json::object()}};
+    if(!runtime_error_.empty()) {
+      status["capture"]["failed"]=true;
+      status["capture"]["error"]=runtime_error_;
+    }
     gz::msgs::StringMsg message; message.set_data(status.dump());
     status_pub_.Publish(message);
   }
@@ -190,7 +227,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
   gz::transport::Node transport_;
   gz::transport::Node::Publisher status_pub_;
   std::chrono::steady_clock::time_point last_status_{};
-  std::string config_path_,session_,log_root_;std::ofstream obs_,truth_;
+  std::string config_path_,session_,log_root_,runtime_error_;std::ofstream obs_,truth_;
   std::unique_ptr<ssb::Pipeline> pipeline_;std::future<nlohmann::json> completion_;
   ScanServo servo_;
   double diameter_[2]{},drive_diameter_=0,settle_=2,counts_per_rad_=0,torque_[2]{},s_hat_=0,target_theta_=0;

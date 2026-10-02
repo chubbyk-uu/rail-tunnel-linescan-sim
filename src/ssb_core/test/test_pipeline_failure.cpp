@@ -73,3 +73,27 @@ TEST(PipelineCompletion, HashesEveryArchivedPhysicalFile) {
   EXPECT_NE(original,ssb::Sha256File(physical/"world.sdf"));
   std::filesystem::remove_all(root);
 }
+
+TEST(PipelineFailure, ProducerFailureDrainsAcceptedInputAndKeepsTailIndex) {
+  auto c=ssb::Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_a.yaml");
+  c.profile={{0,1},{.002,1}};c.start_theta_rad=0;c.batch_rows=4096;c.debug_column_stride=0;
+  const auto root=std::filesystem::temp_directory_path()/("ssb_producer_failure_"+std::to_string(getpid()));
+  std::filesystem::remove_all(root);
+  ssb::Pipeline p(c,std::make_unique<FailingRenderer>(c.width),{root,{"test"},"kinematic"});
+  const auto samples=ssb::KinematicSource(c).Sample();
+  for(const auto& sample:samples)p.Push(sample);
+  p.Finish("injected producer fault");
+  EXPECT_TRUE(p.Progress().at("failed"));
+  EXPECT_THROW(p.Wait(),std::runtime_error);
+  nlohmann::json summary,index;std::ifstream(root/"session.json")>>summary;
+  std::ifstream(root/"raw/index.json")>>index;
+  EXPECT_EQ(summary.at("status"),"failed");
+  EXPECT_FALSE(summary.at("motion").at("complete"));
+  ASSERT_GT(summary.at("rows").get<int64_t>(),0);
+  EXPECT_EQ(summary.at("rows"),index.at("rows"));
+  EXPECT_LT(index.at("blocks").back().at("rows").get<int>(),c.block_rows);
+  EXPECT_EQ(std::filesystem::file_size(root/"evaluation/pose_stream.bin"),samples.size()*sizeof(ssb::PoseSample));
+  for(const auto& block:index.at("blocks"))
+    EXPECT_EQ(ssb::Sha256File(root/"raw"/block.at("file").get<std::string>()),block.at("sha256"));
+  std::filesystem::remove_all(root);
+}

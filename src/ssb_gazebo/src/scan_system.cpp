@@ -20,6 +20,7 @@
 #include "ssb_core/optix_renderer.hpp"
 #include "ssb_core/pipeline.hpp"
 #include "assembly_check.hpp"
+#include "control_math.hpp"
 
 namespace ssb_gazebo {
 
@@ -126,15 +127,22 @@ class ScanSystem final : public gz::sim::System,
 
   // Complete and measure capture when motion ends, without closing the GUI or
   // blocking physics on queued rendering. Destructor joins before pipeline dies.
-  void FinishInBackground() {
+  void FinishInBackground(const std::string& error = "") {
     if (completion_.valid()) return;
-    pipeline_->Finish();
+    pipeline_->Finish(error);
     completion_ = std::async(std::launch::async, [this] { return pipeline_->Wait(); });
   }
 
  public:
   void PreUpdate(const gz::sim::UpdateInfo& info, gz::sim::EntityComponentManager& ecm) override {
     if (info.paused) return;
+    if (finished_) {
+      scan_.SetVelocity(ecm, {0});
+      wheel_.SetVelocity(ecm, {0});
+      carriage_.SetVelocity(ecm, {0});
+      for (auto& follower : follower_wheels_) follower.SetVelocity(ecm, {0});
+      return;
+    }
     if (!pipeline_) StartOrExit(info);
     // gz-sim advances simTime before running systems, so simTime here is already the
     // end of the step being commanded; DART reaches the commanded velocity at that time.
@@ -156,13 +164,17 @@ class ScanSystem final : public gz::sim::System,
       std::cerr << "[ssb] physics step changed to " << dt << " s at sim time " << t << "; capture stopped"
                 << std::endl;
       finished_ = true;
-      FinishInBackground();
+      FinishInBackground("physics step changed during acquisition");
       return;
     }
     const auto x = carriage_.Position(ecm), v = carriage_.Velocity(ecm);
     const auto th = scan_.Position(ecm), w = scan_.Velocity(ecm);
     const auto wp = wheel_.Position(ecm), wv = wheel_.Velocity(ecm);
-    if (!x || !v || !th || !w || !wp || !wv || x->empty() || th->empty() || wp->empty()) return;
+    if (!HasValues(x, v, th, w, wp, wv)) {
+      finished_ = true;
+      FinishInBackground("joint position or velocity unavailable during acquisition");
+      return;
+    }
     pipeline_->Push({t, config_.start_x_m + x->front(), v->front(), th->front(), w->front(), wp->front(),
                      wv->front()});
     if (t >= config_.profile.back()[0]) {
