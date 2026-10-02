@@ -12,7 +12,8 @@ from ssb_tools.mission_preview import Preview, textured_dae
 
 @pytest.fixture
 def config():
-    return dict(tunnel=dict(x_min_m=-1.5, x_max_m=21.5), camera=dict(fov_at_nominal_m=.85),
+    return dict(tunnel=dict(x_min_m=-1.5, x_max_m=21.5),
+                  mission=dict(inspection_x_m=[0.,20.],vehicle_half_length_m=.56,safety_margin_m=.09,minimum_distance_m=1.), camera=dict(fov_at_nominal_m=.85),
                 scan_encoder=dict(ppr=2500, edges_per_cycle=4),
                 rescaler=dict(multiply=128, divide=15),
                 gate=dict(start_deg=-120., end_deg=120.),
@@ -199,3 +200,28 @@ def test_preview_moves_sprung_axles_and_measuring_sliders(tmp_path):
     assert frames['sim_truth/wheel_2'].z == pytest.approx(.1-.3+.0004)
     assert frames['sim_truth/measure_left_slider'].z == pytest.approx(.04-.3-.002)
     assert frames['sim_truth/measure_left_wheel'].z == pytest.approx(.04-.3-.002)
+
+
+def test_configured_150m_domain_and_vehicle_margin_replace_fixed_constants(config):
+    from ssb_tools.mission_plan import mission_limits
+    config['tunnel'].update(x_min_m=-1.5,x_max_m=151.5)
+    config['mission']['inspection_x_m']=[0.,150.]
+    c,task=plan(config,149.,1.)
+    assert task['end_m']==150.
+    assert mission_limits(c)['clearance_m']==pytest.approx(.65)
+    with pytest.raises(ValueError):plan(config,149.1,1.)
+    config['mission'].update(vehicle_half_length_m=1.5,safety_margin_m=.1)
+    with pytest.raises(ValueError,match='margin'):plan(config,0.,1.)
+    config['mission'].update(vehicle_half_length_m=.56,safety_margin_m=.09)
+    config['camera']['fov_at_nominal_m']=4.
+    assert mission_limits(config)['clearance_m']==pytest.approx(2.09)
+    with pytest.raises(ValueError,match='margin'):plan(config,0.,1.)
+
+
+@pytest.mark.parametrize('change', [None,{'inspection_x_m':[0.,float('inf')]},
+    {'inspection_x_m':[20.,0.]},{'inspection_x_m':[-2.,20.]},
+    {'vehicle_half_length_m':0.},{'safety_margin_m':-.1},{'minimum_distance_m':.5}])
+def test_missing_or_invalid_public_mission_limits_rejected(config,change):
+    if change is None:config.pop('mission')
+    else:config['mission'].update(change)
+    with pytest.raises(ValueError):plan(config,3.,1.)

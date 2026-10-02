@@ -23,18 +23,39 @@ def start_values(command):
     return start, distance
 
 
+def mission_limits(config):
+    """Declared inspection/vehicle envelope, never inferred from captured truth."""
+    try:
+        m=config['mission']; lo,hi=map(float,m['inspection_x_m'])
+        half=float(m['vehicle_half_length_m']); margin=float(m['safety_margin_m'])
+        minimum=float(m['minimum_distance_m'])
+        build_lo=float(config['tunnel']['x_min_m']); build_hi=float(config['tunnel']['x_max_m'])
+        fov=float(config['camera']['fov_at_nominal_m'])
+        mount=float(config.get('calibration',{}).get('head_mount_x_m',0.))
+    except (KeyError,TypeError,ValueError) as error:
+        raise ValueError('Explicit mission inspection bounds and vehicle envelope are required') from error
+    if not all(math.isfinite(v) for v in (lo,hi,half,margin,minimum,build_lo,build_hi,fov,mount)):
+        raise ValueError('Mission limits must be finite')
+    if not (build_lo<=lo<hi<=build_hi and half>0 and margin>=0 and minimum>=1 and hi-lo>=minimum and fov>0):
+        raise ValueError('Invalid inspection domain, vehicle envelope or minimum distance')
+    return dict(inspection_x_m=[lo,hi], construction_x_m=[build_lo,build_hi],
+                minimum_distance_m=minimum, vehicle_half_length_m=half, safety_margin_m=margin,
+                clearance_m=max(half,fov/2+abs(mount))+margin)
+
+
 def _travel_plan(config, start, distance, inspection_domain=True):
     start, distance = start_values(dict(start_m=start, distance_m=distance))
     if not all(math.isfinite(x) for x in (start, distance)) or distance <= 0:
         raise ValueError('Start and distance must be finite; distance must be positive')
-    if distance < 1.:
-        raise ValueError('Minimum capture distance is 1 m')
+    limits=mission_limits(config)
+    if distance < limits['minimum_distance_m']:
+        raise ValueError(f"Minimum capture distance is {limits['minimum_distance_m']:g} m")
     t = config['tunnel']
     fov = config['camera']['fov_at_nominal_m']
-    # Effective inspection domain excludes the 1.5 m construction buffers.
-    if inspection_domain and (start < 0 or start + distance > 20 + 1e-9):
-        raise ValueError('Mission must stay within the 0–20 m range')
-    clearance = max(.65, fov / 2)
+    lo,hi=limits['inspection_x_m']
+    if inspection_domain and (start < lo or start + distance > hi + 1e-9):
+        raise ValueError(f'Mission must stay within the {lo:g}–{hi:g} m range')
+    clearance=limits['clearance_m']
     if start-clearance < t['x_min_m'] or start+distance+clearance > t['x_max_m']:
         raise ValueError('Insufficient track or camera field-of-view margin')
     c = copy.deepcopy(config)
@@ -89,8 +110,9 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     """
     from .wall_coverage import calibrated_spans, calibrated_row_footprint
     start, length = start_values(dict(start_m=start, distance_m=length))
-    if length < 1 or start < 0 or start+length > 20+1e-9:
-        raise ValueError('Wall target must be at least 1 m and lie within 0–20 m')
+    limits=mission_limits(config);lo,hi=limits['inspection_x_m']
+    if length < limits['minimum_distance_m'] or start < lo or start+length > hi+1e-9:
+        raise ValueError(f'Wall target must be at least {limits["minimum_distance_m"]:g} m within {lo:g}–{hi:g} m')
     if not all(math.isfinite(x) and x > 0 for x in (guard, grid_pitch)):
         raise ValueError('Wall planning guard and grid pitch must be positive')
     spans = calibrated_spans(config, calibration)

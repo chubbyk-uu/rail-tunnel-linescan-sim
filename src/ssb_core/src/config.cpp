@@ -151,6 +151,14 @@ Config Config::Parse(const std::string& text) {
   c.block_rows = Get<int>(storage, "block_rows", "storage.");
   c.write_queue_bytes = Get<size_t>(storage, "write_queue_bytes", "storage.");
 
+  if (const auto task=root["mission"]) {
+    Check(task["inspection_x_m"] && task["inspection_x_m"].size()==2,"mission requires two inspection bounds");
+    c.mission={{"inspection_x_m",{task["inspection_x_m"][0].as<double>(),task["inspection_x_m"][1].as<double>()}},
+               {"vehicle_half_length_m",Get<double>(task,"vehicle_half_length_m","mission.")},
+               {"safety_margin_m",Get<double>(task,"safety_margin_m","mission.")},
+               {"minimum_distance_m",Get<double>(task,"minimum_distance_m","mission.")}};
+  }
+
   if (const auto target = root["inspection"]) {
     Check(Get<std::string>(target,"schema","inspection.")=="ssb.wall_target.v1", "unsupported inspection schema");
     Check(target["target_x_m"] && target["target_x_m"].size()==2 && target["theta_rad"] && target["theta_rad"].size()==2,
@@ -167,6 +175,14 @@ Config Config::Parse(const std::string& text) {
 }
 
 void Config::Validate() const {
+  if(!mission.is_null()) {
+    const double lo=mission.at("inspection_x_m")[0],hi=mission.at("inspection_x_m")[1];
+    const double half=mission.at("vehicle_half_length_m"),margin=mission.at("safety_margin_m");
+    const double minimum=mission.at("minimum_distance_m");
+    Check(Finite({lo,hi,half,margin,minimum}) && lo<hi && half>0 && margin>=0 && minimum>=1 && hi-lo>=minimum,
+          "invalid public mission bounds or envelope");
+    Check(lo>=tunnel_x_min_m && hi<=tunnel_x_max_m,"mission bounds outside constructed tunnel");
+  }
   if (!inspection.is_null()) {
     const double x0=inspection.at("target_x_m")[0],x1=inspection.at("target_x_m")[1];
     const double a=inspection.at("theta_rad")[0],b=inspection.at("theta_rad")[1];
@@ -266,6 +282,7 @@ nlohmann::json Config::ObservableJson() const {
   j["render"] = {{"batch_rows", batch_rows}, {"debug_column_stride", debug_column_stride},
                  {"max_queued_batches", max_queued_batches}};
   j["storage"] = {{"block_rows", block_rows}};
+  if (!mission.is_null()) j["mission"] = mission;
   if (!inspection.is_null()) j["inspection"] = inspection;
   j["derived"] = {{"counts_per_rev", CountsPerRev()}, {"rows_per_rev", RowsPerRev()}};
   if(contact_enabled){j["contact"]={{"enabled",true},{"layout","front-drive/measuring-wheel-encoders"}};

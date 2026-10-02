@@ -31,6 +31,8 @@ tools/run_gz_gui.sh SESSION path/to/capture.yaml   # 其他演示目录，世界
 
 演示资产是 `local_data/stage_b/contact_demo/`，现已直接采用可迁移的完整导出包，内含 `capture.yaml`（含私密光学密钥）、`assets/` 中的光学场景及依赖、`world/world.sdf`、`spec.yaml`、`calibration.json`、`gui.config` 和 `bundle.json`，几者成套使用。运行引用全部相对；`bundle.json.dependencies` 的 `source_file` 和配方 `input_channels` 只是历史来源记录。
 
+`capture.yaml` 的公开 `mission` 段声明有效范围、车体半包络、安全余量和最短距离；管理器校验后发布给 RViz。默认 [0,20] m、0.56 m 半包络加 0.09 m 余量、最短 1 m。扩大范围时必须同时生成足够长的隧道/轨道和光学资产；修改面板范围不等于完成长隧道验收。
+
 运行流程：
 
 1. 启动前用 `ssb_optical_identity` 检查配置与标定的光学身份，不匹配就不启动 Gazebo。可用 `SSB_OPTICAL_CALIBRATION` 指定另一份标定。

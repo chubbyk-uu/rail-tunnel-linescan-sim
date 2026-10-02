@@ -259,3 +259,14 @@ TEST(Config, AssemblyHeightsAreRequiredInsteadOfGuessed) {
     EXPECT_THROW(Config::Parse(text),std::runtime_error)<<name;
   }
 }
+
+TEST(Config, PublicMissionLimitsAreValidatedWithoutChangingOpticalIdentity) {
+  auto c=Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_b.yaml");
+  const auto signature=c.OpticalSignature();
+  EXPECT_EQ(c.ObservableJson().at("mission").at("inspection_x_m"),nlohmann::json::array({0.,20.}));
+  c.tunnel_x_max_m=151.5;c.mission["inspection_x_m"]={0.,150.};
+  EXPECT_NO_THROW(c.Validate());EXPECT_EQ(c.OpticalSignature(),signature);
+  c.mission["minimum_distance_m"]=.5;EXPECT_THROW(c.Validate(),std::runtime_error);
+  c.mission["minimum_distance_m"]=1.;c.mission["inspection_x_m"]={0.,200.};
+  EXPECT_THROW(c.Validate(),std::runtime_error);
+}

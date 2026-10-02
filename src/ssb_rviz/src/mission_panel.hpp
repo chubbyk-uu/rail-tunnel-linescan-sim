@@ -34,6 +34,7 @@ class MissionPanel : public rviz_common::Panel {
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr review_subscription_;
   QString pending_, command_error_;
   bool connected_ = false;
+  bool limits_ready_ = false;
   double pitch_ = 0.;
   QString last_state_, review_dir_;
 };

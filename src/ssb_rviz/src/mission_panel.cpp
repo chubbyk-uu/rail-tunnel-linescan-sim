@@ -17,6 +17,8 @@
 #include <QRegularExpression>
 #include <QDockWidget>
 #include <QMainWindow>
+#include <QSignalBlocker>
+#include <cmath>
 
 namespace ssb_rviz {
 MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
@@ -26,8 +28,8 @@ MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
   mode_->addItem("Vehicle travel", "travel"); mode_->addItem("Wall coverage", "wall");
   form->addRow("Task mode", mode_);
   start_ = new QDoubleSpinBox; distance_ = new QDoubleSpinBox;
-  start_->setRange(0, 20); start_->setValue(3); start_->setDecimals(3);
-  distance_->setRange(1, 20); distance_->setValue(3); distance_->setDecimals(3);
+  start_->setRange(0, 0); start_->setDecimals(3);
+  distance_->setRange(0, 0); distance_->setDecimals(3);
   start_->setSuffix(" m"); distance_->setSuffix(" m");
   start_->setToolTip("Vehicle is placed here when you click Start.");
   start_->setObjectName("mission_start"); distance_->setObjectName("mission_distance");
@@ -119,6 +121,9 @@ void MissionPanel::saveReview(const QString& name) {
     {"command_timeout_ms", command_watchdog_->interval()},
     {"command_timer_active", command_watchdog_->isActive()},
     {"task_mode", mode_->currentData().toString()}, {"extent", extent_->text()}};
+  result["start_min_m"]=start_->minimum();result["start_max_m"]=start_->maximum();
+  result["distance_min_m"]=distance_->minimum();result["distance_max_m"]=distance_->maximum();
+  result["limits_ready"]=limits_ready_;
   const auto mode_center = mode_->mapToGlobal(mode_->rect().center());
   result["mode_center_x"] = mode_center.x(); result["mode_center_y"] = mode_center.y();
   const auto begin_center = begin_->mapToGlobal(begin_->rect().center());
@@ -156,6 +161,17 @@ void MissionPanel::showStatus(const QString& text) {
   const auto object = doc.object(); const QString state = object["state"].toString();
   last_state_ = state;
   connected_ = true; watchdog_->start();
+  const auto limits=object["mission_limits"].toObject();
+  const auto domain=limits["inspection_x_m"].toArray();
+  const double minimum=limits["minimum_distance_m"].toDouble();
+  if(domain.size()==2 && std::isfinite(domain[0].toDouble()) && std::isfinite(domain[1].toDouble()) &&
+     std::isfinite(minimum) && minimum>=1 && domain[1].toDouble()-domain[0].toDouble()>=minimum) {
+    const QSignalBlocker block_start(start_),block_distance(distance_);
+    start_->setRange(domain[0].toDouble(),domain[1].toDouble()-minimum);
+    distance_->setRange(minimum,domain[1].toDouble()-domain[0].toDouble());
+    if(!limits_ready_) {start_->setValue(3);distance_->setValue(3);}
+    limits_ready_=true;
+  } else {limits_ready_=false;}
   pitch_ = object["scan_pitch_m"].toDouble(); updateExtent();
   const auto task = object["task"].toObject();
   if ((state == "starting" || state == "running" || state == "paused" || state == "draining") && task["mode"].toString() == "wall") {
@@ -186,7 +202,7 @@ void MissionPanel::showStatus(const QString& text) {
 
 void MissionPanel::updateControls() {
   const bool terminal = last_state_ == "idle" || last_state_ == "complete" || last_state_ == "stopped" || last_state_ == "failed";
-  const bool available = connected_ && pending_.isEmpty();
+  const bool available = connected_ && limits_ready_ && pending_.isEmpty();
   start_->setEnabled(terminal && available); distance_->setEnabled(terminal && available);
   mode_->setEnabled(terminal && available);
   begin_->setEnabled(terminal && available); pause_->setEnabled(last_state_ == "running" && available);

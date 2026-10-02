@@ -28,7 +28,7 @@ from gz.msgs10.boolean_pb2 import Boolean
 from gz.msgs10.stringmsg_pb2 import StringMsg
 from gz.msgs10.world_control_pb2 import WorldControl
 
-from .mission_plan import prepare, plan, start_values, wall_plan
+from .mission_plan import prepare, plan, start_values, wall_plan, mission_limits
 from .mission_preview import Preview, pose_values, transform
 from .mission_image_preview import RawImagePreview
 from .optical_identity import check_calibration
@@ -53,6 +53,7 @@ class MissionManager(Node):
         self.data_root.mkdir(parents=True, exist_ok=True)
         self.demo = Path(args.demo).resolve()
         self.config = yaml.safe_load((self.demo/'capture.yaml').read_text())
+        self.limits = mission_limits(self.config)
         check_calibration(self.demo/'capture.yaml', self.demo/'calibration.json')
         self.root = Path(args.output_root).resolve(); self.root.mkdir(parents=True, exist_ok=True)
         self.ownership = (self.data_root/'mission_manager.lock').open('a')
@@ -301,6 +302,7 @@ class MissionManager(Node):
             latest = dict(self.latest); state = self.state
             capture = latest.get('capture', {})
             status = dict(state=state, error=self.error, task=self.task,
+                          mission_limits=self.limits,
                           scan_pitch_m=self.config['motion']['advance_per_rev_m'],
                           distance_estimated_m=latest['s_hat'], speed_m_s=latest['speed'],
                           scan_rad=latest['scan'], scan_rate_rad_s=latest['scan_rate'],

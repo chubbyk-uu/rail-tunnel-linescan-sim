@@ -52,3 +52,10 @@ acceptance: {valid_x_m: [0.0, 20.0]}
 storage:
   block_rows: 4096
   write_queue_bytes: 134217728
+
+# Public nominal task envelope: rear measuring wheel at -0.52 m, radius 0.04 m.
+mission:
+  inspection_x_m: [0.0, 20.0]
+  vehicle_half_length_m: 0.56
+  safety_margin_m: 0.09
+  minimum_distance_m: 1.0

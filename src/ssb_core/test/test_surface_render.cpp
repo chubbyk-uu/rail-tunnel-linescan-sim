@@ -461,6 +461,7 @@ TEST_F(SurfaceFixture, LongDistanceLocalFramesMatchSourceMeshAndReplayAcrossBoun
   std::vector<uint8_t> baseline;
   for(double shift:{0.,100.,150.}) {
     c=base_config;c.tunnel_x_min_m+=shift;c.tunnel_x_max_m+=shift;c.start_x_m+=shift;
+    c.mission["inspection_x_m"]={shift,shift+20.};
     std::istringstream input(original_mesh);std::ofstream mesh(root/"wall.obj");mesh.precision(17);
     std::string line;
     while(std::getline(input,line)) {

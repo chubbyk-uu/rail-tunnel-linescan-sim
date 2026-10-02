@@ -20,6 +20,7 @@ from std_msgs.msg import String
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--limits-only',action='store_true',help='quick configured-range regression')
     args = parser.parse_args()
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
@@ -32,7 +33,8 @@ def main():
     receiver = node.create_subscription(String, '/ssb/mission/command',
         lambda message: commands.append(json.loads(message.data)), 10)
     state = dict(state='idle', scan_pitch_m=.6, scan_rad=3.141592653589793,
-                 output='', command_result={}, error='', task={})
+                 output='', command_result={}, error='', task={},
+                 mission_limits=dict(inspection_x_m=[0.,20.],minimum_distance_m=1.))
     publishing = [True]
     timer = node.create_timer(.1, lambda: status.publish(String(data=json.dumps(state)))
                              if publishing[0] else None)
@@ -79,6 +81,21 @@ def main():
             initial = review('initial', lambda value: value['connected'] and value['begin_enabled'])
             assert initial['command_timeout_ms'] == 90000
             assert initial['task_mode'] == 'travel'
+            assert initial['start_max_m']==19. and initial['distance_max_m']==20.
+            if args.limits_only:
+                state['mission_limits']['inspection_x_m']=[-5.,150.]
+                expanded=review('expanded',lambda v:v['start_max_m']==149.)
+                assert expanded['start_min_m']==-5. and expanded['distance_max_m']==155.
+                state['mission_limits']['minimum_distance_m']=2.
+                restricted=review('restricted',lambda v:v['distance_min_m']==2.)
+                assert restricted['start_max_m']==148.
+                state.pop('mission_limits')
+                invalid=review('invalid',lambda v:not v['limits_ready'])
+                assert not invalid['begin_enabled']
+                (output/'report.json').write_text(json.dumps(dict(status='passed',initial=initial,
+                    expanded=expanded,restricted=restricted,invalid=invalid),indent=2)+'\n')
+                print('Panel configured limits: default, 150 m, minimum and missing configuration passed')
+                return
             # WSLg can consume the first click to activate the window.
             retry_at = [0.]
             def select_wall(value):
