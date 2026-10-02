@@ -21,6 +21,7 @@
 #include "ssb_core/pipeline.hpp"
 #include "assembly_check.hpp"
 #include "control_math.hpp"
+#include "capture_progress.hpp"
 
 namespace ssb_gazebo {
 
@@ -118,6 +119,8 @@ class ScanSystem final : public gz::sim::System,
       if (const char* world = std::getenv("SSB_WORLD")) options.inputs["world"] = ssb::FileIdentity(world);
       options.planned_end_s = config_.profile.back()[0];
       pipeline_ = std::make_unique<ssb::Pipeline>(config_, std::move(renderer), options);
+      if (const char* topic = std::getenv("SSB_MISSION_STATUS_TOPIC"))
+        capture_progress_ = std::make_unique<CaptureProgress>(*pipeline_, session_, std::string(topic)+"/capture");
       std::cout << "[ssb] imaging session " << session_ << std::endl;
     } catch (const std::exception& e) {
       std::cerr << "[ssb] refusing to run: " << e.what() << std::endl;
@@ -189,6 +192,7 @@ class ScanSystem final : public gz::sim::System,
   std::string config_path_, session_;
   std::unique_ptr<ssb::Pipeline> pipeline_;
   std::future<nlohmann::json> completion_;
+  std::unique_ptr<CaptureProgress> capture_progress_;  // destroyed before pipeline_
   gz::sim::Joint carriage_, scan_, wheel_;
   std::vector<gz::sim::Joint> follower_wheels_;
   double step_ = 0, scan_rate_ = 0, wheel_rate_ = 0, car_rate_ = 0;

@@ -1,4 +1,4 @@
-"""Bounded shutdown for process groups owned by the mission manager."""
+"""Progress-aware drain, then bounded escalation for owned process groups."""
 import math
 import os
 import signal
@@ -31,10 +31,18 @@ def positive_timeout(value):
     return value
 
 
-def stop_group(process, drain_s=180., terminate_s=10., kill_s=5.):
+def stop_group(process, drain_s=180., terminate_s=10., kill_s=5., *,
+               progress=None, deadline_changed=None):
+    """SIGINT waits at most drain_s without completed work.
+
+    progress returns a monotonic work counter, not a heartbeat. TERM/KILL have
+    fixed deadlines regardless of progress. No disk polling is needed.
+    """
     limits = [positive_timeout(v) for v in (drain_s, terminate_s, kill_s)]
     started = time.monotonic()
     sent = []
+    extensions = 0
+    previous = progress() if progress else None
     for sig, timeout in zip((signal.SIGINT, signal.SIGTERM, signal.SIGKILL), limits):
         if process.poll() is not None and not _group_running(process.pid):
             break
@@ -44,14 +52,23 @@ def stop_group(process, drain_s=180., terminate_s=10., kill_s=5.):
         except ProcessLookupError:
             pass
         deadline = time.monotonic()+timeout
+        if deadline_changed: deadline_changed(deadline)
         while time.monotonic() < deadline:
+            if sig == signal.SIGINT and progress:
+                current = progress()
+                if current is not None and (previous is None or current > previous):
+                    previous = current
+                    deadline = time.monotonic()+timeout
+                    extensions += 1
+                    if deadline_changed: deadline_changed(deadline)
             if process.poll() is None:
-                try: process.wait(timeout=max(.001, deadline-time.monotonic()))
-                except subprocess.TimeoutExpired: break
+                try: process.wait(timeout=min(.1, max(.001, deadline-time.monotonic())))
+                except subprocess.TimeoutExpired: continue
             if not _group_running(process.pid): break
             time.sleep(.05)
         if process.poll() is not None and not _group_running(process.pid): break
     if process.poll() is None or _group_running(process.pid):
         raise TimeoutError(f'owned process {process.pid} did not exit after SIGKILL')
     return dict(returncode=process.returncode, signals=sent,
-                forced=any(s != 'SIGINT' for s in sent), elapsed_s=time.monotonic()-started)
+                forced=any(s != 'SIGINT' for s in sent), elapsed_s=time.monotonic()-started,
+                progress_extensions=extensions)

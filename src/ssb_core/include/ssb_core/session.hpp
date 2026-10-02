@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -29,7 +30,8 @@ struct IoStatistics {
 // Append-only table of fixed-size records; Close() returns its manifest entry.
 class TableWriter {
  public:
-  TableWriter(std::filesystem::path path, nlohmann::json dtype, size_t record_size);
+  TableWriter(std::filesystem::path path, nlohmann::json dtype, size_t record_size,
+              std::function<void()> progress = {});
   void Append(const void* records, size_t count);
   template <class T>
   void Append(const std::vector<T>& records) {
@@ -47,13 +49,15 @@ class TableWriter {
   Sha256Stream hash_;
   bool closed_ = false;
   IoStatistics statistics_;
+  std::function<void()> progress_;
 };
 
 // Raw pixel rows in fixed-size blocks (the tail block may be shorter). Each block is
 // written to a temporary file, read back and hash-checked, then renamed into place.
 class BlockWriter {
  public:
-  BlockWriter(std::filesystem::path directory, int width, int block_rows);
+  BlockWriter(std::filesystem::path directory, int width, int block_rows,
+              std::function<void()> progress = {});
   void Append(const uint8_t* rows, size_t count, int64_t first_sequence);
   nlohmann::json Close();
   const IoStatistics& Statistics() const { return statistics_; }
@@ -71,6 +75,7 @@ class BlockWriter {
   nlohmann::json blocks_ = nlohmann::json::array();
   bool closed_ = false;
   IoStatistics statistics_;
+  std::function<void()> progress_;
 };
 
 // Build-time and run-time identity of the code producing a session (DESIGN.md §12.1).

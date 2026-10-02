@@ -20,6 +20,7 @@
 #include "ssb_core/session.hpp"
 #include "ssb_core/optix_renderer.hpp"
 #include "control_math.hpp"
+#include "capture_progress.hpp"
 #include "assembly_check.hpp"
 #include "world_check.hpp"
 
@@ -225,6 +226,8 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     ssb::PipelineOptions options{session_,{"gz-contact",config_path_},"gazebo_contact"};options.inputs["config"]=ssb::FileIdentity(config_path_);
     if(const char* p=std::getenv("SSB_WORLD"))options.inputs["world"]=ssb::FileIdentity(p);
     options.planned_end_s=c_.profile.back()[0];pipeline_=std::make_unique<ssb::Pipeline>(c_,std::move(renderer),options);
+    if (const char* topic = std::getenv("SSB_MISSION_STATUS_TOPIC"))
+      capture_progress_ = std::make_unique<CaptureProgress>(*pipeline_, session_, std::string(topic)+"/capture");
   }
   ssb::Config c_;gz::sim::Joint enc_[2],drive_[2],slide_[2],rear_[2],scan_;gz::sim::Link base_;
   std::vector<gz::sim::Joint> springs_;
@@ -234,6 +237,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
   std::chrono::steady_clock::time_point last_status_{};
   std::string config_path_,session_,log_root_,runtime_error_;std::ofstream obs_,truth_;
   std::unique_ptr<ssb::Pipeline> pipeline_;std::future<nlohmann::json> completion_;
+  std::unique_ptr<CaptureProgress> capture_progress_;  // destroyed before pipeline_
   ScanServo servo_;
   double diameter_[2]{},drive_diameter_=0,settle_=2,counts_per_rad_=0,torque_[2]{},s_hat_=0,target_theta_=0;
   long long count_[2]{},zero_[2]{};bool started_=false,finished_=false,dynamics_only_=false;

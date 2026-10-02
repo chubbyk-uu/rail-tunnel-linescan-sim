@@ -60,6 +60,9 @@ struct Pipeline::Impl {
   Clock::time_point first_push_wall;
   std::atomic<double> latest_written_center{0};
   std::atomic<int64_t> rows_generated{0}, rows_persisted{0};
+  // Completed work only: idle heartbeats must not keep a stuck drain alive.
+  std::atomic<uint64_t> activity_sequence{0};
+  std::atomic<bool> write_done{false}, finalizing{false}, complete{false};
   Clock::time_point start_wall, finish_called_wall;
   double pushed_at_finish = 0, written_at_finish = 0;
   bool finish_called = false;
@@ -177,20 +180,25 @@ nlohmann::json Pipeline::Progress() const {
           {"rows_saved", s.rows_persisted.load()},
           {"sim_time_pushed", s.latest_pushed.load()},
           {"sim_time_written", s.latest_written_center.load()},
+          {"activity_sequence", s.activity_sequence.load()},
+          {"phase", s.complete ? "complete" : s.finalizing ? "finalizing" :
+                    s.write_done ? "joining" : s.render_done ? "syncing" :
+                    s.input_finished ? "draining" : "capturing"},
           {"failed", s.failed || !s.producer_error.empty()}};
 }
 
 void Pipeline::Impl::TimingLoop() {
   try {
     const auto dir = root / "metadata", eval = root / "evaluation";
-    TableWriter pose_table(eval / "pose_stream.bin", DtypeJson(PoseSampleFields()), sizeof(PoseSample));
-    TableWriter truth_table(eval / "row_truth.bin", DtypeJson(RowTruthFields()), sizeof(RowTruthRecord));
-    TableWriter rows_table(dir / "rows.bin", DtypeJson(RowFields()), sizeof(RowRecord));
-    TableWriter scan_table(dir / "scan_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord));
-    TableWriter odo_table(dir / "odometer_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord));
-    TableWriter right_odo_table(dir / "odometer_right_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord));
-    TableWriter gate_table(dir / "gate_events.bin", DtypeJson(GateFields()), sizeof(GateRecord));
-    TableWriter drop_table(dir / "dropped_rows.bin", DtypeJson(DroppedRowFields()), sizeof(DroppedRowRecord));
+    const auto activity = [this] { ++activity_sequence; };
+    TableWriter pose_table(eval / "pose_stream.bin", DtypeJson(PoseSampleFields()), sizeof(PoseSample), activity);
+    TableWriter truth_table(eval / "row_truth.bin", DtypeJson(RowTruthFields()), sizeof(RowTruthRecord), activity);
+    TableWriter rows_table(dir / "rows.bin", DtypeJson(RowFields()), sizeof(RowRecord), activity);
+    TableWriter scan_table(dir / "scan_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord), activity);
+    TableWriter odo_table(dir / "odometer_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord), activity);
+    TableWriter right_odo_table(dir / "odometer_right_edges.bin", DtypeJson(EdgeFields()), sizeof(EdgeRecord), activity);
+    TableWriter gate_table(dir / "gate_events.bin", DtypeJson(GateFields()), sizeof(GateRecord), activity);
+    TableWriter drop_table(dir / "dropped_rows.bin", DtypeJson(DroppedRowFields()), sizeof(DroppedRowRecord), activity);
     TimingEngine engine(config);
     TimingOutput out;
     std::vector<RowJob> batch;
@@ -250,6 +258,7 @@ void Pipeline::Impl::TimingLoop() {
         pose_table.Append(&p, 1);
         engine.Push(p, out);
         if (!drain()) return;
+        ++activity_sequence;
       }
       if (finished) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -278,6 +287,7 @@ void Pipeline::Impl::TimingLoop() {
                     {"dropped_reverse", st.dropped_reverse}, {"dropped_overrun", st.dropped_overrun},
                     {"dropped_stream_end", st.dropped_stream_end}};
     timing_done = true;
+    ++activity_sequence;
     cv.notify_all();
   } catch (...) {
     Fail(std::current_exception());
@@ -303,6 +313,7 @@ void Pipeline::Impl::RenderLoop() {
       b.last_center = jobs.back().record.t_center;
       const auto t0 = Clock::now();
       renderer->Render(jobs, b.pixels, b.hits);
+      ++activity_sequence;
       const double dt = Seconds(t0, Clock::now());
       if (config.debug_delay_per_batch_s > 0)
         std::this_thread::sleep_for(std::chrono::duration<double>(config.debug_delay_per_batch_s));
@@ -322,6 +333,7 @@ void Pipeline::Impl::RenderLoop() {
     }
     std::lock_guard<std::mutex> lock(mutex);
     render_done = true;
+    ++activity_sequence;
     cv.notify_all();
   } catch (...) {
     Fail(std::current_exception());
@@ -330,11 +342,12 @@ void Pipeline::Impl::RenderLoop() {
 
 void Pipeline::Impl::WriteLoop() {
   try {
-    BlockWriter blocks(root / "raw", config.width, config.block_rows);
+    const auto activity = [this] { ++activity_sequence; };
+    BlockWriter blocks(root / "raw", config.width, config.block_rows, activity);
     const size_t columns = debug_columns.size();
     nlohmann::json dtype = nlohmann::json::array({{"sequence", "<i8"}});
     if (columns) dtype.push_back({"hits", "<f8", {columns, 2}});
-    TableWriter hit_table(root / "evaluation" / "debug_hits.bin", dtype, 8 + columns * 16);
+    TableWriter hit_table(root / "evaluation" / "debug_hits.bin", dtype, 8 + columns * 16, activity);
     std::vector<unsigned char> record(8 + columns * 16);
     for (;;) {
       RenderedBatch b;
@@ -361,6 +374,7 @@ void Pipeline::Impl::WriteLoop() {
       hit_table.Append(record.data(), b.rows);
       const auto t1 = Clock::now();
       latest_written_center = b.last_center;
+      ++activity_sequence;
       std::lock_guard<std::mutex> lock(mutex);
       write_seconds += Seconds(t0, t1);
       ++batches;
@@ -376,6 +390,8 @@ void Pipeline::Impl::WriteLoop() {
     table_io.Merge(hit_table.Statistics());
     raw_index = raw;
     evaluation_tables["debug_hits"] = hits;
+    write_done = true;
+    ++activity_sequence;
   } catch (...) {
     Fail(std::current_exception());
   }
@@ -401,12 +417,15 @@ nlohmann::json Pipeline::Wait() {
                                               {"error", what}, {"pose_source", s.options.pose_source}});
     std::rethrow_exception(s.error);
   }
+  s.finalizing = true;
+  ++s.activity_sequence;
   try {
     const int64_t rows = s.raw_index.at("rows").get<int64_t>();
     const double sim_first = s.first_pushed;
     WriteJsonAtomic(s.root / "metadata" / "manifest.json", s.metadata_tables);
     WriteJsonAtomic(s.root / "evaluation" / "manifest.json", s.evaluation_tables);
     WriteJsonAtomic(s.root / "raw" / "index.json", s.raw_index);
+    ++s.activity_sequence;
     // "complete" means every sample that arrived is imaged and on disk; whether the
     // planned motion was actually run is reported separately.
     const double planned = s.options.planned_end_s;
@@ -438,15 +457,22 @@ nlohmann::json Pipeline::Wait() {
         if (!entry.is_regular_file()) continue;
         files[entry.path().lexically_relative(s.root).generic_string()] = Sha256File(entry.path());
         const auto begin=Clock::now();SyncFile(entry.path());
+        ++s.activity_sequence;
         const double seconds=Seconds(begin,Clock::now());
         s.physical_io.sync_seconds+=seconds;
         s.physical_io.longest_sync_s=std::max(s.physical_io.longest_sync_s,seconds);
         ++s.physical_io.files;s.physical_io.bytes+=entry.file_size();
       }
-      for(auto directory=directories.rbegin();directory!=directories.rend();++directory) SyncDirectory(*directory);
+      for(auto directory=directories.rbegin();directory!=directories.rend();++directory) {
+        SyncDirectory(*directory);
+        ++s.activity_sequence;
+      }
     }
     // Persist directory entries for initial files, snapshots and the session itself.
-    for(const char* name:{"metadata","evaluation","config","logs"}) SyncDirectory(s.root/name);
+    for(const char* name:{"metadata","evaluation","config","logs"}) {
+      SyncDirectory(s.root/name);
+      ++s.activity_sequence;
+    }
     SyncDirectory(s.root);
     SyncDirectory(s.root.parent_path().empty() ? "." : s.root.parent_path());
     const auto end=Clock::now();
@@ -495,6 +521,8 @@ nlohmann::json Pipeline::Wait() {
       summary["motion"]["complete"] = false;
     }
     WriteJsonAtomic(s.root / "session.json", summary);
+    s.complete = true;
+    ++s.activity_sequence;
     if (!s.producer_error.empty()) throw std::runtime_error(s.producer_error);
     return summary;
   } catch(const std::exception& error) {

@@ -61,6 +61,8 @@ class MissionManager(Node):
         self.lock = threading.RLock()
         self.state = 'idle'; self.error = ''; self.task = {}; self.session = None
         self.inputs = None
+        self.drain_activity = 0
+        self.shutdown_deadline = 0.
         self.server = None; self.gui = None; self.log_handles = []
         self.commands = queue.Queue(maxsize=16); self.seen = deque(maxlen=256)
         self.command_result = {}; self.events = []
@@ -89,6 +91,8 @@ class MissionManager(Node):
         self.status_topic = '/ssb/mission/contact_status'
         if not self.gz.subscribe(StringMsg, self.status_topic, self.receive):
             raise RuntimeError('Gazebo status subscription failed')
+        if not self.gz.subscribe(StringMsg, self.status_topic+'/capture', self.receive_capture):
+            raise RuntimeError('Gazebo capture progress subscription failed')
         self.closing = threading.Event()
         self.worker = threading.Thread(target=self.work, daemon=True); self.worker.start()
         self.timer = self.create_timer(1/30, self.tick)   # TF and status at the RViz frame rate
@@ -123,6 +127,21 @@ class MissionManager(Node):
                 self.error = error
                 if identifier:
                     self.command_result = dict(id=identifier, ok=False, error=error)
+
+    def receive_capture(self, message):
+        try:
+            data = json.loads(message.data)
+            capture = data['capture']
+            sequence = capture['activity_sequence']
+            if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
+                raise ValueError('Invalid capture activity counter')
+            with self.lock:
+                if self.session is None or data.get('session') != str(self.session): return
+                if sequence < self.drain_activity: return  # stale delivery
+                self.drain_activity = sequence
+                self.latest['capture'] = capture
+        except (ValueError, KeyError, TypeError) as e:
+            self.get_logger().error(str(e))
 
     def transition(self, state):
         with self.lock:
@@ -159,6 +178,8 @@ class MissionManager(Node):
             self.task = dict(start_m=start, distance_m=distance, mode=mode)
             self.events = []
             self.error = ''
+            self.drain_activity = 0
+            self.shutdown_deadline = 0.
             self.latest = initial_state(self.config,
                 [start, 0., self.config['robot']['base_reference_z_m'], 0., 0., 0., 1.])
         if mode == 'wall':
@@ -286,8 +307,16 @@ class MissionManager(Node):
                 with self.lock: self.command_result = dict(id=command['id'], ok=False, error=str(e))
 
     def stop_server(self):
+        def progress():
+            with self.lock: return self.drain_activity
+        def deadline_changed(deadline):
+            with self.lock:
+                # close() must allow the same progress lease plus escalation.
+                self.shutdown_deadline = max(self.shutdown_deadline,
+                    deadline+self.args.terminate_timeout_s+self.args.kill_timeout_s+5.)
         result = stop_group(self.server, self.args.drain_timeout_s,
-                            self.args.terminate_timeout_s, self.args.kill_timeout_s)
+                            self.args.terminate_timeout_s, self.args.kill_timeout_s,
+                            progress=progress, deadline_changed=deadline_changed)
         self.events.append(dict(shutdown=result, wall_monotonic_s=time.monotonic()))
         return result
 
@@ -351,7 +380,12 @@ class MissionManager(Node):
     def close(self):
         self.closing.set()
         bound = 70+self.args.drain_timeout_s+self.args.terminate_timeout_s+self.args.kill_timeout_s
-        self.worker.join(timeout=bound)
+        initial_deadline = time.monotonic()+bound
+        while self.worker.is_alive():
+            with self.lock: deadline = max(initial_deadline, self.shutdown_deadline)
+            remaining = deadline-time.monotonic()
+            if remaining <= 0: break
+            self.worker.join(timeout=min(1., remaining))
         if self.worker.is_alive():
             self.fail(RuntimeError('Mission worker exceeded shutdown deadline'))
             # A stuck Python preparation operation must not keep the process alive.
@@ -374,7 +408,8 @@ def main():
     p.add_argument('--data-root', default='local_data', help='writable assets/cache/lock root; Linux filesystem preferred')
     p.add_argument('--gz-gui', action='store_true')
     p.add_argument('--dynamics-only', action='store_true', help='test mode, NO image acquisition')
-    p.add_argument('--drain-timeout-s', type=positive_timeout, default=180.)
+    p.add_argument('--drain-timeout-s', type=positive_timeout, default=180.,
+                   help='maximum seconds without completed capture/commit work during drain')
     p.add_argument('--terminate-timeout-s', type=positive_timeout, default=10.)
     p.add_argument('--kill-timeout-s', type=positive_timeout, default=5.)
     args = p.parse_args()

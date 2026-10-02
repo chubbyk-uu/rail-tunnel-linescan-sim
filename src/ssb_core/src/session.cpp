@@ -93,8 +93,10 @@ void WriteJsonAtomic(const std::filesystem::path& path, const nlohmann::json& va
   WriteTextAtomic(path, value.dump(2) + "\n");
 }
 
-TableWriter::TableWriter(std::filesystem::path path, nlohmann::json dtype, size_t record_size)
-    : path_(std::move(path)), dtype_(std::move(dtype)), record_size_(record_size) {
+TableWriter::TableWriter(std::filesystem::path path, nlohmann::json dtype, size_t record_size,
+                         std::function<void()> progress)
+    : path_(std::move(path)), dtype_(std::move(dtype)), record_size_(record_size),
+      progress_(std::move(progress)) {
   out_.open(path_, std::ios::binary | std::ios::trunc);
   if (!out_) throw std::runtime_error("cannot create " + path_.string());
 }
@@ -120,23 +122,27 @@ nlohmann::json TableWriter::Close() {
   out_.flush();
   out_.close();
   if (out_.fail()) throw std::runtime_error("close failed: " + path_.string());
+  if (progress_) progress_();
   const double flush_seconds=Elapsed(flush_begin);
   statistics_.write_seconds+=flush_seconds;
   statistics_.longest_write_s=std::max(statistics_.longest_write_s,flush_seconds);
   const std::string digest = hash_.Final();
   auto begin=Clock::now();
   if (Sha256File(path_) != digest) throw std::runtime_error("read-back hash mismatch: " + path_.string());
+  if (progress_) progress_();
   statistics_.readback_seconds=Elapsed(begin);
   begin=Clock::now();SyncFile(path_);
+  if (progress_) progress_();
   statistics_.sync_seconds=statistics_.longest_sync_s=Elapsed(begin);
   statistics_.files=1;
   return {{"file", path_.filename().string()}, {"dtype", dtype_}, {"record_size", record_size_},
           {"count", count_}, {"sha256", digest}};
 }
 
-BlockWriter::BlockWriter(std::filesystem::path directory, int width, int block_rows)
+BlockWriter::BlockWriter(std::filesystem::path directory, int width, int block_rows,
+                         std::function<void()> progress)
     : dir_(std::move(directory)), width_(width), block_rows_(block_rows),
-      buffer_(static_cast<size_t>(width) * block_rows) {}
+      buffer_(static_cast<size_t>(width) * block_rows), progress_(std::move(progress)) {}
 
 void BlockWriter::Append(const uint8_t* rows, size_t count, int64_t first_sequence) {
   if (closed_) throw std::logic_error("append to closed block writer");
@@ -186,11 +192,13 @@ nlohmann::json BlockWriter::Close() {
   // Sync once per completed block at the task boundary, never per row/preview.
   for(const auto& block:blocks_) {
     const auto begin=Clock::now();SyncFile(dir_/block.at("file").get<std::string>());
+    if (progress_) progress_();
     const double seconds=Elapsed(begin);
     statistics_.sync_seconds+=seconds;
     statistics_.longest_sync_s=std::max(statistics_.longest_sync_s,seconds);
   }
   const auto begin=Clock::now();SyncDirectory(dir_);
+  if (progress_) progress_();
   statistics_.sync_seconds+=Elapsed(begin);
   closed_ = true;
   return {{"schema", "ssb.raw_blocks.v1"}, {"width", width_}, {"block_rows", block_rows_},

@@ -179,3 +179,21 @@ TEST(Persistence, PayloadsAndTheirDirectoriesPrecedeTheCompleteMarker) {
   EXPECT_GT(summary.at("performance").at("io").at("raw").at("bytes").get<size_t>(),0u);
   std::filesystem::remove_all(root);
 }
+
+TEST(Persistence, DurableCommitReportsWorkWhenSavedRowsDoNotChange) {
+  const auto root=std::filesystem::temp_directory_path()/("ssb_sync_progress_"+std::to_string(getpid()));
+  std::filesystem::remove_all(root);
+  std::filesystem::create_directories(root);
+  std::vector<int64_t> saved;
+  ssb::BlockWriter* writer=nullptr;
+  ssb::BlockWriter blocks(root,8,2,[&] { saved.push_back(writer->RowsPersisted()); });
+  writer=&blocks;
+  std::vector<uint8_t> pixels(8*12,42);
+  blocks.Append(pixels.data(),12,0);
+  ASSERT_EQ(blocks.RowsPersisted(),12);
+  const auto manifest=blocks.Close();
+  EXPECT_EQ(manifest.at("rows"),12);
+  ASSERT_GT(saved.size(),1u);
+  for(const auto rows:saved) EXPECT_EQ(rows,12);
+  std::filesystem::remove_all(root);
+}
