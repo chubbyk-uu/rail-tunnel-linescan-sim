@@ -273,7 +273,7 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory sessions/d1_3m_NEW
 
 浏览器打开 `http://localhost:8765/review.html` 查看初始展开。要查看匹配诊断，可将服务器目录换成 `sessions/d2_3m_NEW`。D2 的局部对齐图用于诊断对应点，尚不是全局优化后的成果。
 
-D1 默认使用 CUDA；可显式选择 `--backend cpu`，不会在 CUDA 失败时偷偷回退。处理输出目录必须是新的；当前 D1 的 3 米浮点缓存和展开结果约 11.91 GiB，不宜直接按原图大小估算重建所需磁盘空间。独立光学校正导出及验证命令见 [阶段 B §6](docs/STAGE_B.md#6-光学标定与校正) 和 [阶段 D](docs/STAGE_D.md)。
+D1 默认使用 CUDA；可显式选择 `--backend cpu`，不会在 CUDA 失败时偷偷回退。处理输出目录必须是新的。当前 v2 按需读取原图、不保存原始列浮点缓存：3 米默认展开产物约 25 MB，20 米约 137 MB；只有显式选择 `--mosaic full` 才另存全分辨率图，3 米另加约 2.4 GiB。后续匹配仍需要相关原图块，搬家后用 D2 的 `--raw` 指定原图目录；不能只保留小型展开产物就删除原始采集。独立光学校正导出及验证命令见 [阶段 B §6](docs/STAGE_B.md#6-光学标定与校正) 和 [阶段 D](docs/STAGE_D.md)。
 
 ## 性能与资源
 
