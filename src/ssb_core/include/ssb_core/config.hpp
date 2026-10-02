@@ -33,6 +33,7 @@ struct Config {
   double line_rate_hz = 0, advance_per_rev_m = 0;
   double start_theta_rad = 0, start_x_m = 0, sample_period_s = 0;
   std::vector<std::array<double, 2>> profile;  // [time_s, speed factor]
+  nlohmann::json inspection;  // requested wall target, public planning input; never true coverage
 
   bool contact_enabled=false;
   double odo_left_calibrated=0,odo_right_calibrated=0,odo_left_true=0,odo_right_true=0;

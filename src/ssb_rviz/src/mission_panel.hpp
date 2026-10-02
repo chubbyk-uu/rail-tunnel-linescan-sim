@@ -3,6 +3,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <QDoubleSpinBox>
+#include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QTimer>
@@ -23,6 +24,8 @@ class MissionPanel : public rviz_common::Panel {
   void updateControls();
   void saveReview(const QString& name);
   QDoubleSpinBox *start_, *distance_;
+  QComboBox *mode_;
+  QLabel *start_label_, *distance_label_;
   QLabel *extent_, *status_, *progress_, *output_, *error_;
   QPushButton *begin_, *pause_, *resume_, *stop_;
   QTimer *watchdog_, *command_watchdog_;

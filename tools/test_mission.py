@@ -189,6 +189,19 @@ def main():
         assert latest['state'] == 'complete', latest
         fourth = Path(latest['output']); report['checks']['three_m_travel'] = verify(fourth)
         report['checks']['three_m_smoke'] = replay_and_validate(fourth, 'three_m_replay')['acceptance']
+        assert command('start', start_m=3., distance_m=3., mode='wall')['ok']
+        wait(lambda: latest['state'] in ('complete', 'failed'))
+        assert latest['state'] == 'complete', latest
+        wall = Path(latest['output']); report['checks']['three_m_wall'] = verify(wall)
+        assert latest['task']['target_x_m'] == [3., 6.]
+        assert latest['task']['start_m'] < 3. and latest['task']['end_m'] > 6.
+        from ssb_tools.wall_coverage import inspect_session
+        coverage = inspect_session(wall, repo/'local_data/stage_b/contact_demo/calibration.json',
+                                   wall/'reconstruction/coverage')
+        assert coverage['nominal_complete'] and coverage['missing_pixels'] == 0
+        report['checks']['wall_coverage'] = {k: coverage[k] for k in
+                                           ('nominal_complete', 'recorded_rows', 'missing_pixels', 'overlap_pixels')}
+        report['checks']['wall_smoke'] = replay_and_validate(wall, 'wall_replay')['acceptance']
         if a.performance:
             for mode in ('gz', 'rviz', 'both'):
                 viewers = []

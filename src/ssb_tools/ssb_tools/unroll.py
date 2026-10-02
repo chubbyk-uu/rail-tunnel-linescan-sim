@@ -31,20 +31,17 @@ def encoder_position(edges, t, start=None):
     return PchipInterpolator(t_e, p_e, extrapolate=True)(t)
 
 
-def row_coordinates(config, rows, scan_edges, odo_edges, gates, columns):
-    """Unrolled (x, q) of the given pixel columns for every row.
+def row_axis_coordinates(config, rows, scan_edges, odo_edges, gates, odo_right_edges=None):
+    """Nominal scan-axis x and unwrapped encoder angle for every exposure row.
 
     Scan angle: each segment is referenced to its own gate-start event (nominal gate
     angle); within it the angle follows the interpolated encoder position. Track
     position: odometer distance with the calibrated wheel diameter.
     """
-    cal, cam = config['calibration'], config['camera']
+    cal = config['calibration']
     counts_per_rev = config['scan_encoder']['ppr'] * config['scan_encoder']['edges_per_cycle']
     odo = config['odometer']
-    metres_per_count = math.pi * cal['wheel_diameter_m'] / (odo['ppr'] * odo['edges_per_cycle'] * odo['gear_ratio'])
-    R = cal['radius_m']
-    f = cam['pixel_pitch_m'] * cam['nominal_distance_m'] * cam['width'] / cam['fov_at_nominal_m']
-    tangents = (np.asarray(columns, np.float64) - 0.5 * (cam['width'] - 1)) * cam['pixel_pitch_m'] / f
+    counts_per_wheel_rev = odo['ppr'] * odo['edges_per_cycle'] * odo['gear_ratio']
 
     t = rows['t_center']
     starts = gates[(gates['kind'] == 0) & (gates['dir'] > 0)]
@@ -60,7 +57,25 @@ def row_coordinates(config, rows, scan_edges, odo_edges, gates, columns):
     # The odometer starts at count 0 on a level at power-on (t = 0); an unknown
     # sub-count start phase would be a constant x offset of up to one count.
     odo_pos = encoder_position(odo_edges, t, start=(0.0, 0.0))
-    x_axis = config['motion']['start_x_m'] + odo_pos * metres_per_count + cal['head_mount_x_m']
+    if config.get('contact', {}).get('enabled'):
+        if odo_right_edges is None:
+            raise ValueError('contact reconstruction requires both measuring-wheel encoders')
+        right_pos = encoder_position(odo_right_edges, t, start=(0.0, 0.0))
+        distance = math.pi/(2*counts_per_wheel_rev)*(odo_pos*cal['odo_left_diameter_m']+
+                                                  right_pos*cal['odo_right_diameter_m'])
+    else:
+        distance = odo_pos*math.pi*cal['wheel_diameter_m']/counts_per_wheel_rev
+    x_axis = config['motion']['start_x_m'] + distance + cal['head_mount_x_m']
+    return x_axis, theta
+
+
+def row_coordinates(config, rows, scan_edges, odo_edges, gates, columns, odo_right_edges=None):
+    """Nominal centered-camera rays; contact mode uses two calibrated measuring wheels."""
+    cal, cam = config['calibration'], config['camera']
+    R = cal['radius_m']
+    f = cam['pixel_pitch_m'] * cam['nominal_distance_m'] * cam['width'] / cam['fov_at_nominal_m']
+    tangents = (np.asarray(columns, np.float64) - 0.5 * (cam['width'] - 1)) * cam['pixel_pitch_m'] / f
+    x_axis, theta = row_axis_coordinates(config, rows, scan_edges, odo_edges, gates, odo_right_edges)
     x = x_axis[:, None] + R * tangents[None, :]
     q = np.broadcast_to((R * theta)[:, None], x.shape)
     return x, q, theta

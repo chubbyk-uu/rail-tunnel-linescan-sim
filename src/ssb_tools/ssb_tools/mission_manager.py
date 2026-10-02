@@ -28,7 +28,7 @@ from gz.msgs10.boolean_pb2 import Boolean
 from gz.msgs10.stringmsg_pb2 import StringMsg
 from gz.msgs10.world_control_pb2 import WorldControl
 
-from .mission_plan import prepare, plan, start_values
+from .mission_plan import prepare, plan, start_values, wall_plan
 from .mission_preview import Preview, pose_values, transform
 from .mission_image_preview import RawImagePreview
 from .optical_identity import check_calibration
@@ -110,6 +110,8 @@ class MissionManager(Node):
                 raise ValueError('Unknown mission command')
             if command['action'] == 'start':
                 command['start_m'], command['distance_m'] = start_values(command)
+                if command.get('mode', 'travel') not in ('travel', 'wall'):
+                    raise ValueError('Unknown task mode')
             self.commands.put_nowait(command)
         except (ValueError, queue.Full) as e:
             error = 'Command queue is full; try again later' if isinstance(e, queue.Full) else str(e)
@@ -141,10 +143,15 @@ class MissionManager(Node):
         if self.state not in TERMINAL:
             raise ValueError('A mission is already active')
         start, distance = start_values(command)
-        plan(self.config, start, distance)  # Reject before creating any files/processes.
+        mode = command.get('mode', 'travel')
+        if mode not in ('travel', 'wall'): raise ValueError('Unknown task mode')
+        if mode == 'wall':
+            wall_plan(self.config, start, distance, json.loads((self.demo/'calibration.json').read_text()))
+        else:
+            plan(self.config, start, distance)  # Reject before creating any files/processes.
         token = time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
         inputs = self.repo/'local_data/mission_runs'/token
-        config, task = prepare(self.demo, inputs, start, distance)
+        config, task = prepare(self.demo, inputs, start, distance, mode=mode)
         check_calibration(inputs/'capture.yaml', self.demo/'calibration.json')
         from .physical_world import check as physical_check, spec_for
         physical = (physical_check(config, spec_for(inputs/'capture.yaml'), inputs/'world.sdf')
@@ -156,7 +163,7 @@ class MissionManager(Node):
         self.error = ''; self.expected_exit = False
         self.inputs = inputs
         self.latest = initial_state(config,
-            [start, 0., config['robot']['base_reference_z_m'], 0., 0., 0., 1.])
+            [task['start_m'], 0., config['robot']['base_reference_z_m'], 0., 0., 0., 1.])
         self.transition('starting')
         env = dict(os.environ, SSB_CONFIG=str(inputs/'capture.yaml'), SSB_WORLD=str(inputs/'world.sdf'),
                    SSB_SESSION=str(self.session), SSB_MISSION_STATUS_TOPIC=self.status_topic)

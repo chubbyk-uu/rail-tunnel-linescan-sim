@@ -318,6 +318,7 @@ def provenance_chain(s, cfg, truth, prov, backend):
         if got is None or not math.isclose(float(got), float(value), rel_tol=1e-12, abs_tol=1e-15):
             mismatched.append(f'{area}.{key}')
     links['observable_config_derives_from_source'] = not mismatched
+    links['requested_wall_target_matches_source'] = cfg.get('inspection') == src.get('inspection')
     truth_mismatched = field_mismatches(truth, truth_from_source(src, source_sha))
     links['truth_derives_from_source'] = not truth_mismatched
     # Content identity recorded when the session completed (session.json "files").

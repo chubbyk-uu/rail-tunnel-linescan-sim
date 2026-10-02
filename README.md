@@ -4,11 +4,13 @@ Simulation of a tunnel inspection robot with a rotating line-scan camera. Gazebo
 vehicle dynamics, a custom OptiX backend images every encoder-triggered line, and later
 stages reconstruct the unrolled tunnel wall.
 
-Status (2026-10-01): stage A (geometry and timing) is accepted. Stage B (scene,
+Status (2026-10-02): stage A (geometry and timing) is accepted. Stage B (scene,
 lighting, rail contact, lens calibration) has a validated 3 m capture and a user-accepted
 visual baseline ([review record](docs/STAGE_B.md#71-画面复核与基线冻结2026-10-01)).
 The RViz mission UI is implemented ([usage](docs/STAGE_B.md#10-rviz-与任务控制));
-full 20 m capture and stitching are not implemented yet.
+stage C now plans full wall targets with overscan and checks nominal coverage from public
+encoders and measured calibration ([usage](docs/STAGE_C.md)). Full 20 m optical capture
+and stitching are still pending.
 
 ## Documentation
 
@@ -16,6 +18,7 @@ full 20 m capture and stitching are not implemented yet.
 |---|---|
 | [DESIGN.md](DESIGN.md) | Design specification: goals, parameters, geometry, timing, optics, reconstruction, stage plan |
 | [docs/STAGE_B.md](docs/STAGE_B.md) | Current stage B scene and assets, commands, calibration, acceptance results, known limits |
+| [docs/STAGE_C.md](docs/STAGE_C.md) | Wall target planning, public-only coverage, short capture verification and scale benchmark |
 | [docs/DEVELOPMENT_RULES.md](docs/DEVELOPMENT_RULES.md) | Development rules learned from the neighbouring projects |
 | [docs/history/](docs/history/README.md) | Archived development logs, texture study, quality plan, review record, design v0.8 |
 

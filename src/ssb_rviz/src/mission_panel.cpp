@@ -22,16 +22,21 @@ namespace ssb_rviz {
 MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
   auto* layout = new QVBoxLayout(this);
   auto* form = new QFormLayout;
+  mode_ = new QComboBox; mode_->setObjectName("mission_mode");
+  mode_->addItem("Vehicle travel", "travel"); mode_->addItem("Wall coverage", "wall");
+  form->addRow("Task mode", mode_);
   start_ = new QDoubleSpinBox; distance_ = new QDoubleSpinBox;
   start_->setRange(0, 20); start_->setValue(3); start_->setDecimals(3);
   distance_->setRange(1, 20); distance_->setValue(3); distance_->setDecimals(3);
   start_->setSuffix(" m"); distance_->setSuffix(" m");
   start_->setToolTip("Vehicle is placed here when you click Start.");
   start_->setObjectName("mission_start"); distance_->setObjectName("mission_distance");
-  form->addRow("Start position", start_); form->addRow("Travel distance", distance_); layout->addLayout(form);
+  start_label_ = new QLabel("Start position"); distance_label_ = new QLabel("Travel distance");
+  form->addRow(start_label_, start_); form->addRow(distance_label_, distance_); layout->addLayout(form);
   extent_ = new QLabel; extent_->setWordWrap(true); layout->addWidget(extent_);
   connect(start_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this]{updateExtent();});
   connect(distance_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this]{updateExtent();});
+  connect(mode_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]{updateExtent();});
   updateExtent();
   auto* row = new QHBoxLayout;
   begin_ = new QPushButton("Start"); pause_ = new QPushButton("Pause");
@@ -53,7 +58,7 @@ MissionPanel::MissionPanel(QWidget* parent) : Panel(parent) {
   output_ = new QLabel; output_->setWordWrap(true); output_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   error_ = new QLabel; error_->setWordWrap(true); error_->setStyleSheet("color: #e87070");
   layout->addWidget(status_); layout->addWidget(progress_); layout->addWidget(output_); layout->addWidget(error_);
-  auto* note = new QLabel("Scene: simulated pose, for visualization only.\nTravel and scan: rear-wheel odometry.\nPause freezes simulation; pending images are saved.");
+  auto* note = new QLabel("Scene: simulated pose, for visualization only.\nTravel and scan: measuring-wheel odometry.\nPause freezes simulation; pending images are saved.");
   note->setWordWrap(true); layout->addWidget(note); layout->addStretch();
   connect(this, &MissionPanel::received, this, &MissionPanel::showStatus, Qt::QueuedConnection);
   command_watchdog_ = new QTimer(this);
@@ -112,7 +117,10 @@ void MissionPanel::saveReview(const QString& name) {
     {"stop_enabled", stop_->isEnabled()}, {"status", status_->text()},
     {"state", last_state_}, {"pending", pending_}, {"error", error_->text()},
     {"command_timeout_ms", command_watchdog_->interval()},
-    {"command_timer_active", command_watchdog_->isActive()}};
+    {"command_timer_active", command_watchdog_->isActive()},
+    {"task_mode", mode_->currentData().toString()}, {"extent", extent_->text()}};
+  const auto mode_center = mode_->mapToGlobal(mode_->rect().center());
+  result["mode_center_x"] = mode_center.x(); result["mode_center_y"] = mode_center.y();
   const auto begin_center = begin_->mapToGlobal(begin_->rect().center());
   result["begin_center_x"] = begin_center.x(); result["begin_center_y"] = begin_center.y();
   if (auto* preview = window()->findChild<QLabel*>("raw_preview_image")) {
@@ -134,7 +142,10 @@ void MissionPanel::send(const QString& action) {
   command_error_.clear();
   pending_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
   QJsonObject object{{"id", pending_}, {"action", action}};
-  if (action == "start") { object["start_m"] = start_->value(); object["distance_m"] = distance_->value(); }
+  if (action == "start") {
+    object["start_m"] = start_->value(); object["distance_m"] = distance_->value();
+    object["mode"] = mode_->currentData().toString();
+  }
   std_msgs::msg::String msg; msg.data = QJsonDocument(object).toJson(QJsonDocument::Compact).toStdString();
   commands_->publish(msg);
   command_watchdog_->start(); updateControls();
@@ -146,6 +157,14 @@ void MissionPanel::showStatus(const QString& text) {
   last_state_ = state;
   connected_ = true; watchdog_->start();
   pitch_ = object["scan_pitch_m"].toDouble(); updateExtent();
+  const auto task = object["task"].toObject();
+  if ((state == "starting" || state == "running" || state == "paused" || state == "draining") && task["mode"].toString() == "wall") {
+    const auto target = task["target_x_m"].toArray();
+    if (target.size() == 2)
+      extent_->setText(QString("Target wall: %1–%2 m, upper 240 degrees\nPlanned vehicle travel: %3–%4 m\nCoverage must be verified from saved measurements.")
+        .arg(target[0].toDouble(),0,'f',3).arg(target[1].toDouble(),0,'f',3)
+        .arg(task["start_m"].toDouble(),0,'f',3).arg(task["end_m"].toDouble(),0,'f',3));
+  }
   if (!pending_.isEmpty() && object["command_result"].toObject()["id"].toString() == pending_) {
     pending_.clear(); command_watchdog_->stop(); command_error_.clear();
   }
@@ -169,6 +188,7 @@ void MissionPanel::updateControls() {
   const bool terminal = last_state_ == "idle" || last_state_ == "complete" || last_state_ == "stopped" || last_state_ == "failed";
   const bool available = connected_ && pending_.isEmpty();
   start_->setEnabled(terminal && available); distance_->setEnabled(terminal && available);
+  mode_->setEnabled(terminal && available);
   begin_->setEnabled(terminal && available); pause_->setEnabled(last_state_ == "running" && available);
   resume_->setEnabled(last_state_ == "paused" && available);
   stop_->setEnabled((last_state_ == "running" || last_state_ == "paused") && available);
@@ -176,6 +196,15 @@ void MissionPanel::updateControls() {
 
 void MissionPanel::updateExtent() {
   const double start = start_->value(), end = start+distance_->value();
+  const bool wall = mode_->currentData().toString() == "wall";
+  start_label_->setText(wall ? "Wall target start" : "Start position");
+  distance_label_->setText(wall ? "Wall target length" : "Travel distance");
+  start_->setToolTip(wall ? "Target wall coordinate; vehicle starts earlier in the buffer." : "Vehicle is placed here when you click Start.");
+  if (wall) {
+    extent_->setText(QString("Target wall: %1–%2 m, upper 240 degrees\nVehicle overscan is planned on Start.\nCoverage must be verified after capture.")
+                    .arg(start,0,'f',3).arg(end,0,'f',3));
+    return;
+  }
   QString coverage = "Coverage: waiting for configuration";
   if (pitch_ > 0) {
     coverage = distance_->value() > 2*pitch_

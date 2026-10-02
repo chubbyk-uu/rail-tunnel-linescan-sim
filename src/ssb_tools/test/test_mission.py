@@ -168,6 +168,20 @@ def test_full_command_queue_returns_rejection_with_matching_id():
     assert 'queue is full' in fake.command_result['error']
 
 
+def test_unknown_task_mode_is_rejected_before_queueing():
+    pytest.importorskip('rclpy')
+    import json
+    import queue
+    import threading
+    from types import SimpleNamespace
+    from std_msgs.msg import String
+    from ssb_tools.mission_manager import MissionManager
+    fake = SimpleNamespace(commands=queue.Queue(), lock=threading.RLock(), error='', state='idle', command_result={})
+    command = dict(id='bad-mode', action='start', start_m=3., distance_m=3., mode='unknown')
+    MissionManager.enqueue(fake, String(data=json.dumps(command)))
+    assert fake.commands.empty() and fake.state == 'idle' and not fake.command_result['ok']
+
+
 def test_preview_moves_sprung_axles_and_measuring_sliders(tmp_path):
     pytest.importorskip('geometry_msgs')
     from builtin_interfaces.msg import Time

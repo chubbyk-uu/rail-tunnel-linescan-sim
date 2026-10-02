@@ -19,6 +19,24 @@ TEST(StageB, LensProjectionAndSynchronizedMotionUseUpdatedBaseline) {
   EXPECT_NEAR(c.NominalOmega() * 60 / (2 * M_PI), 20, 1e-12);
 }
 
+TEST(StageC, WallTargetIsPublicAndDoesNotChangeOpticalIdentity) {
+  auto c=Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_b.yaml");
+  const auto signature=c.OpticalSignature();
+  c.inspection={{"schema","ssb.wall_target.v1"},{"target_x_m",{0.,20.}},
+                {"theta_rad",{-2*M_PI/3,2*M_PI/3}},{"grid_pitch_m",.0002},{"guard_m",.01}};
+  EXPECT_NO_THROW(c.Validate());
+  EXPECT_EQ(c.ObservableJson().at("inspection"),c.inspection);
+  EXPECT_EQ(c.OpticalSignature(),signature);
+  const auto parsed=Config::Parse(c.source_text+
+    "\ninspection:\n  schema: ssb.wall_target.v1\n  target_x_m: [0, 20]\n"
+    "  theta_rad: [-2.0943951023931953, 2.0943951023931953]\n  grid_pitch_m: 0.0002\n  guard_m: 0.01\n");
+  EXPECT_EQ(parsed.ObservableJson().at("inspection"),c.inspection);
+  c.inspection["target_x_m"]={20.,0.};
+  EXPECT_THROW(c.Validate(),std::runtime_error);
+  c.inspection["target_x_m"]={0.,20.};c.inspection["grid_pitch_m"]=0.;
+  EXPECT_THROW(c.Validate(),std::runtime_error);
+}
+
 namespace {
 
 Config BaseConfig() { return Config::Load(std::string(SSB_CONFIG_DIR) + "/stage_a.yaml"); }

@@ -78,7 +78,21 @@ def main():
         try:
             initial = review('initial', lambda value: value['connected'] and value['begin_enabled'])
             assert initial['command_timeout_ms'] == 90000
+            assert initial['task_mode'] == 'travel'
+            # WSLg can consume the first click to activate the window.
+            retry_at = [0.]
+            def select_wall(value):
+                if value.get('task_mode') == 'wall': return True
+                if time.monotonic()-retry_at[0] > 1.:
+                    subprocess.run(['xdotool', 'mousemove', str(value['mode_center_x']),
+                                    str(value['mode_center_y']), 'click', '1', 'key', 'End', 'Return'], check=True)
+                    retry_at[0] = time.monotonic()
+                return False
+            initial = review('wall_selected', select_wall)
+            assert 'Target wall: 3.000' in initial['extent']
+            assert 'overscan' in initial['extent']
             click_start(initial)
+            assert commands[-1]['mode'] == 'wall'
             pending = review('pending_disconnect', lambda value: bool(value['pending']))
             assert not pending['begin_enabled'] and pending['command_timer_active']
             publishing[0] = False

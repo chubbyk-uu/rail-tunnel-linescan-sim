@@ -1,5 +1,7 @@
 """Private generation inputs for straight-rail missions; no reconstruction input."""
 import copy
+import argparse
+import json
 import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -21,7 +23,7 @@ def start_values(command):
     return start, distance
 
 
-def plan(config, start, distance):
+def _travel_plan(config, start, distance, inspection_domain=True):
     start, distance = start_values(dict(start_m=start, distance_m=distance))
     if not all(math.isfinite(x) for x in (start, distance)) or distance <= 0:
         raise ValueError('Start and distance must be finite; distance must be positive')
@@ -30,12 +32,13 @@ def plan(config, start, distance):
     t = config['tunnel']
     fov = config['camera']['fov_at_nominal_m']
     # Effective inspection domain excludes the 1.5 m construction buffers.
-    if start < 0 or start + distance > 20 + 1e-9:
+    if inspection_domain and (start < 0 or start + distance > 20 + 1e-9):
         raise ValueError('Mission must stay within the 0–20 m range')
     clearance = max(.65, fov / 2)
     if start-clearance < t['x_min_m'] or start+distance+clearance > t['x_max_m']:
         raise ValueError('Insufficient track or camera field-of-view margin')
     c = copy.deepcopy(config)
+    c.pop('inspection', None)
     m = c['motion']
     e, rescaler = c['scan_encoder'], c['rescaler']
     counts = e['ppr'] * e['edges_per_cycle'] * rescaler['multiply'] / rescaler['divide']
@@ -72,18 +75,77 @@ def plan(config, start, distance):
                    coverage_note='Conservative estimate; verify full-angle coverage from captured row geometry')
 
 
-def prepare(template, output, start, distance):
+def plan(config, start, distance):
+    """Legacy vehicle-travel task; never claims a complete target wall interval."""
+    return _travel_plan(config, start, distance)
+
+
+def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
+    """Plan a wall target using nominal pitch, calibrated usable FOV and ramp margins.
+
+    While cruising, any scan phase appears within one nominal pitch. Leading and trailing
+    cruise endpoints therefore need pitch-minus-FOV margins. Ramp travel and a fixed guard
+    are additional buffers; the target is never shrunk after seeing a recorded trajectory.
+    """
+    from .wall_coverage import calibrated_spans, calibrated_row_footprint
+    start, length = start_values(dict(start_m=start, distance_m=length))
+    if length < 1 or start < 0 or start+length > 20+1e-9:
+        raise ValueError('Wall target must be at least 1 m and lie within 0–20 m')
+    if not all(math.isfinite(x) and x > 0 for x in (guard, grid_pitch)):
+        raise ValueError('Wall planning guard and grid pitch must be positive')
+    spans = calibrated_spans(config, calibration)
+    left, right = max(spans, key=lambda span: span[1]-span[0])
+    pitch = config['motion']['advance_per_rev_m']
+    if right-left <= pitch+2*guard:
+        raise ValueError('Calibrated usable FOV is too narrow for the nominal helical pitch and guard')
+    e, r = config['scan_encoder'], config['rescaler']
+    rows_per_rev = e['ppr']*e['edges_per_cycle']*r['multiply']/r['divide']
+    row_step = 2*math.pi/rows_per_rev
+    footprint = calibrated_row_footprint(config, calibration)
+    if footprint < row_step:
+        raise ValueError('Nominal perpendicular pixel footprint is narrower than the row sampling step')
+    speed = pitch*config['motion']['line_rate_hz']/rows_per_rev
+    # At most one second ramps, so this upper bound also works for short/faster tasks.
+    ramp_margin = speed/2
+    mount = config['calibration']['head_mount_x_m']
+    vehicle_start = start-pitch-left-mount-ramp_margin-guard
+    vehicle_end = start+length+pitch-right-mount+ramp_margin+guard
+    c, task = _travel_plan(config, vehicle_start, vehicle_end-vehicle_start, inspection_domain=False)
+    gate = config['gate']
+    theta_start = math.radians(gate['start_deg'])
+    arc = (gate['end_deg']-gate['start_deg']) % 360
+    if arc != 240:
+        raise ValueError('Wall coverage baseline requires the agreed upper 240 degree acquisition gate')
+    c['inspection'] = dict(schema='ssb.wall_target.v1', target_x_m=[start, start+length],
+                           theta_rad=[theta_start, theta_start+math.radians(arc)],
+                           grid_pitch_m=grid_pitch, guard_m=guard)
+    task.update(mode='wall', target_x_m=[start, start+length], target_length_m=length,
+                nominal_usable_span_m=[left, right], ramp_margin_m=ramp_margin, guard_m=guard,
+                nominal_row_step_m=row_step*config['calibration']['radius_m'],
+                minimum_row_footprint_m=footprint*config['calibration']['radius_m'],
+                coverage_note='Nominal full-angle target; acceptance uses recorded encoders and measured calibration. '
+                              'Actual body motion and wheel scale errors are not known to this planner.')
+    return c, task
+
+
+def prepare(template, output, start, distance, mode='travel'):
     template, output = Path(template).resolve(), Path(output).resolve()
     if output.exists():
         raise ValueError('Mission input directory already exists')
     source = template/'capture.yaml'
-    c, task = plan(yaml.safe_load(source.read_text()), start, distance)
+    if mode not in ('travel', 'wall'): raise ValueError('Unknown task mode')
+    if mode == 'wall':
+        from .optical_identity import check_calibration
+        check_calibration(source, template/'calibration.json')
+    config = yaml.safe_load(source.read_text())
+    c, task = (wall_plan(config, start, distance, json.loads((template/'calibration.json').read_text()))
+               if mode == 'wall' else plan(config, start, distance))
     scene = Path(c['render']['optical_scene'])
     c['render']['optical_scene'] = str((source.parent/scene).resolve())
     world = ET.parse(template/'world/world.sdf')
     car = world.getroot().find("world/model[@name='scan_car']")
     pose = list(map(float, car.findtext('pose', '0 0 0 0 0 0').split()))
-    pose[0] = start
+    pose[0] = task['start_m']
     car.find('pose').text = ' '.join(map(str, pose))
     # SDF assets may be relative to the template world directory.
     for element in world.getroot().iter():
@@ -93,9 +155,23 @@ def prepare(template, output, start, distance):
                 element.text = str((template/'world'/value).resolve())
     output.mkdir(parents=True)
     (output/'capture.yaml').write_text(yaml.safe_dump(c, sort_keys=False))
+    (output/'task.json').write_text(json.dumps(task, indent=2)+'\n')
     world.write(output/'world.sdf', encoding='unicode', xml_declaration=True)
     # Physical-world manifest and scene spec travel with the world (car pose is not in them).
     for name, source_path in (('physical_manifest.json', template/'world/physical_manifest.json'),
                               ('spec.yaml', template/'spec.yaml')):
         if source_path.exists(): (output/name).write_bytes(source_path.read_bytes())
     return c, task
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Prepare a full-angle wall target with nominal overscan buffers.')
+    parser.add_argument('--demo', required=True); parser.add_argument('--output', required=True)
+    parser.add_argument('--target-start-m', type=float, required=True)
+    parser.add_argument('--target-length-m', type=float, required=True)
+    args = parser.parse_args()
+    _, task = prepare(args.demo, args.output, args.target_start_m, args.target_length_m, mode='wall')
+    print(json.dumps(task, indent=2))
+
+
+if __name__ == '__main__': main()

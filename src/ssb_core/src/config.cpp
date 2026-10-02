@@ -152,11 +152,30 @@ Config Config::Parse(const std::string& text) {
   c.block_rows = Get<int>(storage, "block_rows", "storage.");
   c.write_queue_bytes = Get<size_t>(storage, "write_queue_bytes", "storage.");
 
+  if (const auto target = root["inspection"]) {
+    Check(Get<std::string>(target,"schema","inspection.")=="ssb.wall_target.v1", "unsupported inspection schema");
+    Check(target["target_x_m"] && target["target_x_m"].size()==2 && target["theta_rad"] && target["theta_rad"].size()==2,
+          "inspection requires two target positions and two arc angles");
+    c.inspection={{"schema","ssb.wall_target.v1"},
+                  {"target_x_m",{target["target_x_m"][0].as<double>(),target["target_x_m"][1].as<double>()}},
+                  {"theta_rad",{target["theta_rad"][0].as<double>(),target["theta_rad"][1].as<double>()}},
+                  {"grid_pitch_m",Get<double>(target,"grid_pitch_m","inspection.")},
+                  {"guard_m",Get<double>(target,"guard_m","inspection.")}};
+  }
+
   c.Validate();
   return c;
 }
 
 void Config::Validate() const {
+  if (!inspection.is_null()) {
+    const double x0=inspection.at("target_x_m")[0],x1=inspection.at("target_x_m")[1];
+    const double a=inspection.at("theta_rad")[0],b=inspection.at("theta_rad")[1];
+    const double pitch=inspection.at("grid_pitch_m"),guard=inspection.at("guard_m");
+    Check(Finite({x0,x1,a,b,pitch,guard})&&x0<x1&&a<b&&b-a<=2*kPi&&pitch>0&&guard>0,
+          "invalid public wall target");
+    Check(x0>=tunnel_x_min_m&&x1<=tunnel_x_max_m,"wall target outside tunnel bounds");
+  }
   Check(Finite({base_reference_z_m,scan_axis_height_m}) && base_reference_z_m>0 && scan_axis_height_m>0,
         "invalid robot base reference or scan axis height");
   Check(truth.optical_key.size()==64 && truth.optical_key.find_first_not_of("0123456789abcdef")==std::string::npos,
@@ -248,6 +267,7 @@ nlohmann::json Config::ObservableJson() const {
   j["render"] = {{"batch_rows", batch_rows}, {"debug_column_stride", debug_column_stride},
                  {"max_queued_batches", max_queued_batches}};
   j["storage"] = {{"block_rows", block_rows}};
+  if (!inspection.is_null()) j["inspection"] = inspection;
   j["derived"] = {{"counts_per_rev", CountsPerRev()}, {"rows_per_rev", RowsPerRev()}};
   if(contact_enabled){j["contact"]={{"enabled",true},{"layout","front-drive/measuring-wheel-encoders"}};
     j["calibration"]["odo_left_diameter_m"]=odo_left_calibrated;j["calibration"]["odo_right_diameter_m"]=odo_right_calibrated;}
