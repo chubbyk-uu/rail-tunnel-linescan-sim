@@ -1,6 +1,6 @@
 # 阶段 B：现行场景、操作与验收
 
-更新：2026-10-02。设计要求见 [DESIGN.md](../DESIGN.md)；按时间顺序的开发过程、选材调查和各轮测量见 [history/](history/README.md)。
+更新：2026-10-02。审核修复与最新联合回归见 [REPAIR_PLAN_2026-10-02.md](REPAIR_PLAN_2026-10-02.md)。设计要求见 [DESIGN.md](../DESIGN.md)；按时间顺序的开发过程、选材调查和各轮测量见 [history/](history/README.md)。
 
 ## 1. 状态
 

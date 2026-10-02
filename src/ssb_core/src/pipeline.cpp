@@ -402,101 +402,101 @@ nlohmann::json Pipeline::Wait() {
     std::rethrow_exception(s.error);
   }
   try {
-  const int64_t rows = s.raw_index.at("rows").get<int64_t>();
-  const double sim_first = s.first_pushed;
-  WriteJsonAtomic(s.root / "metadata" / "manifest.json", s.metadata_tables);
-  WriteJsonAtomic(s.root / "evaluation" / "manifest.json", s.evaluation_tables);
-  WriteJsonAtomic(s.root / "raw" / "index.json", s.raw_index);
-  // "complete" means every sample that arrived is imaged and on disk; whether the
-  // planned motion was actually run is reported separately.
-  const double planned = s.options.planned_end_s;
-  const double tolerance = 0.5 * s.config.sample_period_s;
-  nlohmann::json motion = {{"first_sample_s", s.have_first ? nlohmann::json(sim_first) : nlohmann::json()},
-                           {"last_sample_s", s.latest_pushed.load()}};
-  if (std::isfinite(planned)) {
-    motion["planned_end_s"] = planned;
-    motion["complete"] = s.latest_pushed.load() >= planned - tolerance;
-  } else {
-    motion["planned_end_s"] = nullptr;
-    motion["complete"] = nullptr;
-  }
-  // Content identity of the descriptive files at completion; tables and blocks carry
-  // their own hashes in the manifests listed here.
-  nlohmann::json files;
-  for (const char* name : {"config/observable_config.json", "config/provenance.json", "config/backend.json",
-                           "evaluation/truth.json", "evaluation/config_source.yaml", "evaluation/manifest.json",
-                           "metadata/manifest.json", "raw/index.json"})
-    files[name] = Sha256File(s.root / name);
-  if(std::filesystem::exists(s.root / "evaluation" / "optical_assets.json"))
-    files["evaluation/optical_assets.json"]=Sha256File(s.root / "evaluation" / "optical_assets.json");
-  // Protect the complete archived physical input set, including SDF, spec, config and images.
-  const auto physical = s.root / "evaluation" / "physical";
-  if (std::filesystem::exists(physical)) {
-    std::vector<std::filesystem::path> directories{physical};
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(physical)) {
-      if (entry.is_directory()) directories.push_back(entry.path());
-      if (!entry.is_regular_file()) continue;
-      files[entry.path().lexically_relative(s.root).generic_string()] = Sha256File(entry.path());
-      const auto begin=Clock::now();SyncFile(entry.path());
-      const double seconds=Seconds(begin,Clock::now());
-      s.physical_io.sync_seconds+=seconds;
-      s.physical_io.longest_sync_s=std::max(s.physical_io.longest_sync_s,seconds);
-      ++s.physical_io.files;s.physical_io.bytes+=entry.file_size();
+    const int64_t rows = s.raw_index.at("rows").get<int64_t>();
+    const double sim_first = s.first_pushed;
+    WriteJsonAtomic(s.root / "metadata" / "manifest.json", s.metadata_tables);
+    WriteJsonAtomic(s.root / "evaluation" / "manifest.json", s.evaluation_tables);
+    WriteJsonAtomic(s.root / "raw" / "index.json", s.raw_index);
+    // "complete" means every sample that arrived is imaged and on disk; whether the
+    // planned motion was actually run is reported separately.
+    const double planned = s.options.planned_end_s;
+    const double tolerance = 0.5 * s.config.sample_period_s;
+    nlohmann::json motion = {{"first_sample_s", s.have_first ? nlohmann::json(sim_first) : nlohmann::json()},
+                             {"last_sample_s", s.latest_pushed.load()}};
+    if (std::isfinite(planned)) {
+      motion["planned_end_s"] = planned;
+      motion["complete"] = s.latest_pushed.load() >= planned - tolerance;
+    } else {
+      motion["planned_end_s"] = nullptr;
+      motion["complete"] = nullptr;
     }
-    for(auto directory=directories.rbegin();directory!=directories.rend();++directory) SyncDirectory(*directory);
-  }
-  // Persist directory entries for initial files, snapshots and the session itself.
-  for(const char* name:{"metadata","evaluation","config","logs"}) SyncDirectory(s.root/name);
-  SyncDirectory(s.root);
-  SyncDirectory(s.root.parent_path().empty() ? "." : s.root.parent_path());
-  const auto end=Clock::now();
-  const double wall = Seconds(s.start_wall, end);
-  const double imaging_wall = s.have_first ? Seconds(s.first_push_wall, end) : 0;
-  const double producer_wall = s.have_first && s.finish_called ? Seconds(s.first_push_wall, s.finish_called_wall) : 0;
-  double sim_last = sim_first;
-  if (!s.progress.empty()) sim_last = s.progress.back().at("sim_time_written").get<double>();
-  const nlohmann::json performance = {
-      {"wall_seconds", wall},
-      {"rows", rows},
-      {"average_rows_per_wall_second", wall > 0 ? rows / wall : 0},
-      {"render_seconds", s.render_seconds},
-      {"render_rows_per_second", s.render_seconds > 0 ? rows / s.render_seconds : 0},
-      {"write_seconds", s.write_seconds},
-      {"io", {{"raw",s.raw_io.Json()},{"tables",s.table_io.Json()},
-               {"physical_snapshot",s.physical_io.Json()},
-               {"render_queue_wait_s",s.render_queue_wait_s},{"write_queue_wait_s",s.write_queue_wait_s}}},
-      // DESIGN.md §11, both measured from the first pose sample (excludes start-up):
-      // dynamics = pose stream span per wall second while it was produced; imaging =
-      // the same span per wall second until the last row was on disk.
-      {"dynamics_rtf", producer_wall > 0 ? (s.pushed_at_finish - sim_first) / producer_wall : 0},
-      {"imaging_progress_rtf", imaging_wall > 0 ? (s.latest_pushed.load() - sim_first) / imaging_wall : 0},
-      {"last_row_center", sim_last},
-      {"sim_time_pushed_at_finish", s.pushed_at_finish},
-      {"sim_time_written_at_finish", s.written_at_finish},
-      {"wall_seconds_after_finish", s.finish_called ? Seconds(s.finish_called_wall, end) : 0},
-      {"write_queue_peak_bytes", s.write_queue_peak},
-      {"render_queue_peak_batches", s.render_queue_peak},
-      {"render_queue_limit_batches", s.config.max_queued_batches},
-      {"batches", s.batches},
-      {"batch_rows", s.config.batch_rows},
-      {"backend_final", s.renderer->Describe()},
-      {"note", "wall_seconds starts after the backend self-check; rates include payload/index durability and end before the final completion marker"}};
-  WriteJsonAtomic(s.root / "logs" / "performance.json", {{"summary", performance}, {"progress", s.progress}});
-  nlohmann::json summary = {{"schema", "ssb.session.v1"},
-                                  {"status", s.producer_error.empty() ? "complete" : "failed"},
-                                  {"files", files},
-                                  {"motion", motion},
-                                  {"pose_source", s.options.pose_source},
-                                  {"rows", rows},
-                                  {"timing", s.timing_stats},
-                                  {"performance", performance}};
-  if (!s.producer_error.empty()) {
-    summary["error"] = s.producer_error;
-    summary["motion"]["complete"] = false;
-  }
-  WriteJsonAtomic(s.root / "session.json", summary);
-  if (!s.producer_error.empty()) throw std::runtime_error(s.producer_error);
-  return summary;
+    // Content identity of the descriptive files at completion; tables and blocks carry
+    // their own hashes in the manifests listed here.
+    nlohmann::json files;
+    for (const char* name : {"config/observable_config.json", "config/provenance.json", "config/backend.json",
+                             "evaluation/truth.json", "evaluation/config_source.yaml", "evaluation/manifest.json",
+                             "metadata/manifest.json", "raw/index.json"})
+      files[name] = Sha256File(s.root / name);
+    if(std::filesystem::exists(s.root / "evaluation" / "optical_assets.json"))
+      files["evaluation/optical_assets.json"]=Sha256File(s.root / "evaluation" / "optical_assets.json");
+    // Protect the complete archived physical input set, including SDF, spec, config and images.
+    const auto physical = s.root / "evaluation" / "physical";
+    if (std::filesystem::exists(physical)) {
+      std::vector<std::filesystem::path> directories{physical};
+      for (const auto& entry : std::filesystem::recursive_directory_iterator(physical)) {
+        if (entry.is_directory()) directories.push_back(entry.path());
+        if (!entry.is_regular_file()) continue;
+        files[entry.path().lexically_relative(s.root).generic_string()] = Sha256File(entry.path());
+        const auto begin=Clock::now();SyncFile(entry.path());
+        const double seconds=Seconds(begin,Clock::now());
+        s.physical_io.sync_seconds+=seconds;
+        s.physical_io.longest_sync_s=std::max(s.physical_io.longest_sync_s,seconds);
+        ++s.physical_io.files;s.physical_io.bytes+=entry.file_size();
+      }
+      for(auto directory=directories.rbegin();directory!=directories.rend();++directory) SyncDirectory(*directory);
+    }
+    // Persist directory entries for initial files, snapshots and the session itself.
+    for(const char* name:{"metadata","evaluation","config","logs"}) SyncDirectory(s.root/name);
+    SyncDirectory(s.root);
+    SyncDirectory(s.root.parent_path().empty() ? "." : s.root.parent_path());
+    const auto end=Clock::now();
+    const double wall = Seconds(s.start_wall, end);
+    const double imaging_wall = s.have_first ? Seconds(s.first_push_wall, end) : 0;
+    const double producer_wall = s.have_first && s.finish_called ? Seconds(s.first_push_wall, s.finish_called_wall) : 0;
+    double sim_last = sim_first;
+    if (!s.progress.empty()) sim_last = s.progress.back().at("sim_time_written").get<double>();
+    const nlohmann::json performance = {
+        {"wall_seconds", wall},
+        {"rows", rows},
+        {"average_rows_per_wall_second", wall > 0 ? rows / wall : 0},
+        {"render_seconds", s.render_seconds},
+        {"render_rows_per_second", s.render_seconds > 0 ? rows / s.render_seconds : 0},
+        {"write_seconds", s.write_seconds},
+        {"io", {{"raw",s.raw_io.Json()},{"tables",s.table_io.Json()},
+                 {"physical_snapshot",s.physical_io.Json()},
+                 {"render_queue_wait_s",s.render_queue_wait_s},{"write_queue_wait_s",s.write_queue_wait_s}}},
+        // DESIGN.md §11, both measured from the first pose sample (excludes start-up):
+        // dynamics = pose stream span per wall second while it was produced; imaging =
+        // the same span per wall second until the last row was on disk.
+        {"dynamics_rtf", producer_wall > 0 ? (s.pushed_at_finish - sim_first) / producer_wall : 0},
+        {"imaging_progress_rtf", imaging_wall > 0 ? (s.latest_pushed.load() - sim_first) / imaging_wall : 0},
+        {"last_row_center", sim_last},
+        {"sim_time_pushed_at_finish", s.pushed_at_finish},
+        {"sim_time_written_at_finish", s.written_at_finish},
+        {"wall_seconds_after_finish", s.finish_called ? Seconds(s.finish_called_wall, end) : 0},
+        {"write_queue_peak_bytes", s.write_queue_peak},
+        {"render_queue_peak_batches", s.render_queue_peak},
+        {"render_queue_limit_batches", s.config.max_queued_batches},
+        {"batches", s.batches},
+        {"batch_rows", s.config.batch_rows},
+        {"backend_final", s.renderer->Describe()},
+        {"note", "wall_seconds starts after the backend self-check; rates include payload/index durability and end before the final completion marker"}};
+    WriteJsonAtomic(s.root / "logs" / "performance.json", {{"summary", performance}, {"progress", s.progress}});
+    nlohmann::json summary = {{"schema", "ssb.session.v1"},
+                                    {"status", s.producer_error.empty() ? "complete" : "failed"},
+                                    {"files", files},
+                                    {"motion", motion},
+                                    {"pose_source", s.options.pose_source},
+                                    {"rows", rows},
+                                    {"timing", s.timing_stats},
+                                    {"performance", performance}};
+    if (!s.producer_error.empty()) {
+      summary["error"] = s.producer_error;
+      summary["motion"]["complete"] = false;
+    }
+    WriteJsonAtomic(s.root / "session.json", summary);
+    if (!s.producer_error.empty()) throw std::runtime_error(s.producer_error);
+    return summary;
   } catch(const std::exception& error) {
     // Commit failures also leave an explicitly failed session when the filesystem
     // still permits it. Preserve any already-written recovery indices and counts.

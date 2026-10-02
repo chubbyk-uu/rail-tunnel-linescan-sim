@@ -174,6 +174,15 @@ def main():
         for path in originals: assert sha256_file(path) == sha256_file(replay/path.relative_to(session))
         smoke = json.loads((session/'evaluation/reports/stage_b_smoke.json').read_text())
         return dict(identical_files=len(originals), acceptance=smoke)
+    gui_frames=[]
+    if a.wall_only and a.viewers in ('gz','both'):
+        from gz.transport13 import Node as GzNode
+        from gz.msgs10.stringmsg_pb2 import StringMsg
+        os.environ['SSB_GUI_FRAME_TOPIC']='/ssb/review/gui_frames'
+        frame_node=GzNode()
+        def receive_frames(message):
+            data=json.loads(message.data);data['received_at']=time.monotonic();gui_frames.append(data)
+        assert frame_node.subscribe(StringMsg,os.environ['SSB_GUI_FRAME_TOPIC'],receive_frames)
     report = dict(checks={}, performance={})
     try:
         wait(lambda: latest.get('state') == 'idle')
@@ -222,7 +231,15 @@ def main():
                 rss_note='Sampled sum of process-tree RSS; shared pages may be counted more than once.',
                 gpu_note='Global device usage includes unrelated applications, not only this capture.',
                 samples=len(resources), raw_bytes=sum(path.stat().st_size for path in (wall/'raw').glob('*.u8')),
-                session=str(wall), backend_final=perf['backend_final'])
+                session=str(wall), backend_final=perf['backend_final'], io=perf.get('io',{}))
+            if a.viewers in ('gz','both'):
+                frames=[v for v in gui_frames if began<=v['received_at']<=finished]
+                assert frames and all(v['fps']>0 for v in frames), 'No GUI render event measurements'
+                report['performance']['gui_render_event_fps']=dict(
+                    minimum=min(v['fps'] for v in frames),maximum=max(v['fps'] for v in frames),
+                    average=sum(v['frames'] for v in frames)/sum(v['seconds'] for v in frames),
+                    samples=len(frames),note='GUI Render event rate; no image readback or extra render')
+                (output/'gui_frames.json').write_text(json.dumps(frames,indent=2)+'\n')
             (output/'resources.json').write_text(json.dumps(resources, indent=2)+'\n')
             from ssb_tools.wall_coverage import inspect_session
             coverage = inspect_session(wall, repo/'local_data/stage_b/contact_demo/calibration.json',

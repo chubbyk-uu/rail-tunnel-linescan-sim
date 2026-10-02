@@ -9,7 +9,10 @@
 #include <gz/rendering/Scene.hh>
 #include <gz/transport/Node.hh>
 #include <gz/msgs/image.pb.h>
+#include <gz/msgs/stringmsg.pb.h>
 #include <chrono>
+#include <cstdlib>
+#include <sstream>
 #include "shadow_settings.hpp"
 
 namespace ssb {
@@ -19,6 +22,9 @@ class SsbShadowSettings : public gz::gui::Plugin {
     if (auto* value = config->FirstChildElement("apply_fix")) value->QueryBoolText(&apply_fix_);
     if (auto* value = config->FirstChildElement("diagnostic")) value->QueryBoolText(&diagnostic_);
     if (diagnostic_) publisher_ = node_.Advertise<gz::msgs::Image>("/strip_check/image");
+    // Opt-in measurement only: no extra rendering, image readback or file I/O.
+    if(const char* topic=std::getenv("SSB_GUI_FRAME_TOPIC"))
+      frame_publisher_=node_.Advertise<gz::msgs::StringMsg>(topic);
     if (auto* window = gz::gui::App()->findChild<gz::gui::MainWindow*>())
       window->installEventFilter(this);
   }
@@ -28,10 +34,22 @@ class SsbShadowSettings : public gz::gui::Plugin {
       if (apply_fix_ && ApplyStripShadowSettings())
         gzmsg << "SsbShadowSettings: narrow-beam normal offset = 1 (GUI only)" << std::endl;
       if (diagnostic_) PublishImage();
+      if(frame_publisher_ && gz::rendering::sceneFromFirstRenderEngine()) PublishFrameRate();
     }
     return QObject::eventFilter(object, event);
   }
  private:
+  void PublishFrameRate() {
+    const auto now=std::chrono::steady_clock::now();
+    if(frame_begin_==std::chrono::steady_clock::time_point{}) {frame_begin_=now;return;}
+    ++frames_;
+    const double seconds=std::chrono::duration<double>(now-frame_begin_).count();
+    if(seconds<1.) return;
+    std::ostringstream data;
+    data<<"{\"frames\":"<<frames_<<",\"seconds\":"<<seconds<<",\"fps\":"<<frames_/seconds<<"}";
+    gz::msgs::StringMsg message;message.set_data(data.str());
+    frame_publisher_.Publish(message);frame_begin_=now;frames_=0;
+  }
   void PublishImage() {
     const auto now = std::chrono::steady_clock::now();
     if (now - last_image_ < std::chrono::milliseconds(100)) return;
@@ -59,6 +77,9 @@ class SsbShadowSettings : public gz::gui::Plugin {
   bool apply_fix_ = true, diagnostic_ = false;
   gz::transport::Node node_;
   gz::transport::Node::Publisher publisher_;
+  gz::transport::Node::Publisher frame_publisher_;
+  uint64_t frames_=0;
+  std::chrono::steady_clock::time_point frame_begin_{};
   gz::rendering::CameraPtr camera_;
   std::chrono::steady_clock::time_point last_image_{};
 };

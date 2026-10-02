@@ -172,10 +172,15 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     finished_=true;
     obs_.close();
     truth_.close();
-    ssb::WriteJsonAtomic(log_root_+"/summary.json", {{"complete",false},{"error",error}});
     if(pipeline_) {
       pipeline_->Finish(error);
       completion_=std::async(std::launch::async,[this]{return pipeline_->Wait();});
+    }
+    // Diagnostic persistence must not prevent raw capture from draining.
+    try {
+      ssb::WriteJsonAtomic(log_root_+"/summary.json", {{"complete",false},{"error",error}});
+    } catch(const std::exception& diagnostic_error) {
+      std::cerr<<"[contact] cannot commit failure diagnostic: "<<diagnostic_error.what()<<std::endl;
     }
     std::cerr<<"[contact] "<<error<<"; draining accepted input"<<std::endl;
   }

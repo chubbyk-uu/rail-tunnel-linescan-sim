@@ -120,7 +120,9 @@ nlohmann::json TableWriter::Close() {
   out_.flush();
   out_.close();
   if (out_.fail()) throw std::runtime_error("close failed: " + path_.string());
-  statistics_.write_seconds+=Elapsed(flush_begin);
+  const double flush_seconds=Elapsed(flush_begin);
+  statistics_.write_seconds+=flush_seconds;
+  statistics_.longest_write_s=std::max(statistics_.longest_write_s,flush_seconds);
   const std::string digest = hash_.Final();
   auto begin=Clock::now();
   if (Sha256File(path_) != digest) throw std::runtime_error("read-back hash mismatch: " + path_.string());
