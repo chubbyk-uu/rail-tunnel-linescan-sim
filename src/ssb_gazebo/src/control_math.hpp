@@ -10,6 +10,10 @@ bool HasValues(const Values&... values) {
   return (... && (values && !values->empty()));
 }
 
+inline double DriveTorque(double target_rate, double measured_rate) {
+  return std::clamp(12*(target_rate-measured_rate), -8., 8.);
+}
+
 
 inline std::array<double,3> EulerRates(double pitch,double yaw,const std::array<double,3>& world_omega) {
   const double horizontal=std::cos(yaw)*world_omega[0]+std::sin(yaw)*world_omega[1];

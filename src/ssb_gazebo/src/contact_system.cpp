@@ -68,7 +68,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     if(info.paused)return;
     if(finished_) {
       scan_.SetVelocity(ecm,{0});
-      for(auto& drive:drive_) drive.SetForce(ecm,{0});
+      SetDriveSpeed(ecm,0.);
       return;
     }
     const double dt=std::chrono::duration<double>(info.dt).count(),t=std::chrono::duration<double>(info.simTime).count()-settle_;
@@ -99,12 +99,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     }
     double factor=t>=0&&t<=c_.profile.back()[0]?ssb::EvaluateProfile(c_.profile,t).factor:0;
     double speed=c_.advance_per_rev_m*c_.NominalOmega()/(2*M_PI)*factor;
-    for(int i=0;i<2;++i){auto v=drive_[i].Velocity(ecm);if(!HasValues(v)) {
-        if(started_) StopCapture("drive velocity unavailable during acquisition");
-        return;
-      }
-      const double error=2*speed/drive_diameter_-v->front();
-      torque_[i]=std::clamp(12*error,-8.,8.);drive_[i].SetForce(ecm,{torque_[i]});}
+    if (!SetDriveSpeed(ecm,speed)) return;
     if(t<0){scan_.SetVelocity(ecm,{0});return;}
     if(!started_){
       for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;zero_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_));}
@@ -220,6 +215,23 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     }
     gz::msgs::StringMsg message; message.set_data(status.dump());
     status_pub_.Publish(message);
+  }
+  bool SetDriveSpeed(gz::sim::EntityComponentManager& ecm,double speed) {
+    double rates[2]{};
+    for (int i=0;i<2;++i) {
+      const auto velocity=drive_[i].Velocity(ecm);
+      if (!HasValues(velocity) || !std::isfinite(velocity->front())) {
+        for (auto& drive:drive_) drive.SetForce(ecm,{0});
+        if (started_ && !finished_) StopCapture("drive velocity unavailable during acquisition");
+        return false;
+      }
+      rates[i]=velocity->front();
+    }
+    for (int i=0;i<2;++i) {
+      torque_[i]=DriveTorque(2*speed/drive_diameter_,rates[i]);
+      drive_[i].SetForce(ecm,{torque_[i]});
+    }
+    return true;
   }
   void StartPipeline(){
     auto renderer=std::make_unique<ssb::OptixRenderer>(c_,ssb::DefaultPtxPath(),c_.batch_rows);

@@ -8,6 +8,15 @@
 #include "control_math.hpp"
 #include "assembly_check.hpp"
 
+TEST(Control, ZeroTargetBrakesBothDirectionsWithBoundedTorque) {
+  for(double rate:{-10.,-2.,-.1,.1,2.,10.}) {
+    const double torque=ssb_gazebo::DriveTorque(0.,rate);
+    EXPECT_LT(torque*rate,0.);
+    EXPECT_LE(std::abs(torque),8.);
+  }
+  EXPECT_DOUBLE_EQ(ssb_gazebo::DriveTorque(0.,0.),0.);
+}
+
 TEST(Control, EulerRatesMatchIndependentMatrixDerivative) {
   auto rotation=[](double r,double p,double y) {
     const double cr=cos(r),sr=sin(r),cp=cos(p),sp=sin(p),cy=cos(y),sy=sin(y);
