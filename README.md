@@ -292,17 +292,22 @@ D1 默认使用 CUDA；可显式选择 `--backend cpu`，不会在 CUDA 失败�
 
 ## 测试与常见问题
 
-WSL 完整构建测试：
+完成前面的构建后，推荐用并行入口运行完整回归（本机 WSL 已验收）：
 
 ```bash
 source /opt/ros/jazzy/setup.bash
+source install/setup.bash
 export COLCON_DEFAULTS_FILE="$PWD/colcon_defaults.yaml"
-colcon test > /tmp/ssb_test.log 2>&1
+python3 tools/run_tests.py > /tmp/ssb_test.log 2>&1
 colcon test-result --all
 # 两个 Gazebo 插件的实际服务器回归，使用新的输出目录。
 python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression_NEW \
   > /tmp/ssb_plugin_regression.log 2>&1
 ```
+
+默认使用 4 个 Python 工作进程，按上次报告的用例耗时分组；CPU 用例与 C++ 测试同时运行，Python CUDA 用例等待 C++ OptiX 测试退出后运行。不需要安装 pytest-xdist 等额外依赖，也不会筛掉用例或改变验收门限。本机完整回归约 **23 秒**，此前普通 `colcon test` 约 56–57 秒；当前 **388 项全部通过、无跳过**，包括新增的 5 项报告完整性检查。
+
+脚本保存各组日志及 XML，核对用例身份、数量、重复项和退出码，再合并到 `build/ssb_tools/pytest.xml`，仍可用 `colcon test-result --all` 查看结果。默认日志目录为 `log/parallel_tests_时间_进程号/`；可用 `--output` 指定新的目录，或用 `--workers 1` 将 Python 用例改为串行排查。原始 `colcon test` 入口也保留。完整 20 米采集/展开复测及上面的 Gazebo 实际服务器回归仍单独执行，不包含在这 388 项中。
 
 原生 Linux 的 GPU 测试应直接加载系统运行库；现有 WSL 包装测试不能当作原生部署验收，见 [部署文档](docs/DEPLOYMENT.md)。
 
