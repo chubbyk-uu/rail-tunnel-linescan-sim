@@ -10,7 +10,9 @@ visual baseline ([review record](docs/STAGE_B.md#71-画面复核与基线冻结2
 The RViz mission UI is implemented ([usage](docs/STAGE_B.md#10-rviz-与任务控制));
 stage C has accepted a full 20 m raw capture with Gazebo and RViz open, public-only
 nominal coverage checks and byte-identical replay ([results](docs/STAGE_C.md#6-完整-20-m-采集验收2026-10-02)).
-Stitching and global optimization are still pending.
+Stage D has CUDA initial unrolling and image-only adjacent-band correspondences with
+local affine checks for small body tilt ([results](docs/STAGE_D.md)). Global optimization
+and final seam reconstruction are still pending.
 
 ## Documentation
 
@@ -19,7 +21,7 @@ Stitching and global optimization are still pending.
 | [DESIGN.md](DESIGN.md) | Design specification: goals, parameters, geometry, timing, optics, reconstruction, stage plan |
 | [docs/STAGE_B.md](docs/STAGE_B.md) | Current stage B scene and assets, commands, calibration, acceptance results, known limits |
 | [docs/STAGE_C.md](docs/STAGE_C.md) | Wall target planning, public-only coverage, short capture verification and scale benchmark |
-| [docs/STAGE_D.md](docs/STAGE_D.md) | Native optical correction, CUDA cylinder unroll, independent bands and source provenance |
+| [docs/STAGE_D.md](docs/STAGE_D.md) | CUDA unroll, body-tilt-aware band matches, public-only provenance and independent evaluation |
 | [docs/DEVELOPMENT_RULES.md](docs/DEVELOPMENT_RULES.md) | Development rules learned from the neighbouring projects |
 | [docs/REPAIR_PLAN_2026-10-02.md](docs/REPAIR_PLAN_2026-10-02.md) | Pending review fixes, GUI strip-light occlusion checks and WSL I/O constraints |
 | [docs/history/](docs/history/README.md) | Archived development logs, texture study, quality plan, review record, design v0.8 |
