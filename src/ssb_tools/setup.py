@@ -18,6 +18,7 @@ setup(
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={'console_scripts': [
+        'initial_unroll = ssb_tools.initial_unroll:main',
         'validate_stage_a = ssb_tools.validate_stage_a:main',
         'validate_stage_b_smoke = ssb_tools.validate_stage_b:main',
         'prepare_stage_b_scene = ssb_tools.stage_b_scene:main',
