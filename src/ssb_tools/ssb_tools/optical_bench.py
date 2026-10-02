@@ -70,11 +70,10 @@ def main():
     p.add_argument('--output', required=True); p.add_argument('--render', action='store_true')
     a = p.parse_args(); meta = prepare(a.config, a.output); root = Path(a.output).resolve()
     if a.render:
-        repo = Path(__file__).resolve().parents[3]
+        from .package_paths import probe_command
         for name, target in meta['targets'].items():
             with (root/(name+'.log')).open('w') as log:
-                subprocess.run(['bash',str(repo/'tools/with_optix_runtime.sh'),
-                    str(repo/'install/ssb_core/lib/ssb_core/ssb_probe'), '--config', str(root/target['config']),
+                subprocess.run(probe_command()+[ '--config', str(root/target['config']),
                     '--output',str(root/target['capture']), '--rows','256', '--x',str(target['camera_x_m']),
                     '--theta',str(target['theta_rad'])], stdout=log, stderr=subprocess.STDOUT, check=True)
     print(json.dumps(dict(bench=str(root/'bench.json'), rendered=a.render)))

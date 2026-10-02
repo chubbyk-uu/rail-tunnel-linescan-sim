@@ -48,12 +48,13 @@ class MissionManager(Node):
     def __init__(self, args):
         super().__init__('ssb_mission_manager')
         self.args = args
-        self.repo = Path(__file__).resolve().parents[3]
+        self.data_root = Path(args.data_root).resolve()
+        self.data_root.mkdir(parents=True, exist_ok=True)
         self.demo = Path(args.demo).resolve()
         self.config = yaml.safe_load((self.demo/'capture.yaml').read_text())
         check_calibration(self.demo/'capture.yaml', self.demo/'calibration.json')
         self.root = Path(args.output_root).resolve(); self.root.mkdir(parents=True, exist_ok=True)
-        self.ownership = (self.repo/'local_data/mission_manager.lock').open('a')
+        self.ownership = (self.data_root/'mission_manager.lock').open('a')
         fcntl.flock(self.ownership, fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.lock = threading.RLock()
         self.state = 'idle'; self.error = ''; self.task = {}; self.session = None
@@ -61,7 +62,7 @@ class MissionManager(Node):
         self.commands = queue.Queue(maxsize=16); self.seen = deque(maxlen=256)
         self.command_result = {}; self.events = []
         self.last_received = time.monotonic(); self.expected_exit = False
-        self.preview = Preview(self.demo/'world/world.sdf', self.repo/'local_data/rviz_preview')
+        self.preview = Preview(self.demo/'world/world.sdf', self.data_root/'rviz_preview')
         self.latest = initial_state(self.config,
             pose_values(transform(self.preview.car.findtext('pose'))@self.preview.base))
         self.truth_clock = self.create_publisher(Clock, '/clock', 10)
@@ -150,7 +151,7 @@ class MissionManager(Node):
         else:
             plan(self.config, start, distance)  # Reject before creating any files/processes.
         token = time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
-        inputs = self.repo/'local_data/mission_runs'/token
+        inputs = self.data_root/'mission_runs'/token
         config, task = prepare(self.demo, inputs, start, distance, mode=mode)
         check_calibration(inputs/'capture.yaml', self.demo/'calibration.json')
         from .physical_world import check as physical_check, spec_for
@@ -327,6 +328,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--demo', default='local_data/stage_b/contact_demo')
     p.add_argument('--output-root', default='sessions/mission')
+    p.add_argument('--data-root', default='local_data', help='writable assets/cache/lock root; Linux filesystem preferred')
     p.add_argument('--gz-gui', action='store_true')
     p.add_argument('--dynamics-only', action='store_true', help='test mode, NO image acquisition')
     args = p.parse_args()

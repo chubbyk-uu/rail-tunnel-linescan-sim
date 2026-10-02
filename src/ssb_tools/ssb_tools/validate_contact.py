@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 import yaml
+from .package_paths import share_file
 
 from .robot_geometry import mount_geometry
 
@@ -52,7 +53,7 @@ def physical_world_report(root, config_path, config, spec, world=None):
 def validate(root, config, spec=None, world=None):
     root = Path(root); config = Path(config); c = yaml.safe_load(config.read_text())
     spec_path = Path(spec) if spec else (config.parent/'spec.yaml' if (config.parent/'spec.yaml').exists()
-                                          else Path(__file__).resolve().parents[1]/'config/stage_b_scene.yaml')
+                                          else share_file('config/stage_b_scene.yaml'))
     from .physical_world import snapshot_inputs
     physical_spec = (snapshot_inputs(root)[2] if (root/'evaluation/physical').exists()
                      else yaml.safe_load(spec_path.read_text()))

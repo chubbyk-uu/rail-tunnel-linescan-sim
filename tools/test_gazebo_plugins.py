@@ -12,7 +12,6 @@ import numpy as np
 import yaml
 
 REPO=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(REPO/'src/ssb_tools'))
 from ssb_tools.stage_b_scene import make_world,load_spec
 from ssb_tools.session import Session, sha256_file
 

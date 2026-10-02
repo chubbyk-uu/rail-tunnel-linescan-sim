@@ -193,7 +193,7 @@ def prepare(session_path, demo, output):
 
 def supplementary_probes(session_path, demo, output, report):
     """Render sparse assessment examples, clearly separate from encoder acceptance."""
-    repo = Path(__file__).resolve().parents[3]
+    from .package_paths import probe_command
     output, demo = Path(output).resolve(), Path(demo).resolve()
     private = output/'evaluation/probes'; private.mkdir()
     config_path = demo/'capture.yaml'; c = yaml.safe_load(config_path.read_text())
@@ -206,8 +206,7 @@ def supplementary_probes(session_path, demo, output, report):
 
     def probe(name, config, point):
         target = private/name
-        command = ['bash', str(repo/'tools/with_optix_runtime.sh'),
-                   str(repo/'install/ssb_core/lib/ssb_core/ssb_probe'), '--config', str(config),
+        command = probe_command()+[ '--config', str(config),
                    '--output', str(target), '--rows', '1024', '--x', str(point[0]),
                    '--theta', str(point[1]/radius), '--speed', str(speed),
                    '--omega', str(omega), '--rate', str(rate)]

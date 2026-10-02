@@ -11,7 +11,6 @@ import xml.etree.ElementTree as ET
 import yaml
 
 REPO=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(REPO/'src/ssb_tools'))
 from ssb_tools.stage_b_gui_world import prepare
 from ssb_tools.stage_b_scene import digest
 from ssb_tools.stage_b_track import replace_track
@@ -166,7 +165,6 @@ def main():
     shutil.copyfile(REPO/'src/ssb_gazebo/worlds/stage_b_gui.config',out/'gui.config')
     if a.calibrate:
         env = dict(os.environ)
-        env['PYTHONPATH'] = str(REPO/'src/ssb_tools')
         for command in ([sys.executable,'-m','ssb_tools.optical_bench','--config',str(out/'capture.yaml'),
                          '--output',str(out/'bench'),'--render'],
                         [sys.executable,'-m','ssb_tools.optical_calibration','fit','--bench',str(out/'bench/bench.json'),

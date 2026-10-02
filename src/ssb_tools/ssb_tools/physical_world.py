@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import yaml
+from .package_paths import share_file
 
 SCHEMA = 'ssb.physical_manifest.v2'
 NAME = 'physical_manifest.json'
@@ -254,7 +255,7 @@ def spec_for(config_path):
     config_path = Path(config_path)
     local = config_path.parent/'spec.yaml'
     return yaml.safe_load((local if local.exists() else
-                           Path(__file__).resolve().parents[1]/'config/stage_b_scene.yaml').read_text())
+                           share_file('config/stage_b_scene.yaml')).read_text())
 
 
 def snapshot_inputs(root):

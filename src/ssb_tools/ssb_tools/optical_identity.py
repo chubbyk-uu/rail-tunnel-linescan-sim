@@ -14,7 +14,7 @@ def ensure_optical_key(config):
 
 
 def check_calibration(config, calibration):
-    repo = Path(__file__).resolve().parents[3]
-    command = repo/'install/ssb_core/lib/ssb_core/ssb_optical_identity'
+    from .package_paths import core_executable
+    command = core_executable('ssb_optical_identity')
     return subprocess.run([str(command), '--config', str(config), '--calibration', str(calibration)],
                           check=True, capture_output=True, text=True).stdout.strip()

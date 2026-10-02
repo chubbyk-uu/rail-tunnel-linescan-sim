@@ -7,7 +7,8 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/ssb_tools']),
         ('share/ssb_tools', ['package.xml']),
-        ('share/ssb_tools/config', ['config/stage_b_scene.yaml']),
+        ('share/ssb_tools/config', ['config/stage_b_scene.yaml', 'config/stage_b_material_set.yaml']),
+        ('share/ssb_tools/tools', ['../../tools/with_optix_runtime.sh']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
