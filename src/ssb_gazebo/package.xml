@@ -6,12 +6,14 @@
   <maintainer email="dk.illidan@gmail.com">jerry</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>pkg-config</build_depend>
   <depend>ssb_core</depend>
   <depend>gz_sim_vendor</depend>
   <depend>gz_plugin_vendor</depend>
   <depend>gz_transport_vendor</depend>
   <depend>gz_gui_vendor</depend>
   <depend>gz_rendering_vendor</depend>
+  <depend>gz_ogre_next_vendor</depend>
   <test_depend>ament_cmake_gtest</test_depend>
   <export>
     <build_type>ament_cmake</build_type>
