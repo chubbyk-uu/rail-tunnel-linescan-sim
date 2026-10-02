@@ -67,6 +67,28 @@ def test_out_of_bounds_and_nonfinite_tasks_rejected(config, start, distance):
     with pytest.raises(ValueError): plan(config, start, distance)
 
 
+@pytest.mark.parametrize('mode', ['travel', 'wall'])
+@pytest.mark.parametrize('start,distance', [(-1., 1.), (19., 2.), (3., .5)])
+def test_rejected_plan_preserves_completed_display(config, tmp_path, mode, start, distance):
+    pytest.importorskip('rclpy')
+    import threading
+    from types import SimpleNamespace
+    from ssb_tools.mission_manager import MissionManager
+    config['robot'] = {'base_reference_z_m': .3}
+    demo = tmp_path/'demo'; demo.mkdir()
+    (demo/'calibration.json').write_text('{}')
+    fake = SimpleNamespace(lock=threading.RLock(), state='complete', session=tmp_path/'completed',
+        inputs=tmp_path/'previous_inputs', task={'start_m': 3., 'distance_m': 3.},
+        latest={'sim_time': 20., 'base_pose': [6., 0., .3], 'capture': {'rows_saved': 100}},
+        events=[{'state': 'complete'}], error='', drain_activity=22, shutdown_deadline=123.,
+        demo=demo, config=config, data_root=tmp_path/'data')
+    previous = copy.deepcopy({k: v for k, v in vars(fake).items() if k != 'lock'})
+    with pytest.raises(ValueError):
+        MissionManager.launch(fake, {'start_m': start, 'distance_m': distance, 'mode': mode})
+    assert {k: v for k, v in vars(fake).items() if k != 'lock'} == previous
+    assert not fake.data_root.exists()
+
+
 def test_preview_head_follows_body_attitude_and_negative_scan_axis(tmp_path):
     pytest.importorskip('geometry_msgs')
     world = tmp_path/'world.sdf'

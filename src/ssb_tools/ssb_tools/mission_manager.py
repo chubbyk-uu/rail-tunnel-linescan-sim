@@ -170,22 +170,31 @@ class MissionManager(Node):
         if mode not in ('travel', 'wall'): raise ValueError('Unknown task mode')
         token = time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
         inputs = self.data_root/'mission_runs'/token
-        # From this point all diagnostics belong to this attempt, even if
-        # preparation fails before a capture session is created.
-        with self.lock:
-            self.session = None
-            self.inputs = inputs
-            self.task = dict(start_m=start, distance_m=distance, mode=mode)
-            self.events = []
-            self.error = ''
-            self.drain_activity = 0
-            self.shutdown_deadline = 0.
-            self.latest = initial_state(self.config,
-                [start, 0., self.config['robot']['base_reference_z_m'], 0., 0., 0., 1.])
-        if mode == 'wall':
-            wall_plan(self.config, start, distance, json.loads((self.demo/'calibration.json').read_text()))
-        else:
-            plan(self.config, start, distance)  # Reject before creating any files/processes.
+        def begin_attempt():
+            # Only an accepted plan or an unexpected preparation error owns a
+            # new attempt. A rejected command leaves the last displayed result.
+            with self.lock:
+                self.session = None
+                self.inputs = inputs
+                self.task = dict(start_m=start, distance_m=distance, mode=mode)
+                self.events = []
+                self.error = ''
+                self.drain_activity = 0
+                self.shutdown_deadline = 0.
+                self.latest = initial_state(self.config,
+                    [start, 0., self.config['robot']['base_reference_z_m'], 0., 0., 0., 1.])
+        try:
+            if mode == 'wall':
+                wall_plan(self.config, start, distance, json.loads((self.demo/'calibration.json').read_text()))
+            else:
+                plan(self.config, start, distance)  # Reject before creating any files/processes.
+        except (ValueError, KeyError):
+            raise
+        except Exception:
+            # Preflight I/O failure must still be isolated from the old session.
+            begin_attempt()
+            raise
+        begin_attempt()
         config, task = prepare(self.demo, inputs, start, distance, mode=mode)
         check_calibration(inputs/'capture.yaml', self.demo/'calibration.json')
         from .physical_world import check as physical_check, spec_for
