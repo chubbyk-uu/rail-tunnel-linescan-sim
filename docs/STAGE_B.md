@@ -94,11 +94,11 @@ python3 -m ssb_tools.demo_bundle \
 | 纹理预算 | OptiX GPU 2 GiB、CPU 1 GiB；GUI 1280 MiB（现行 140 块约 746 MiB） | `stage_b_scene.yaml` 的 `resources` |
 | GUI 预览 | 同源 Concrete034 分块底色（x=3–6 m 处 1 mm，其余 2 mm），裂缝 4 倍子像素预览；环境散光 0.6；工作灯和条光见 DESIGN §7.5 | `gui_c034_v1`、`gui_strip_shadow_final_v10` |
 
-所有资产目录都在 `local_data/stage_b/`。素材原图在 `local_data/stage_b/sources/`（concrete034、grey_plaster、painted_plaster_wall），各目录的 `downloads.json` 记录来源、许可和哈希。这些原图是手动下载的，没有自动下载命令。
+所有资产目录都在 `local_data/stage_b/`。素材原图在 `local_data/stage_b/sources/`（concrete034、grey_plaster、painted_plaster_wall），各目录的 `downloads.json` 记录来源、许可和哈希。首次部署使用 `tools/download_demo_sources.py` 从公开网站下载并写入来源清单，然后用 `tools/build_demo_from_sources.py` 从零生成完整演示，见 [ASSETS.md](ASSETS.md)。
 
 ## 4. 重新生成资产
 
-除非另行说明，命令都在仓库根目录执行，需要先 `source install/setup.bash`。输出目录已存在时工具拒绝覆盖，失败的输出会标记 `FAILED`，复现时请换用新目录。以下是现行资产的生成链。
+除非另行说明，命令都在仓库根目录执行，需要先 `source install/setup.bash`。输出目录已存在时工具拒绝覆盖，失败的输出会标记 `FAILED`，复现时请换用新目录。首次部署优先执行 [ASSETS.md](ASSETS.md) 的下载及完整生成入口。以下为逐模块生成示例；裂缝目录先在本机重定位，避免历史绝对路径。
 
 ```bash
 CFG=src/ssb_core/config/stage_b.yaml
@@ -111,10 +111,23 @@ python3 -m ssb_tools.stage_b_runtime_surface prepare-set --set src/ssb_tools/con
 python3 -m ssb_tools.stage_b_runtime_surface prepare-filler \
   --downloads $OUT/sources/grey_plaster/downloads.json --output $OUT/NEW_FILLER
 
-# 2. 裂缝：基础布局 → 细化 → 有效深度（每步保存输入快照）
+# 2. 把已入 Git 的裂缝目录绑定到本机 PNG，保留 source_sha256。
+python3 - <<'PY_CATALOG'
+import json
+from pathlib import Path
+root = Path.cwd()
+out = root/'local_data/stage_b/NEW_CATALOGS'
+out.mkdir(parents=True, exist_ok=False)
+for name in ('long_crack_candidates_v1', 'crack_candidates_v1'):
+    source = root/f'assets/cracks/generated/{name}.catalog.json'
+    data = json.loads(source.read_text())
+    data['source_file'] = str(root/f'assets/cracks/generated/{name}.png')
+    (out/source.name).write_text(json.dumps(data, indent=2)+'\n')
+PY_CATALOG
+# 裂缝：基础布局 → 细化 → 有效深度（每步保存输入快照）
 python3 -m ssb_tools.stage_b_defects --config $CFG --spec $SPEC \
-  --long-catalog assets/cracks/generated/long_crack_candidates_v1.catalog.json \
-  --short-catalog assets/cracks/generated/crack_candidates_v1.catalog.json --output $OUT/NEW_BASE
+  --long-catalog $OUT/NEW_CATALOGS/long_crack_candidates_v1.catalog.json \
+  --short-catalog $OUT/NEW_CATALOGS/crack_candidates_v1.catalog.json --output $OUT/NEW_BASE
 python3 -m ssb_tools.stage_b_defects --refine $OUT/NEW_BASE --spec $SPEC --output $OUT/NEW_REFINED
 python3 -m ssb_tools.stage_b_defects --depth $OUT/NEW_REFINED --spec $SPEC --output $OUT/NEW_DEFECTS
 
@@ -134,14 +147,16 @@ python3 -m ssb_tools.stage_b_gui_world --world $OUT/NEW_GUI/world.sdf \
   --config $OUT/NEW_OPTICS/capture.yaml --spec $SPEC --output $OUT/NEW_GUI_LIGHT --mode lighting
 
 # 6. 接触演示和标定（--world / --config 指向上面的新产物）
-python3 tools/prepare_contact_demo.py --world $OUT/NEW_GUI_LIGHT/world.sdf \
-  --config $OUT/NEW_OPTICS/capture.yaml --output $OUT/NEW_DEMO --calibrate
+python3 tools/prepare_contact_demo.py --demo $OUT/NEW_OPTICS --world $OUT/NEW_GUI_LIGHT/world.sdf \
+  --config $OUT/NEW_OPTICS/capture.yaml --spec $SPEC \
+  --track-chord-mm 2 --track-cross-level-mm 2 \
+  --output $OUT/NEW_DEMO --calibrate
 ```
 
 说明：
 
 - 第 3 步生成网格后自动做漏光审计（`ssb_tools.mesh_audit`，结果写入 `mesh_audit.json`）：全部板缝已填时，只要有一处从隧道内能看到背衬就判失败。
-- 第 6 步默认保留来源网格。需要替换时显式传 `--geometry $OUT/NEW_GEOMETRY`，验证四个衬面网格及完整性清单，光学身份与标定保留。完整来源重建还需传 `--spec $SPEC`；原始素材下载和 AI 裂缝素材不随 Git 提供，当前验证的是从完整包派生，不等于已重跑全部素材生成链。
+- 第 6 步默认保留来源网格。需要替换时显式传 `--geometry $OUT/NEW_GEOMETRY`，验证四个衬面网格及完整性清单，光学身份与标定保留。完整来源重建还需传 `--spec $SPEC`；公开纹理原图不随 Git 提供，由下载器获取；AI 裂缝 PNG 与目录已在 Git 内。首次部署的完整链使用 [ASSETS.md](ASSETS.md) 的入口，它显式提供所有输入并为裂缝目录绑定当前仓库路径，不依赖旧演示。
 - 新生成的裂缝索引用 double 端点格式（`xq64_radius32_le`，20 m 场景约 35 MB，预算 64 MiB）。现行 `defects_dev_v5` 是旧 float 格式，3 m 演示精度足够。
 - 重新生成会得到新的资产哈希和新的光学密钥，旧标定随之失效，必须重新标定。
 - 重复度可独立测量：`python3 -m ssb_tools.stage_b_repetition --surface SURFACE.json --area 0 21 -6 6 --size 3 --windows 150`。
@@ -182,9 +197,9 @@ bash tools/with_optix_runtime.sh install/ssb_core/lib/ssb_core/ssb_probe --confi
 ## 6. 光学标定与校正
 
 ```bash
-PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_bench --config CAPTURE.yaml --output BENCH --render
-PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration fit --bench BENCH/bench.json --output CALIBRATION.json
-PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply --session SESSION \
+python3 -m ssb_tools.optical_bench --config CAPTURE.yaml --output BENCH --render
+python3 -m ssb_tools.optical_calibration fit --bench BENCH/bench.json --output CALIBRATION.json
+python3 -m ssb_tools.optical_calibration apply --session SESSION \
   --calibration CALIBRATION.json --output CORRECTED
 ```
 
@@ -246,7 +261,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply --sessio
 
 ```bash
 SSB_REVIEW_SESSION=sessions/mission/YOUR_SESSION
-PYTHONPATH=src/ssb_tools python3 -m ssb_tools.optical_calibration apply \
+python3 -m ssb_tools.optical_calibration apply \
   --session "$SSB_REVIEW_SESSION" --calibration local_data/stage_b/contact_demo/calibration.json \
   --output "$SSB_REVIEW_SESSION/processed/optical"
 ```
@@ -289,7 +304,7 @@ PYTHONPATH=src/ssb_tools python3 -m ssb_tools.stage_b_review \
   - 渲染器各分块重叠 10 µm。
 
   `geometry_b2_v5` 审计结果为 0。保留的未填缝 / 破损板缝开发路径（量产不用）仍有约 5900 条漏光边，以后启用前需要重新设计。
-- 只验证了直轨。完整 20 m 的联合 GUI 性能已单独验收（STAGE_C §6），不外推到弯轨或 100–150 m。
+- 只验证了直轨。完整 20 m 的联合 GUI 性能已单独验收（STAGE_C §6），不外推到弯轨或 50 m；现行扩展目标最多为 50 m。
 - 轨道起伏有竖向和水平（差动）分量，没有轨向不平顺，也没有波磨、焊缝等局部缺陷。编码轮转动没有轴承阻力，翘起后按惯性转动。车轮刚度是假设值，DART 在 1 ms 步长下无法实现 0.1 mm 以下的静压缩量；没有模拟受载滚动半径变化和滚动阻力。
 
 ## 9. 待完成

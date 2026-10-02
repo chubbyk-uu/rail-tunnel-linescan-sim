@@ -2,7 +2,7 @@
 
 本项目复现轨道巡检机器人搭载旋转线阵相机的连续螺旋采集：车辆沿钢轨前进，相机与 COB 光源共同旋转，编码器按角度触发每一行，在上方 240° 范围内采集隧道内壁。Gazebo 负责轮轨接触和运动，OptiX 负责高速线阵成像，ROS 2 / RViz 提供任务控制与状态显示。后续通过图像展开、特征匹配和全局拼接优化，复原隧道内壁全图。
 
-**当前进度（2026-10-02）：** 已完成 20 米原始采集验收、采后光学校正、CUDA 初始展开和相邻条带特征匹配。全局优化、最终接缝融合及完整成果输出仍在实施计划中。
+**当前进度（2026-10-02）：** 已完成 20 米原始采集验收、采后光学校正、CUDA 初始展开和相邻条带特征匹配。全局优化、最终接缝融合及完整成果输出仍在实施计划中。先完成 20 米全图，后续最多扩展到 **50 米**；100–150 米不再列为交付目标。
 
 ## 运行效果
 
@@ -94,7 +94,7 @@ sudo apt-get update
 sudo apt-get install -y \
   ros-jazzy-desktop ros-jazzy-ros-gz \
   python3-colcon-common-extensions python3-rosdep \
-  build-essential cmake ninja-build pkg-config git curl \
+  build-essential cmake ninja-build pkg-config git curl libvips-tools \
   libyaml-cpp-dev nlohmann-json3-dev libssl-dev qtbase5-dev \
   python3-numpy python3-scipy python3-opencv python3-pil \
   python3-yaml python3-matplotlib python3-pytest python3-psutil
@@ -158,40 +158,49 @@ install/ssb_core/lib/ssb_core/ssb_selfcheck \
 
 只执行与你环境对应的一条。自检验证的是 OptiX 初始化与真实射线计算，不只是 CUDA 设备是否可见。
 
-## 恢复演示资产
+## 下载素材并生成演示资产
 
-**Git 不包含运行所需的大型混凝土纹理、隧道网格和演示包。新克隆必须单独恢复资产，不能直接运行阶段 B/C。** 当前没有仓库内自动下载完整资产包的入口。
+Git 不包含大型混凝土原图和派生隧道资产。**新克隆应从公开素材网站下载原图，然后在本机生成演示；不需要从已有机器拷贝 `local_data`。** 裂缝候选 PNG、矢量目录和生成配方已经在 Git 中，不需要重新调用生图服务。
 
-在已有完整资产的机器上导出：
+| 用途 | 素材页面 | 下载规格 |
+|---|---|---|
+| 混凝土细节 | [ambientCG Concrete034](https://ambientcg.com/view?id=Concrete034) | `16K-PNG.zip`；使用 Color、NormalGL、Roughness 三张图，实际 16384×8192，约 1.1×0.55 m |
+| 大尺度色调 | [Poly Haven Painted Plaster Wall](https://polyhaven.com/a/painted_plaster_wall) | 4K、PNG、Diffuse；仅取 ≥20 mm 的明暗变化 |
+| 灰色填缝砂浆 | [Poly Haven Grey Plaster](https://polyhaven.com/a/grey_plaster) | 8K、PNG、Diffuse；仅用于填缝细节 |
+
+以上来源为 CC0。下载器使用这些网站的官方文件地址，继承当前终端的代理环境，校验仓库中固定的 SHA-256，并生成后续工具所需的 `downloads.json`。它只解压需要的三张 Concrete034 贴图，不解压整个包；已完整下载的素材可校验复用。
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-python3 -m ssb_tools.demo_bundle \
-  --demo local_data/stage_b/contact_demo \
-  --output /tmp/subway_demo_bundle
-# 以一个压缩包传输，避免跨 WSL/Windows 逐个复制小文件。
-tar -C /tmp -czf /tmp/subway_demo_bundle.tar.gz subway_demo_bundle
+
+# 可选：先设置你自己的 https_proxy / http_proxy，再执行下载。
+# 不在仓库中保存代理地址或凭据。
+python3 tools/download_demo_sources.py --output local_data/stage_b/sources \
+  > /tmp/ssb_source_download.log 2>&1
+
+# WSL：由原图生成 20 米隧道、纹理、裂缝、轨道车和独立标靶标定。
+# work 和 output 都必须是尚不存在的新目录。
+python3 tools/build_demo_from_sources.py --runtime wsl \
+  --sources local_data/stage_b/sources \
+  --work local_data/stage_b/build_from_sources_NEW \
+  --output local_data/stage_b/contact_demo \
+  > /tmp/ssb_asset_generation.log 2>&1
 ```
 
-将压缩包传到新机器的 Linux 文件系统，恢复到默认位置（目标目录须尚未存在）：
+**原生 Linux** 使用同一下载命令，生成命令将 `--runtime wsl` 改为 `--runtime native`，标靶渲染直接加载系统 OptiX 运行库；无需 WSL Mesa。素材预处理还需要公共依赖中的 `libvips-tools`。原生主机整套生成与采集仍待实机验收。
 
-```bash
-mkdir -p local_data/stage_b
-# /path/to/ 是你实际收到的资产包位置。
-tar -xzf /path/to/subway_demo_bundle.tar.gz -C local_data/stage_b
-mv local_data/stage_b/subway_demo_bundle local_data/stage_b/contact_demo
-```
+生成流程自动完成：混凝土分层合成 → 砂浆 → 裂缝布局/细化/深度 → 隧道网格及漏光审计 → OptiX 场景 → Gazebo 预览 → 轮轨接触世界 → 标靶渲染与图像标定 → 相对引用的完整演示包。完整日志在 `work/generation.log`。生成结束后 `contact_demo` 可直接用于下面的启动命令。
 
-完整包约 1.70 GiB 运行依赖，包含 `capture.yaml`、`calibration.json`、`spec.yaml`、`gui.config`、`bundle.json`、`assets/` 和 `world/`。运行引用可整体迁移，历史来源路径仅用于记录。不要混搭不同包的世界、配置和标定。
+如果本机已有默认演示，给 `--output` 换一个新目录进行复现，不覆盖旧资产。新生成的光学身份不同，必须使用新包自带的标定；不能混用旧的 `calibration.json`。输出包含仿真生成端真值和光学密钥，供生成采集使用，不能作为生产重建输入。
 
-资产含生成端的真实参数和光学密钥，供仿真生成使用；它不是生产重建输入。完整资产生成链、下载素材和重新标定见 [阶段 B](docs/STAGE_B.md#4-重新生成资产)。
+网站手动下载方法、目录结构、每一步命令和验证边界见 [素材下载与从零生成](docs/ASSETS.md)。默认仍生成 **20 米**；50 米需要重建长度相符的场景并另行验收，不能只改 RViz 的任务范围。
 
 ## 快速运行
 
 ### WSL：Gazebo + RViz 联合任务
 
-完成构建、自检和资产恢复后：
+完成构建、自检和资产生成后：
 
 ```bash
 tools/run_mission.sh --gz-gui > /tmp/ssb_mission.log 2>&1
@@ -213,7 +222,7 @@ tools/run_mission.sh > /tmp/ssb_mission.log 2>&1
 | `Pause` / `Resume` | 暂停/恢复仿真；已经触发的图像仍会排空保存 |
 | `Stop` | 提前结束并保存已采集原图，保留任务未完成标记 |
 
-建议首次用 `Vehicle travel`，起点 **3 m**、行程 **3 m**；最短任务 1 m。扫描头初始朝正下方，转到右下门控才开始曝光。左下角显示最近保存块的降采样原图，右侧显示估计里程、速度、扫描角、行数、成像滞后和输出路径。
+建议首次用 `Wall coverage`，壁面起点 **3 m**、长度 **3 m**，这样采集结果可直接用于后面的 D1 展开；最短任务 1 m。`Vehicle travel` 仅用于观察车体运动，其会话没有预先声明壁面目标，当前 D1 不接受这种会话。扫描头初始朝正下方，转到右下门控才开始曝光。左下角显示最近保存块的降采样原图，右侧显示估计里程、速度、扫描角、行数、成像滞后和输出路径。
 
 关闭 RViz 时管理器会停止并排空自身采集进程。结束时先等待状态变为完成；不要强杀进程来省略写盘。Gazebo GUI 使用同一服务器；联合任务请通过 RViz 面板控制。
 
@@ -247,7 +256,8 @@ bash tools/run_wall_capture.sh sessions/wall_20m_NEW 0 20 \
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 
-# 将 SESSION 替换为已完成的原始采集目录。
+# 将 SESSION 替换为已完成的 Wall coverage 会话，例如 sessions/wall_3m_NEW。
+# Vehicle travel 会话不能用于当前 D1；不能事后篡改归档配置补目标。
 ros2 run ssb_tools initial_unroll \
   --session SESSION \
   --calibration local_data/stage_b/contact_demo/calibration.json \
@@ -298,7 +308,7 @@ python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression_NEW \
 
 | 现象 | 检查 |
 |---|---|
-| 缺少 `contact_demo` 或文件哈希不匹配 | 恢复完整资产包，检查配置、标定和世界是否成套；不要随意删包内文件 |
+| 缺少 `contact_demo` 或文件哈希不匹配 | 执行上述素材下载与生成步骤，检查配置、标定和世界是否成套；不要随意删包内文件 |
 | `Missing runtime library` | WSL 隔离 OptiX 组件未准备好；原生 Linux 应使用原生入口 |
 | `missing private Mesa component` | 检查 `SSB_MESA_PREFIX` 与安装内容；默认脚本不会自动改用系统 Mesa |
 | `optixInit` / 后端启动失败 | SDK 只用于编译，核对实际驱动运行库；`nvidia-smi` 成功不足以证明 OptiX 正常 |
@@ -326,6 +336,7 @@ docs/             设计、部署、验收、后续计划和界面媒体
 | 文档 | 内容 |
 |---|---|
 | [设计规范](DESIGN.md) | 几何、时序、光学、可观测性与阶段目标 |
+| [素材与资产生成](docs/ASSETS.md) | 官方下载规格、从零生成、重新标定及日志 |
 | [部署补充](docs/DEPLOYMENT.md) | WSL 专用运行环境、原生 Linux 启动和测试边界 |
 | [阶段 B](docs/STAGE_B.md) | 场景、资产包、标定、采集与画质基线 |
 | [阶段 C](docs/STAGE_C.md) | 壁面任务规划、20 米原始采集验收与资源 |

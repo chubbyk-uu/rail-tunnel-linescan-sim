@@ -1,0 +1,70 @@
+{
+  "schema": "ssb.demo_source_downloads.v1",
+  "sources": {
+    "concrete034": {
+      "asset": "Concrete034",
+      "source_url": "https://ambientcg.com/view?id=Concrete034",
+      "license": "CC0",
+      "package": {
+        "file": "Concrete034_16K-PNG.zip",
+        "url": "https://ambientcg.com/get?file=Concrete034_16K-PNG.zip",
+        "sha256": "307c0bff60ca2d30e8abfb9995f911fdd2b9fffe585c4582e1904a6cb9673293",
+        "bytes": 431185761
+      },
+      "source_width_m": 1.1,
+      "source_height_m": 0.55,
+      "dimensions_source": "ambientCG API dimensionX/Y = 110 x 55 cm",
+      "channels": {
+        "diffuse": {
+          "file": "Concrete034_16K-PNG_Color.png",
+          "sha256": "d5a5f80f7afad78a6b8c0f1b915d2af78a189eb0816d51f12b5a77bdcf1deb27",
+          "bytes": 97704254
+        },
+        "normal_gl": {
+          "file": "Concrete034_16K-PNG_NormalGL.png",
+          "sha256": "f13abd696d66dd821033c47b6fe04706ab9c2241a5638e8c5099080ef4d4b9d4",
+          "bytes": 94225473
+        },
+        "roughness": {
+          "file": "Concrete034_16K-PNG_Roughness.png",
+          "sha256": "e37d1bab68b111ff5c55195f415a99f4178611f354e73e311da3c42cbcf51793",
+          "bytes": 99654937
+        }
+      }
+    },
+    "grey_plaster": {
+      "asset": "grey_plaster",
+      "source_url": "https://polyhaven.com/a/grey_plaster",
+      "license": "CC0",
+      "source_width_m": 1.0,
+      "source_height_m": 1.0,
+      "dimensions_source": "Poly Haven API dimensions 1000 x 1000 mm",
+      "use": "joint filler (grey mortar) albedo detail only: >=10 mm tone (moss) removed, mean normalised",
+      "channels": {
+        "diffuse": {
+          "file": "grey_plaster_diff_8k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/grey_plaster/grey_plaster_diff_8k.png",
+          "sha256": "f4d700aaebe511d49c651a37c696e2b92137df2b12c56362577c3370274a2b35",
+          "bytes": 130922917
+        }
+      }
+    },
+    "painted_plaster_wall": {
+      "asset": "painted_plaster_wall",
+      "source_url": "https://polyhaven.com/a/painted_plaster_wall",
+      "license": "CC0",
+      "source_width_m": 2.0,
+      "source_height_m": 2.0,
+      "dimensions_source": "Poly Haven API dimensions 2000 x 2000 mm",
+      "use": "low-frequency (>=20 mm) albedo modulation only; fine detail discarded",
+      "channels": {
+        "diffuse": {
+          "file": "painted_plaster_wall_diff_4k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/painted_plaster_wall/painted_plaster_wall_diff_4k.png",
+          "sha256": "74bad7996c9839b08df633ec5061b06cce04b92815b9bdb505e2bdb073772144",
+          "bytes": 89568282
+        }
+      }
+    }
+  }
+}

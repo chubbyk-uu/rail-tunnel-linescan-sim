@@ -73,7 +73,7 @@ python3 tools/with_mesa_runtime.py /usr/bin/true
 
 ## 原生 Linux 启动
 
-先完成 README 的公共依赖、构建、资产恢复与**原生后端自检**。系统 NVIDIA 驱动必须能够提供 CUDA、OpenGL 和 OptiX，使用本机驱动配套的运行库，不加载 WSL 隔离组件。
+先完成 README 的公共依赖、构建、[素材下载及资产生成](ASSETS.md)与**原生后端自检**。系统 NVIDIA 驱动必须能够提供 CUDA、OpenGL 和 OptiX，使用本机驱动配套的运行库，不加载 WSL 隔离组件。
 
 以下命令在原生 Ubuntu 的正常桌面终端、项目根目录执行。若之前在该终端手工设置过 WSL 的 Mesa `LD_PRELOAD` 或 D3D12 环境，重新打开干净终端。
 
@@ -164,7 +164,7 @@ SSB_PTX="$PWD/build/ssb_core/ssb_scan.ptx" build/ssb_core/test_render \
 
 ## 数据和排障
 
-- `local_data/`、`sessions/`、`build/`、`install/`、`log/` 不进 Git。源码、完整演示资产和系统运行环境是三个独立恢复项。
+- `local_data/`、`sessions/`、`build/`、`install/`、`log/` 不进 Git。先部署系统运行环境和源码，再按 ASSETS.md 从公开素材生成完整演示；新部署不以旧机器资产迁移为前提。
 - WSL 下数据放 Linux 文件系统；尽量用一个资产压缩包传输，采集和重建使用顺序块写入，避免逐行同步或数千小文件。
 - 采集结束不自动补偿畸变/平场；原图保留。生产重建禁止读取资产真值或 `evaluation/`。
 - 更新提交后采集前重新构建；仅文档变更也会影响 Git 溯源身份。
