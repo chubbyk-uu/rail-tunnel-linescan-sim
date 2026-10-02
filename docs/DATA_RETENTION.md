@@ -12,10 +12,10 @@
 | 画质基线复核页 | `local_data/stage_b/final_review_20261001/` | 已确认的背景、裂缝、填缝与照明局部图 |
 | 20 m 原始采集与诊断 | `sessions/stage_c_20m_acceptance_20261002/`，不含已删除的 `wall_replay/` | 后续 D1/D2/D3、原始采集和独立评价基线 |
 | 20 m 任务私有输入 | `local_data/mission_runs/20261002_113730_eae97f12/` | 生成和独立评价；不是重建输入 |
-| 最终 CPU 展开 | `sessions/stage_d1_3m_final_20261002/` | CPU 参考与原图对应关系，8765 复核页 |
-| 最终 CUDA 展开 | `sessions/stage_d1_3m_cuda_final_20261002/` | 后续匹配输入与 CPU 一致性参考 |
+| v1 CPU 展开（瘦身） | `sessions/stage_d1_3m_final_20261002/` | 报告、溯源、预览及 8765 复核页；大数组已删，v2 等价记录见 STAGE_D |
+| v1 CUDA 展开（瘦身） | `sessions/stage_d1_3m_cuda_final_20261002/` | 报告与溯源；后续匹配输入改用 `sessions/stage_d1_3m_v2_20261003/` |
 | 最终 D2 与公开输入证明 | `sessions/stage_d2_public_verified_20261002/` | 对应点、带真值的独立评价及公开数据隔离证明，8766 复核页 |
-| D2 偏置来源对照 | `sessions/bias_study_20261003/`、`local_data/bias_study_20261003/` | 平法线/仅反照率变体采集、D1/D2 与带符号网格评价（约 42 GiB）；原光照重放仅保留逐字节一致记录，重复原图已删除 |
+| D2 偏置来源对照 | `sessions/bias_study_20261003/`、`local_data/bias_study_20261003/` | 平法线/仅反照率变体原始采集、v2 展开与匹配、带符号网格评价（约 18 GiB）；平法线 v2 展开为 D3 实现检查基线；原光照重放仅保留逐字节一致记录 |
 | D1 v2 验收 | `sessions/stage_d1_3m_v2_20261003/` | v2 展开（25 MB）、D2、CUDA/CPU 公开复现及 D2 公开复现；`public_cuda` 内原图为硬链接 |
 | 20 m D1/D2 v2 | `sessions/stage_d_20m_v2_20261003/` | 完整 20 m 展开（137 MB）、D2 对应点及带符号网格评价；D3 的 20 m 输入 |
 | 早期采集基线 | `sessions/gz_a/`、`sessions/default_acceptance/` 及其 dynamics | 阶段 A/B 基线，不保留重复的重放原图 |
@@ -24,7 +24,15 @@
 
 部分文件采用硬链接，按目录分别执行 `du` 后再相加会重复计算。后续评估保留数据时既看运行依赖，也看评价端依赖，不能只因默认演示已独立打包就删除全部旧生成链。
 
-## 本次删除
+## 2026-10-03 删除
+
+D1 改为 v2（按需读原图）后，删除 4 份 v1 展开中可重新生成的大数组，共 21 个文件、约 **47.6 GiB**：`sensor_flat.npy`、`sensor_valid_bits.npy`、`mosaic.npy`、`coverage.npy`、`source_band.npy`，以及 D2 公开证明目录中 `public_d1/sensor_flat.npy` 这个硬链接。涉及 `stage_d1_3m_final_20261002`、`stage_d1_3m_cuda_final_20261002`、`bias_study_20261003/{flatnormal,albedo}_d1`。
+
+- 删除前用 v2 重新展开两个变体，重跑 D2，结果与原 D2 逐字节一致；v1 与 v2 的逐项等价记录在 STAGE_D。
+- 保留每个目录的报告、溯源、投影表、映射、预览和复核页，8765/8766 复核页仍可访问。旧 D2 溯源中引用的 v1 数组哈希不能再从原文件核对，由 v1/v2 等价记录代替。
+- 清单（路径、字节数、来自 D1 溯源的 SHA-256、原因）：`local_data/evaluation/cleanup_20261003/cleanup.json`。删除后可用空间约 736 GiB。
+
+## 2026-10-02 删除
 
 完成以下清理，共 58 个明确指定的目录：
 

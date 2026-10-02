@@ -69,7 +69,7 @@ D1 v2 验收（2026-10-03，代码 `ba1f353`，工作区干净）：同一 [3,6]
 
 ## 2026-10-02 实测结果
 
-现有 20 m 原始会话保持不变。最终复核目录为 `sessions/stage_d1_3m_final_20261002/`，其中 `unroll/review.html` 显示初始全图、覆盖图及三对相邻圈的原尺度窗口；根目录 `report.json` 保存公开输入复现与来源核对结果。
+现有 20 m 原始会话保持不变。最终复核目录为 `sessions/stage_d1_3m_final_20261002/`（v1；2026-10-03 起只保留报告、溯源、预览与复核页，大数组已删除，见 DATA_RETENTION），其中 `unroll/review.html` 显示初始全图、覆盖图及三对相邻圈的原尺度窗口；根目录 `report.json` 保存公开输入复现与来源核对结果。
 
 - 区域 `[3,6] m`、上方 240°、0.2 mm 网格，共 `57596×15000` 像素；读取 347,020 条相关曝光行，保留 8 个独立条带。
 - 展开、校正和预览处理用时 74.30 s，当前处理进程峰值驻留内存 363.94 MiB。该计时到结果报告生成前为止，不含随后输出哈希和独立复核；页缓存和磁盘占用不计入进程 RSS。结果目录约 11.91 GiB，主要为可重建的浮点缓存和展开数组，不表示原始 Mono8 采集变大。
@@ -113,7 +113,7 @@ CPU 参考实现缓存逐圈相位和列坐标，并通过普通数组视图读�
 
 `report.json` 记录各处理环节，`provenance.json` 另记录包括阶段边界哈希的总时间和峰值 RSS。后端库路径、ABI、实际设备、二进制哈希和显存缓冲峰值均写入结果；库是实现依赖，不作为图像/观测输入，公开输入隔离检查仍严格适用。公开输入复核脚本可用 `--backend cpu|cuda` 选择后端。
 
-最终复测目录为 `sessions/stage_d1_3m_cuda_final_20261002/`，主流程 19.86 s，边界哈希 7.01 s，总计 26.87 s；9 项核心数据仍与 CPU 基准一致，5 个来源回溯的 DN 重算误差为零。两次完整运行的主流程范围为 18.31–19.86 s、含哈希总时间为 25.22–26.87 s。完整回归包括 270 项 Python 用例和 65 项 C++ 用例，全部通过，无跳过；设备缓冲扩容保护补充后，19 项展开相关用例和完整 3 m 公开输入复核再次通过。
+最终复测目录为 `sessions/stage_d1_3m_cuda_final_20261002/`（v1，大数组已于 2026-10-03 删除），主流程 19.86 s，边界哈希 7.01 s，总计 26.87 s；9 项核心数据仍与 CPU 基准一致，5 个来源回溯的 DN 重算误差为零。两次完整运行的主流程范围为 18.31–19.86 s、含哈希总时间为 25.22–26.87 s。完整回归包括 270 项 Python 用例和 65 项 C++ 用例，全部通过，无跳过；设备缓冲扩容保护补充后，19 项展开相关用例和完整 3 m 公开输入复核再次通过。
 
 早期 `stage_d1_3m_20261002`、`stage_d1_3m_verified_20261002`、`stage_d1_3m_cuda_20261002` 和两份早期 D2 结果已于 2026-10-02 清理；小型报告及配置归档。保留最终 CPU/CUDA 展开、最终 D2 和公开输入证明，详见 [DATA_RETENTION](DATA_RETENTION.md)。
 
@@ -149,7 +149,7 @@ D2 只接受经过哈希验证的 D1 公共派生数据：原始列浮点缓存�
 
 ```bash
 python3 -m ssb_tools.match_bands \
-  --unroll sessions/stage_d1_3m_cuda_final_20261002/unroll \
+  --unroll sessions/stage_d1_3m_v2_20261003/unroll \
   --output sessions/d2_NEW > /tmp/d2_NEW.log 2>&1
 ```
 
@@ -167,8 +167,8 @@ python3 -m ssb_tools.match_bands \
 
 ```bash
 python3 tools/test_band_matching.py \
-  --unroll sessions/stage_d1_3m_cuda_final_20261002/unroll \
-  --reference sessions/stage_d2_3m_halo_20261002 \
+  --unroll sessions/stage_d1_3m_v2_20261003/unroll \
+  --reference sessions/stage_d1_3m_v2_20261003/matches \
   --output sessions/d2_PUBLIC_NEW > /tmp/d2_PUBLIC_NEW.log 2>&1
 ```
 
@@ -222,7 +222,7 @@ python3 -m ssb_tools.evaluate_band_matches \
 **复现与证据**（`sessions/bias_study_20261003/`，场景与配置在 `local_data/bias_study_20261003/`）：
 
 - `orig_identity.json`：现行代码按默认参数（`normal_map_scale` 缺省为 1）重放归档 20 m 位姿流，475 个原始块与全部公开表逐字节一致；随后删除了这份重复原图。
-- `{flatnormal,albedo}/`：变体采集；`*_d1/`、`*_d2/`：展开与匹配；`*_d2/evaluation/reference/`：带符号评价。`orig_baseline/evaluation/reference/` 为归档 D2 的新版评价。
+- `{flatnormal,albedo}/`：变体采集；`*_d1/`、`*_d2/`：v1 展开（2026-10-03 已删大数组，只留报告与溯源）与匹配；`*_d1v2/`、`*_d2v2/`：v2 重新展开与匹配，D2 结果与 `*_d2/` 逐字节一致，平法线组的 v2 展开即 D3 实现检查基线的输入；`*_d2/evaluation/reference/`：带符号评价。`orig_baseline/evaluation/reference/` 为归档 D2 的新版评价。
 - 回放采集通过 `session.json → evaluation/manifest.json → pose_stream.bin` 的哈希链继承源采集的计划运动终点，因此能进入 D1；链条任一环不符时仍记为不可测。
 - 仅反照率组改变了光学身份，用独立标靶重新标定（`local_data/bias_study_20261003/albedo/calibration.json`）；平法线组不改变光学签名，沿用原标定。
 
