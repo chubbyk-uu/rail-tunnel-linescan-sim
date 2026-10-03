@@ -176,6 +176,9 @@ __device__ Row global_rows(const GlobalRay* rays, int n, double phase, double fo
       phase >= rays[left].phase && phase <= rays[right].phase;
   double dl = fabs(phase-rays[left].phase), dr = fabs(phase-rays[right].phase);
   int nearest = dl <= dr ? left : right;
+  // Same machine-roundoff centre canonicalization as BandSampler.row_sources.
+  if (fmin(dl, dr) <= 8.*2.220446049250313e-16*fmax(1., fabs(phase)))
+    interpolate = false;
   return {interpolate ? left : nearest, interpolate ? right : nearest,
           interpolate ? fmin(1., fmax(0., (phase-rays[left].phase)/gap)) : 0.,
           fmin(dl, dr) <= footprint/2.+1e-12, 0};

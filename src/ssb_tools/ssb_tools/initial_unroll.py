@@ -93,6 +93,11 @@ class BandSampler:
         interpolate = contiguous & between
         weight = np.divide(angles-phase[left], gap, out=np.zeros_like(angles), where=gap > 0)
         nearest = np.where(abs(angles-phase[left]) <= abs(angles-phase[right]), left, right)
+        # A centre ray has one source, not a zero-weight neighbour. Roundoff
+        # from inverse atan2 must not switch its column bounds to another row.
+        centre_tolerance = 8*np.finfo(float).eps*np.maximum(1., abs(angles))
+        at_centre = abs(angles-phase[nearest]) <= centre_tolerance
+        interpolate &= ~at_centre
         supported = np.minimum(abs(angles-phase[left]), abs(angles-phase[right])) <= self.footprint/2+1e-12
         left = np.where(interpolate, left, nearest)
         right = np.where(interpolate, right, nearest)

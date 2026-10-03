@@ -46,9 +46,14 @@ python3 -m ssb_tools.holdout_protocol verify --protocol "$evaluation/protocol.js
   --output "$evaluation/protocol_verification.json" > "$evaluation/protocol_verification.log" 2>&1
 python3 -m ssb_tools.evaluate_global_geometry --session "$root/capture" --unroll "$root/unroll" \
   --trajectory "$root/fit" --output "$evaluation/geometry" > "$evaluation/geometry.log" 2>&1
-python3 - "$evaluation/geometry/report.json" <<'PY'
-import json, sys
+python3 - "$evaluation/geometry/report.json" "$evaluation/protocol.json" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
 report = json.load(open(sys.argv[1]))
+protocol = json.load(open(sys.argv[2]))
+plan = Path(sys.argv[1]).parent/'sampling_plan.json'
+assert report['sampling']['schema'] == protocol['sampling']['schema']
+assert hashlib.sha256(plan.read_bytes()).hexdigest() == report['sampling']['plan_sha256']
 raise SystemExit(0 if all(g['status'] == 'pass' for g in report['gates'].values()) else 1)
 PY
 SH

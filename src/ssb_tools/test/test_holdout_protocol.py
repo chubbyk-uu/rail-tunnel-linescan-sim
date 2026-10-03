@@ -83,7 +83,8 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
     (demo/'bundle.json').write_text('{}')
     source = tmp_path/'src/ssb_tools/ssb_tools'
     source.mkdir(parents=True)
-    for name in ('match_bands.py', 'band_matching.py', 'optimize_bands.py', 'global_geometry.py', 'initial_unroll.py'):
+    for name in ('match_bands.py', 'band_matching.py', 'optimize_bands.py', 'global_geometry.py',
+                 'initial_unroll.py', 'global_resample.py', 'evaluate_global_geometry.py'):
         (source/name).write_text('# fixture source\n')
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: 'frozen 0 '+('a'*64))
     monkeypatch.setattr(module, 'check_calibration', lambda *a: 'measured-rig')
@@ -93,6 +94,9 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
         assert record['holdout_roi_m'] == [12., 15.]
         assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance']
         assert record['code_commit'] == 'frozen' and output.exists()
+        assert record['sampling']['schema'] == 'ssb.public_common_overlap.v1'
+        assert record['sampling']['exact_plan_saved_before_truth'] is True
+        assert any(name.endswith('evaluate_global_geometry.py') for name in record['production_sources'])
     else:
         with pytest.raises(ValueError):
             module.declare(tmp_path, demo, output, start, length)

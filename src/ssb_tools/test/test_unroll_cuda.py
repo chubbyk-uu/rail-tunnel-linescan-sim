@@ -194,6 +194,22 @@ def test_cuda_inverse_preserves_finite_nearest_row_footprints_and_real_gaps(coup
         raster.close()
 
 
+def test_cuda_row_centre_ignores_only_zero_weight_neighbours():
+    from test_evaluate_global_geometry import independent_fixture
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    model, *_ = independent_fixture()
+    model.sampler.native.raw_rows[[49, 51]] = 255
+    c = np.zeros(model.size); c[:model.sizes[0]] = 10.
+    raster = GlobalCudaRaster(model, c)
+    try:
+        _, count, _ = raster.tile(np.array([0., 4e-16, 1e-9]), np.array([.5]))
+        # Band 0 is invalid only for the genuinely nonzero neighbour weight;
+        # band 1 remains valid throughout.
+        assert count[:, 0].tolist() == [2, 2, 1]
+    finally:
+        raster.close()
+
+
 def test_global_cuda_row_vectors_match_independent_matrix_ray_equations():
     from test_global_optimization import independent_hits
     from ssb_tools.global_geometry import Trajectory, GeometrySettings
@@ -232,8 +248,8 @@ def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_
         summary = json.loads((root/'session.json').read_text())
         summary['files']['raw/index.json'] = sha256_file(root/'raw/index.json')
         (root/'session.json').write_text(json.dumps(summary))
-    # Target centres stay inside captured centres; nearest-row angular footprint
-    # alone is insufficient for a converged D3 inverse outside the recorded span.
+    # This fixture keeps target centres inside captured centres. Separate tests
+    # cover valid nearest-row footprints beyond centres and reject real gaps.
     config = json.loads((root/'config/observable_config.json').read_text())
     config['inspection']['theta_rad'] = [-.04, .04]
     (root/'config/observable_config.json').write_text(json.dumps(config))

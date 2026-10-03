@@ -3,7 +3,7 @@ import pytest
 
 from ssb_tools.evaluate_band_matches import mesh_points
 from ssb_tools.evaluate_global_geometry import (sources_at, endpoint_drift, boundary_coordinates,
-    boundary_support, verify_session, run, seam_plan, match_membership, stratum_gate)
+    boundary_support, verify_session, run, seam_plan, shared_seam_plan, match_membership, stratum_gate)
 from ssb_tools.global_geometry import Trajectory, GeometrySettings
 from ssb_tools.initial_unroll import BandSampler, PROJECTION
 from ssb_tools.native_rows import MemoryRows
@@ -138,6 +138,75 @@ def test_fixed_seam_plan_interleaves_gaps_without_using_matching_planner(monkeyp
     grid['target_x_m'] = [10., 11.]
     excluded = seam_plan(model.sampler, grid, .2)
     assert excluded and all(w['status'] == 'excluded' for w in excluded)
+
+
+@pytest.mark.parametrize('translation', [-.01, .01])
+def test_common_overlap_keeps_q_locations_and_retains_original_boundary_probes(translation, monkeypatch):
+    import ssb_tools.evaluate_global_geometry as module
+    def forbidden(*args, **kwargs):
+        raise AssertionError('shared support must not read truth or pixel intensity')
+    model, *_ = independent_fixture()
+    model.sampler.native.gather = forbidden
+    monkeypatch.setattr(module, 'mesh_points', forbidden)
+    c = np.zeros(model.size); c[:model.sizes[0]] = translation/model.scale
+    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=[.2, .8], dx_m=.001)
+    original = seam_plan(model.sampler, grid)
+    shared = shared_seam_plan(model, c, grid)
+    assert [(w['id'], w['q_center_m'], w['status']) for w in shared] == [
+        (w['id'], w['q_center_m'], w['status']) for w in original]
+    # Independent constant-translation geometry gives exact shared bounds.
+    for old, new in zip(original, shared):
+        if old['status'] != 'planned': continue
+        assert new['nominal_probe_x_m'] == old['x_m']
+        assert new['shared_support'] == 'measurable'
+        expected_left = old['x_m'][0]+max(translation, 0.)
+        expected_right = old['x_m'][1]+min(translation, 0.)
+        np.testing.assert_allclose(new['x_m'], [expected_left, expected_right], atol=4e-7, rtol=0)
+
+
+def test_empty_shared_interval_cannot_remove_a_planned_location():
+    model, *_ = independent_fixture()
+    c = np.zeros(model.size); c[:model.sizes[0]] = 20.
+    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=[.345, .346], dx_m=.0001)
+    original = seam_plan(model.sampler, grid)
+    shared = shared_seam_plan(model, c, grid)
+    assert len(shared) == len(original)
+    target = next(w for w in shared if abs(w['q_center_m']) < 1e-12)
+    assert target['status'] == 'planned' and target['shared_support'] == 'unmeasurable'
+    assert target['x_m'] == target['nominal_probe_x_m']
+
+
+def test_shared_plan_does_not_adapt_to_saturation_or_move_q_away_from_missing_exposures():
+    model, *_ = independent_fixture()
+    p = model.sampler.projection
+    phase = p['theta_rad']-2*np.pi*p['segment']
+    keep = ~np.isclose(phase, .004, atol=1e-12, rtol=0)
+    old = model.sampler
+    native = MemoryRows(old.native.raw_rows[keep], dict(offset=np.zeros(513),
+                        gain=np.ones(513), valid=np.ones(513, bool)))
+    sampler = BandSampler(p[keep], native, old.offsets, old.output_offsets,
+                          old.geometry_valid, old.footprint)
+    model = Trajectory(sampler, 1., .7, GeometrySettings(attitude_spacing_m=.1))
+    c = np.zeros(model.size); c[model.starts[1]:model.starts[2]] = -4.
+    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=[.35, .75], dx_m=.001)
+    plan = shared_seam_plan(model, c, grid)
+    native.raw_rows[:] = 255
+    assert shared_seam_plan(model, c, grid) == plan
+    window = next(w for w in plan if abs(w['q_center_m']) < 1e-12)
+    assert window['status'] == 'planned'  # No angular-gap exclusion or q relocation.
+    # Restore valid intensity: the missing angular observation still fails.
+    native.raw_rows[:] = 150
+    _, valid, _ = sources_at(model, c, 0, np.linspace(*window['x_m'], 9), np.zeros(9))
+    assert not valid.any()
+
+
+def test_exact_row_centre_does_not_require_a_zero_weight_invalid_neighbour():
+    model, *_ = independent_fixture()
+    model.sampler.native.raw_rows[[49, 51]] = 255
+    angles = np.array([0., 4e-16, 1e-9])
+    _, valid, _, sources = model.sampler.sample(0, angles, np.array([.5]), sources=True)
+    assert valid[:, 0].tolist() == [True, True, False]
+    assert np.all(sources['lower'][:2] == 50) and np.all(sources['upper'][:2] == 50)
 
 
 def test_seam_membership_checks_axial_and_angular_training_bounds():

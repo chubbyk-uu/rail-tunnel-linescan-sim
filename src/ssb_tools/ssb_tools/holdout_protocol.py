@@ -12,6 +12,7 @@ from .band_matching import MatchSettings
 from .global_geometry import GeometrySettings
 from .optical_identity import check_calibration
 from .session import Session, read_json, sha256_file
+from .evaluate_global_geometry import SAMPLING_SCHEMA
 
 
 def evaluation_path(path):
@@ -36,12 +37,16 @@ def declare(workspace, demo, output, start, length):
     settings = GeometrySettings(attitude_spacing_m=.02, observed_knots=True)
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
                ('match_bands.py', 'band_matching.py', 'optimize_bands.py',
-                'global_geometry.py', 'initial_unroll.py')]
-    record = dict(schema='ssb.d3_holdout_protocol.v2',
+                'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
+                'evaluate_global_geometry.py')]
+    record = dict(schema='ssb.d3_holdout_protocol.v3',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
         d2=dict(spacing_m=.2, height=512, max_width=1024, halo_m=.25, settings=asdict(MatchSettings())),
-        d3=asdict(settings), sampling=dict(spacing_q_m=.2, phase_fractions=[.25, .75], samples_across=9),
+        d3=asdict(settings), sampling=dict(schema=SAMPLING_SCHEMA, spacing_q_m=.2,
+            phase_fractions=[.25, .75], samples_across=9, column_guard_pixels=2,
+            original_nominal_probes_retained=True, angular_gaps_not_trimmed=True,
+            exact_plan_saved_before_truth=True),
         required_evidence=['binary_matches_source', 'stage_b_acceptance'],
         input_hashes={str(demo/name): sha256_file(demo/name)
                       for name in ('capture.yaml', 'calibration.json', 'bundle.json')},
@@ -96,6 +101,11 @@ def verify(protocol_file, root, output):
         input_hashes_unchanged=hashes_match(protocol['input_hashes']),
         production_sources_unchanged=hashes_match(protocol['production_sources']))
     checks.update(capture_checks(session, protocol['code_commit']))
+    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v3':
+        checks['sampling_protocol_unchanged'] = protocol['sampling'] == dict(
+            schema=SAMPLING_SCHEMA, spacing_q_m=.2, phase_fractions=[.25, .75], samples_across=9,
+            column_guard_pixels=2, original_nominal_probes_retained=True,
+            angular_gaps_not_trimmed=True, exact_plan_saved_before_truth=True)
     checks['capture_complete'] = session.summary.get('status') == 'complete'
     report = dict(schema='ssb.d3_holdout_verification.v2', status='pass' if all(checks.values()) else 'fail',
         checks=checks, protocol_sha256=sha256_file(protocol_file),

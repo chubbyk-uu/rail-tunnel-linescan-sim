@@ -24,6 +24,91 @@ from .ref_mesh import OpticalMesh
 from .session import Session, read_json, sha256_file
 from .stage_b_scene import peak_rss_bytes
 
+SAMPLING_SCHEMA = 'ssb.public_common_overlap.v1'
+
+
+def column_clearances(model, coefficients, bands, x, q):
+    """Sensor-domain distances only: no intensity, truth, or angular-gap selection.
+
+    Angular support and bad/saturated pixels are deliberately checked later at
+    the fixed samples. They must not be used to move a probe away from a gap.
+    """
+    x = np.asarray(x, float)
+    q = np.full(x.shape, q)
+    usable = model.sampler.output_offsets[model.sampler.geometry_valid]
+    lower = max(usable[0], model.sampler.offsets[0])
+    upper = min(usable[-1], model.sampler.offsets[-1])
+    result = np.full(x.shape+(2,), np.inf)
+    for c in (np.zeros(model.size), coefficients):
+        for band in bands:
+            if np.any(c):
+                nx, nq, _ = inverse_points(model, c, band, x, q)
+                projected, _ = model.forward(band, nx, nq, c)
+                converged = np.isfinite(projected).all(axis=-1) & (
+                    np.max(abs(projected-np.stack((x, q), axis=-1)), axis=-1) < 1e-8)
+            else:
+                nx, nq, converged = x, q, np.ones(x.shape, bool)
+            lo, hi, _, _ = model.sampler.row_sources(band, nq/model.radius)
+            axes = model.sampler.projection['x_axis_m'][np.stack((lo, hi), axis=-1)]
+            delta = nx[..., None]-axes
+            clearance = np.stack(((delta-lower).min(axis=-1),
+                                  (upper-delta).min(axis=-1)), axis=-1)
+            result = np.minimum(result, np.where(converged[..., None], clearance, -np.inf))
+    return result
+
+
+def shared_seam_plan(model, coefficients, grid, spacing_m=.2):
+    """Keep the fixed q lattices; bound x by BOTH public sampling maps.
+
+    The algorithm is frozen before capture, the exact locations are written
+    before opening truth. Original nominal boundary probes remain diagnostics.
+    A location with no shared interval stays planned/unmeasurable, never drops
+    out of the gate. Only sensor-column edges are trimmed; gaps and bad pixels
+    still fail when the predeclared nine points are sampled.
+    """
+    coefficients = np.asarray(coefficients, float)
+    if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all():
+        raise ValueError('finite verified trajectory required for a public seam plan')
+    plan = seam_plan(model.sampler, grid, spacing_m)
+    guard = 2*grid['dx_m']
+    for window in plan:
+        if window['status'] != 'planned':
+            continue
+        window['nominal_probe_x_m'] = list(window['x_m'])
+        left, right = window['x_m']
+        def clear(x):
+            return column_clearances(model, coefficients, window['bands'], x, window['q_center_m'])
+        edges = clear([left, right])
+        if edges[1, 0] < guard or edges[0, 1] < guard:
+            window.update(shared_support='unmeasurable', reason='no common public sensor-column interval')
+            continue
+        if edges[0, 0] < guard:
+            a, b = left, right
+            for _ in range(20):
+                mid = (a+b)/2
+                if clear([mid])[0, 0] >= guard:
+                    b = mid
+                else:
+                    a = mid
+            left = b
+        if edges[1, 1] < guard:
+            a, b = left, right
+            for _ in range(20):
+                mid = (a+b)/2
+                if clear([mid])[0, 1] >= guard:
+                    a = mid
+                else:
+                    b = mid
+            right = a
+        if right <= left or np.min(clear([left, right])) < guard-1e-8:
+            window.update(shared_support='unmeasurable', reason='no converged common column interval')
+        else:
+            window.update(x_m=[left, right], shared_support='measurable',
+                          column_guard_m=guard,
+                          trimmed_m=[left-window['nominal_probe_x_m'][0],
+                                     window['nominal_probe_x_m'][1]-right])
+    return plan
+
 
 def sources_at(model, coefficients, band, x, q):
     """Production sampling identity only; truth is traced separately by mesh_points."""
@@ -214,10 +299,17 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         verify_session(session, upstream)
         model, coefficients, optimized, trajectory_inputs = load_global(trajectory, sampler, upstream, unroll)
         grid = upstream['grid']; pitch = [grid['dx_m'], grid['dq_m']]
-        windows = seam_plan(sampler, grid, spacing_m)
+        windows = shared_seam_plan(model, coefficients, grid, spacing_m)
         planned = [w for w in windows if w['status'] == 'planned']
         if not planned:
             raise ValueError('no nominal adjacent overlap to evaluate')
+        output.mkdir(parents=True, exist_ok=False)
+        plan_path = output/'sampling_plan.json'
+        plan_path.write_text(json.dumps(windows, indent=2)+'\n')
+        plan_hash = sha256_file(plan_path)
+        (output/'sampling_plan_provenance.json').write_text(json.dumps(stage_record(
+            'public_common_overlap_plan', inputs+trajectory_inputs, [plan_path],
+            dict(schema=SAMPLING_SCHEMA, truth_used=False, angular_gaps_not_trimmed=True)), indent=2)+'\n')
         training_windows = read_json(Path(trajectory)/'windows.json')
         truth, config = session.truth(), session.config()
         generation = yaml.safe_load((session.root/'evaluation/config_source.yaml').read_text())
@@ -225,19 +317,28 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         imposed_track = any(float(track.get(k, 0)) > 0 for k in ('chord10_max_m', 'cross_level_tier_m'))
         rows = session.evaluation('row_truth')
         mesh = OpticalMesh.from_session(session, scene)
-        per_window, samples = [], []
+        per_window, samples, legacy = [], [], []
         stratum_missing = {name: dict(within_match_window=0, between_match_windows=0)
                            for name in ('nominal', 'optimized')}
         for window in planned:
             x = np.linspace(*window['x_m'], samples_across)
             q = np.full(len(x), window['q_center_m'])
             labels = match_membership(x, q, window['bands'], training_windows, grid)
+            original_x = np.linspace(*window['nominal_probe_x_m'], samples_across)
+            original_valid = [sources_at(model, coefficients, band, original_x, q)[1]
+                              for band in window['bands']]
+            legacy.append(dict(window=window['id'], bands=window['bands'],
+                               x_m=window['nominal_probe_x_m'], q_m=float(q[0]),
+                               missing_samples=int((~(original_valid[0] & original_valid[1])).sum()),
+                               side_valid=[v.tolist() for v in original_valid]))
             record = dict(window=window['id'], bands=window['bands'], phase=window['phase'],
                           q_m=float(q[0]), x_m=[float(x[0]), float(x[-1])],
                           stratum_counts={s: int((labels == s).sum()) for s in stratum_missing['nominal']})
             for name, c in (('nominal', np.zeros(model.size)), ('optimized', coefficients)):
                 tables = [sources_at(model, c, band, x, q) for band in window['bands']]
                 valid = tables[0][1] & tables[1][1]
+                if window['shared_support'] == 'unmeasurable':
+                    valid[:] = False
                 for stratum in stratum_missing[name]:
                     stratum_missing[name][stratum] += int(((labels == stratum) & ~valid).sum())
                 if not valid.any():
@@ -289,7 +390,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         seam_gate = stratum_gate(strata, SEAM_P95_PX)
         controlled_gate = stratum_gate(strata, CONTROLLED_SEAM_P95_PX)
         perimeter_missing = sum(v['missing_pixels'] for v in boundaries['optimized'].values())
-        report = dict(schema='ssb.global_geometry_evaluation.v2', evaluation_only=True, grid=grid,
+        report = dict(schema='ssb.global_geometry_evaluation.v3', evaluation_only=True, grid=grid,
             seam=statistics, seam_strata=strata, windows=per_window, mapping=maps, boundary=boundaries,
             gates=dict(strict_seam=seam_gate, controlled_seam=controlled_gate,
                        perimeter=dict(status='fail' if perimeter_missing else 'pass',
@@ -297,22 +398,28 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
             capture_conditions=dict(imposed_track_irregularity=imposed_track, archived_track_parameters=track,
                 interpretation='1 px is the project seam target; 3 px is the secondary controlled-error target. '
                                'A perturbed track must not be labelled a perfectly flat ideal baseline.'),
-            sampling=dict(spacing_q_m=spacing_m, samples_across=samples_across, planned_windows=len(planned),
+            sampling=dict(schema=SAMPLING_SCHEMA, plan_sha256=plan_hash,
+                          spacing_q_m=spacing_m, samples_across=samples_across, planned_windows=len(planned),
                           phase_fractions=[.25, .75], anchor='output lower q boundary',
-                          rule='nominal geometry only; fixed before truth tracing; training windows label only',
+                          rule='fixed q lattices; common nominal/fitted public sensor-column domain; '
+                               'exact points saved before truth; original boundary probes retained',
+                          shared_unmeasurable_windows=sum(w.get('shared_support') == 'unmeasurable' for w in windows),
                           unmeasurable_windows=sum(w['status'] == 'unmeasurable' for w in windows),
                           excluded_windows=sum(w['status'] == 'excluded' for w in windows),
                           interior_shape=list(xx.shape)),
+            nominal_domain_probe_diagnostic=dict(missing_samples=sum(w['missing_samples'] for w in legacy),
+                windows=legacy, interpretation='original nominal-domain probes; missing dual support is '
+                'not an output-image hole and is not silently converted into a valid measurement'),
             reference='archived float64 optical mesh and true native pixel-centre rays',
             limitations=['fixed seam/interior samples, not exhaustive surface accuracy or defect-width acceptance',
                 'native centre-ray barycentre reference; exposure/pixel-area integration is not a point measurement',
                 'absolute error retains coordinate gauge; endpoint differences remove translation only',
                 'no truth offset, similarity or affine fit is subtracted from the seam or scale scores'],
             performance=dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
-        output.mkdir(parents=True, exist_ok=False)
+        if sha256_file(plan_path) != plan_hash:
+            raise ValueError('public sampling plan changed during truth evaluation')
         arrays.update(output_x_m=xs, output_q_m=qs)
         np.savez(output/'mapping_samples.npz', **arrays)
-        (output/'sampling_plan.json').write_text(json.dumps(windows, indent=2)+'\n')
         dtype = [('variant','U10'), ('window','<i4'), ('band_a','<i2'), ('band_b','<i2'),
                  ('x_m','<f8'), ('q_m','<f8'), ('dx_m','<f8'), ('dq_m','<f8'), ('material_a','<i2'), ('material_b','<i2'),
                  ('stratum', 'U24')]
