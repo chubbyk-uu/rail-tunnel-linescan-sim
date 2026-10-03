@@ -290,6 +290,18 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory sessions/d3_review_NEW
 
 对比页显示同一网格上的编码器名义拼接和全局优化拼接，以及 100% 像素的硬接缝局部图。初始展开已补偿名义螺旋位移；优化进一步修正图像估计的轨迹误差，两侧都不做融合或锐化。最新带起伏 3 米重采中，独立网格接缝 P95 为 **51.18 → 0.744 px**，通过现行 **P95≤1 px** 目标；全原图无饱和，初始展开全像素无缺口，优化后四边无支撑缺口。优化全图内部尚未逐像素验收，概览仅为固定间隔采样，尚未导出 20 米最终全分辨率成果。范围与限制见 [D3 实现与复核](docs/STAGE_D.md#带起伏新采集复核结果)。
 
+需要整幅优化结果及每像素覆盖统计时，运行以下命令。默认同时保存名义展开与优化全图，3 米对比约占 4.8 GiB；可用 `--optimized-only` 减半。输出为 `uint16`（DN×64）与覆盖计数，`review.html` 显示概览；不会用融合或补洞掩盖缺口。
+
+```bash
+python3 -m ssb_tools.global_mosaic \
+  --unroll sessions/d1_3m_NEW --trajectory sessions/d3_3m_NEW \
+  --output sessions/d3_full_NEW > /tmp/ssb_d3_full.log 2>&1
+python3 tools/validate_global_mosaic.py \
+  --unroll sessions/d1_3m_NEW --trajectory sessions/d3_3m_NEW \
+  --mosaic sessions/d3_full_NEW --output local_data/evaluation/d3_full_NEW \
+  > /tmp/ssb_d3_full_validation.log 2>&1
+```
+
 要同时查看未经补偿的斜向原始条带，以及板缝、裂缝形态附近的接缝，可另外生成图像复核页（需要 CUDA 和 v2 原图）：
 
 ```bash

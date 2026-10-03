@@ -51,10 +51,11 @@ struct Context {
   Buffer native_offsets, output_offsets, geometry_valid, flat_offset, flat_gain, flat_valid;
   Buffer pixels, axes, row_sources, xs;
   Buffer image, count, source, best;
+  Buffer global_rays, global_qs;
   void reserve_begin(size_t n, size_t columns) {
     size_t total = native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
                    flat_offset.capacity+flat_gain.capacity+flat_valid.capacity+
-                   pixels.capacity+axes.capacity+row_sources.capacity;
+                   pixels.capacity+axes.capacity+row_sources.capacity+global_rays.capacity+global_qs.capacity;
     total += std::max(xs.capacity, columns*sizeof(double))+
              std::max(image.capacity, n*sizeof(float))+
              std::max(count.capacity, n*sizeof(uint16_t))+
@@ -65,7 +66,8 @@ struct Context {
   void reserve_check(size_t pixels_bytes, size_t axes_bytes, size_t row_bytes) {
     size_t total = native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
         flat_offset.capacity+flat_gain.capacity+flat_valid.capacity+
-        xs.capacity+image.capacity+count.capacity+source.capacity+best.capacity;
+        xs.capacity+image.capacity+count.capacity+source.capacity+best.capacity+
+        global_rays.capacity+global_qs.capacity;
     total += std::max(pixels.capacity, pixels_bytes)+std::max(axes.capacity, axes_bytes)+
              std::max(row_sources.capacity, row_bytes);
     if (total > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
@@ -73,7 +75,7 @@ struct Context {
   void account() {
     size_t total = 0;
     for (auto* b : {&native_offsets, &output_offsets, &geometry_valid, &flat_offset, &flat_gain, &flat_valid, &pixels,
-                    &axes, &row_sources, &xs, &image, &count, &source, &best})
+                    &axes, &row_sources, &xs, &image, &count, &source, &best, &global_rays, &global_qs})
       total += b->capacity;
     peak = std::max(peak, total);
     if (total > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
@@ -144,6 +146,86 @@ __global__ void sample_band(const uint8_t* pixels, const double* axes, const Row
   const int target = q*nx+column;
   ++count[target];
   const double score = fmin(a.column, width-1.-a.column);
+  if (score > best[target]) {
+    image[target] = static_cast<float>(static_cast<double>(a.value)*(1.-row.weight)+
+                                       static_cast<double>(b.value)*row.weight);
+    best[target] = static_cast<float>(score);
+    source[target] = static_cast<int16_t>(band);
+  }
+}
+
+// Pose corrections are evaluated once per recorded encoder row on the CPU.
+// These vectors represent the same Ry(pitch) Rx(roll) cylinder rays as D3;
+// neither actual vehicle poses nor renderer geometry are accepted by this ABI.
+struct GlobalRay {
+  double axis, phase, ox, oy, oz, tx, tz, rx, ry, rz;
+  int64_t lattice;
+};
+static_assert(sizeof(GlobalRay) == 88);
+
+__device__ Row global_rows(const GlobalRay* rays, int n, double phase, double footprint) {
+  int a = 0, b = n;
+  while (a < b) {
+    int mid = (a+b)/2;
+    if (rays[mid].phase < phase) a = mid+1; else b = mid;
+  }
+  int left = max(0, a-1), right = min(a, n-1);
+  double gap = rays[right].phase-rays[left].phase;
+  bool interpolate = rays[right].lattice-rays[left].lattice == 1 &&
+      gap <= footprint*(1.+1e-8) && gap > 0. &&
+      phase >= rays[left].phase && phase <= rays[right].phase;
+  double dl = fabs(phase-rays[left].phase), dr = fabs(phase-rays[right].phase);
+  int nearest = dl <= dr ? left : right;
+  return {interpolate ? left : nearest, interpolate ? right : nearest,
+          interpolate ? fmin(1., fmax(0., (phase-rays[left].phase)/gap)) : 0.,
+          fmin(dl, dr) <= footprint/2.+1e-12, 0};
+}
+
+__device__ double2 global_hit(const GlobalRay& r, double x, double radius) {
+  double tangent = (x-r.axis)/radius;
+  double vx = r.tx*tangent+r.rx, vy = r.ry, vz = r.tz*tangent+r.rz;
+  double aa = vy*vy+vz*vz, bb = 2.*(r.oy*vy+r.oz*vz);
+  double cc = r.oy*r.oy+r.oz*r.oz-radius*radius;
+  double length = (-bb+sqrt(bb*bb-4.*aa*cc))/(2.*aa);
+  return make_double2(r.ox+length*vx,
+                     radius*atan2(r.oy+length*vy, r.oz+length*vz));
+}
+
+__device__ double2 global_forward(const GlobalRay* rays, int n, double x, double q,
+                                  double radius, double footprint, Row* row) {
+  *row = global_rows(rays, n, q/radius, footprint);
+  double2 a = global_hit(rays[row->lower], x, radius);
+  double2 b = global_hit(rays[row->upper], x, radius);
+  return make_double2((1.-row->weight)*a.x+row->weight*b.x,
+                      (1.-row->weight)*a.y+row->weight*b.y);
+}
+
+__global__ void global_band(const uint8_t* pixels, const double* axes,
+    const GlobalRay* rays, int n, const double* qs, const double* xs,
+    const double* native, const double* output, const uint8_t* geometry, Flat flat,
+    int width, int nq, int nx, int left, int right, int band, double radius,
+    double footprint, float* image, uint16_t* count, int16_t* source, float* best) {
+  int i = blockIdx.x*blockDim.x+threadIdx.x, span = right-left;
+  if (i >= nq*span) return;
+  int q_index = i/span, column = left+i%span;
+  double target_x = xs[column], target_q = qs[q_index];
+  double x = target_x, q = target_q;
+  Row row;
+  for (int iteration = 0; iteration < 10; ++iteration) {
+    double2 point = global_forward(rays, n, x, q, radius, footprint, &row);
+    double ex = point.x-target_x, eq = point.y-target_q;
+    x -= ex; q -= eq;
+    if (fmax(fabs(ex), fabs(eq)) < 1e-9) break;
+  }
+  double2 final = global_forward(rays, n, x, q, radius, footprint, &row);
+  if (!row.supported || !isfinite(x) || !isfinite(q) || !isfinite(final.x) || !isfinite(final.y) ||
+      fmax(fabs(final.x-target_x), fabs(final.y-target_q)) >= 1e-8) return;
+  Sample a = along(row.lower, x, pixels, axes, native, output, geometry, flat, width);
+  Sample b = along(row.upper, x, pixels, axes, native, output, geometry, flat, width);
+  if (!a.valid || !b.valid) return;
+  int target = q_index*nx+column;
+  ++count[target];
+  float score = static_cast<float>(fmin(a.column, width-1.-a.column));
   if (score > best[target]) {
     image[target] = static_cast<float>(static_cast<double>(a.value)*(1.-row.weight)+
                                        static_cast<double>(b.value)*row.weight);
@@ -223,6 +305,53 @@ int ssb_unroll_band(void* handle, int native_rows, const uint8_t* pixels,
     sample_band<<<(n+255)/256,256>>>(c.pixels.as<uint8_t>(), c.axes.as<double>(), c.row_sources.as<Row>(),
         c.xs.as<double>(), c.native_offsets.as<double>(), c.output_offsets.as<double>(),
         c.geometry_valid.as<uint8_t>(), flat, c.width, c.rows, c.columns, left, right, band,
+        c.image.as<float>(), c.count.as<uint16_t>(), c.source.as<int16_t>(), c.best.as<float>());
+    checked(cudaGetLastError());
+  });
+}
+
+int ssb_unroll_global_abi() { return 1; }
+int ssb_unroll_global_band(void* handle, int native_rows, const uint8_t* pixels,
+    const double* axes, const void* ray_data, const double* qs, int left, int right,
+    int band, double radius, double footprint) {
+  return guarded([&] {
+    auto& c = *static_cast<Context*>(handle);
+    if (native_rows < 2 || left < 0 || right > c.columns || right <= left ||
+        band < 0 || band >= std::numeric_limits<int16_t>::max() ||
+        !std::isfinite(radius) || radius <= 0. || !std::isfinite(footprint) || footprint <= 0.)
+      throw std::runtime_error("invalid CUDA global band dimensions");
+    const auto* rays = static_cast<const GlobalRay*>(ray_data);
+    for (int i = 0; i < native_rows; ++i) {
+      const double* values = &rays[i].axis;
+      for (int j = 0; j < 10; ++j)
+        if (!std::isfinite(values[j])) throw std::runtime_error("nonfinite CUDA global ray");
+      if (axes[i] != rays[i].axis || (i && (rays[i].phase <= rays[i-1].phase ||
+                                          rays[i].lattice <= rays[i-1].lattice)))
+        throw std::runtime_error("invalid CUDA global ray ordering");
+    }
+    for (int i = 0; i < c.rows; ++i)
+      if (!std::isfinite(qs[i])) throw std::runtime_error("nonfinite CUDA global grid");
+    size_t bytes = static_cast<size_t>(native_rows)*c.width;
+    if (bytes > kBudget/2) throw std::runtime_error("CUDA native input exceeds 128 MiB");
+    c.reserve_check(bytes, native_rows*sizeof(double), 0);
+    // Account for both current retained capacities and the requested new buffers.
+    size_t extra = std::max(c.global_rays.capacity, native_rows*sizeof(GlobalRay))-c.global_rays.capacity+
+                   std::max(c.global_qs.capacity, c.rows*sizeof(double))-c.global_qs.capacity;
+    size_t retained = 0;
+    for (auto* b : {&c.native_offsets, &c.output_offsets, &c.geometry_valid, &c.flat_offset,
+        &c.flat_gain, &c.flat_valid, &c.xs, &c.image, &c.count, &c.source, &c.best,
+        &c.row_sources, &c.global_rays, &c.global_qs}) retained += b->capacity;
+    retained += std::max(c.pixels.capacity, bytes)+std::max(c.axes.capacity, native_rows*sizeof(double));
+    if (retained+extra > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
+    c.pixels.upload(pixels, bytes); c.axes.upload(axes, native_rows*sizeof(double));
+    c.global_rays.upload(rays, native_rows*sizeof(GlobalRay)); c.global_qs.upload(qs, c.rows*sizeof(double));
+    c.account();
+    Flat flat{c.flat_offset.as<float>(), c.flat_gain.as<float>(), c.flat_valid.as<uint8_t>()};
+    int n = c.rows*(right-left);
+    global_band<<<(n+255)/256,256>>>(c.pixels.as<uint8_t>(), c.axes.as<double>(),
+        c.global_rays.as<GlobalRay>(), native_rows, c.global_qs.as<double>(), c.xs.as<double>(),
+        c.native_offsets.as<double>(), c.output_offsets.as<double>(), c.geometry_valid.as<uint8_t>(),
+        flat, c.width, c.rows, c.columns, left, right, band, radius, footprint,
         c.image.as<float>(), c.count.as<uint16_t>(), c.source.as<int16_t>(), c.best.as<float>());
     checked(cudaGetLastError());
   });

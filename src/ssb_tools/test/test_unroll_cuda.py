@@ -94,3 +94,203 @@ def test_feature_search_failure_releases_real_cuda_context():
     with feature_raster(sampler) as next_raster:
         next_raster.tile(np.array([0.]), np.array([.5]))
     assert next_raster.handle is None
+
+
+@pytest.mark.parametrize('missing', [False, True])
+@pytest.mark.parametrize('fields', [4, 5, 6])
+def test_global_cuda_matches_cpu_coupled_rays_and_invalid_native_samples(tmp_path, missing, fields):
+    from ssb_tools.global_geometry import Trajectory, GeometrySettings
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    from ssb_tools.global_resample import corrected_tile
+    sampler = analytic_sampler(remove_centre=missing, raw=True)
+    sampler.native.raw_rows[3, 9] = 255
+    sampler.native.raw_rows[:, 16] = 255
+    sampler.geometry_valid[7] = False
+    sampler.native.valid[22] = False
+    model = Trajectory(sampler, 1., .7, GeometrySettings(fit_heave=fields == 5, fit_translation=fields == 6))
+    coefficients = np.empty(model.size)
+    for k in range(fields):
+        coefficients[model.starts[k]:model.starts[k+1]] = (.7-.25*k)+.12*np.sin(np.arange(model.sizes[k]))
+    qs = np.linspace(-.14, .14, 31)
+    xs = np.linspace(.35, .77, 49)
+    expected, counts = corrected_tile(model, coefficients, qs, xs)
+    raster = GlobalCudaRaster(model, coefficients)
+    try:
+        actual, number, _ = raster.tile(qs, xs)
+        np.testing.assert_array_equal(number, counts)
+        np.testing.assert_array_equal(np.isfinite(actual), np.isfinite(expected))
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=3e-5, equal_nan=True)
+        assert raster.describe()['allocated_peak_bytes'] < 256 << 20
+        # A zero correction must reproduce the independently tested D1 sampler.
+    finally:
+        raster.close()
+    assert np.count_nonzero(counts) and np.any(counts == 0) and np.any(counts > 1)
+
+
+def test_global_cuda_zero_correction_matches_d1_and_preserves_shifted_band_candidates(tmp_path):
+    from ssb_tools.global_geometry import Trajectory
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    from ssb_tools.global_mosaic import CpuGlobalRaster
+    sampler = analytic_sampler(raw=True)
+    model = Trajectory(sampler, 1., .7)
+    qs, xs = np.linspace(-.09, .09, 13), np.linspace(.4, .7, 17)
+    nominal, corrected = CudaRaster(sampler), GlobalCudaRaster(model, np.zeros(model.size))
+    try:
+        expected, n, _ = nominal.tile(qs, xs)
+        actual, c, _ = corrected.tile(qs, xs)
+        np.testing.assert_array_equal(c, n)
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-5, equal_nan=True)
+    finally:
+        nominal.close(); corrected.close()
+    # Native observations shifted beyond nominal support must still be visited.
+    c = np.zeros(model.size); c[model.starts[0]:model.starts[1]] = 20.
+    corrected = GlobalCudaRaster(model, c)
+    try:
+        x = np.array([sampler.band_x[-1][1]+.015])
+        q = np.array([sampler.phases[-1][-1]])
+        actual, counts, _ = corrected.tile(q, x)
+        expected, n, _ = CpuGlobalRaster(model, c).tile(q, x)
+        np.testing.assert_array_equal(counts, n)
+        assert n[0, 0] == 1
+        np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=0)
+    finally:
+        corrected.close()
+
+
+def test_global_cuda_row_vectors_match_independent_matrix_ray_equations():
+    from test_global_optimization import independent_hits
+    from ssb_tools.global_geometry import Trajectory, GeometrySettings
+    from ssb_tools.global_cuda import row_rays
+    sampler = analytic_sampler(raw=True)
+    model = Trajectory(sampler, 1., .7, GeometrySettings(fit_translation=True))
+    constants = np.array([.0007, -.0004, .0013, -.0009, .0008, -.0011])
+    c = np.concatenate([np.full(n, value/model.scale) for n, value in zip(model.sizes, constants)])
+    rays = row_rays(model, c)
+    tangent = np.linspace(-.1, .1, len(rays))
+    expected = independent_hits(rays['axis'], rays['phase'], tangent,
+                                np.tile(constants, (len(rays), 1)), 1., .7)
+    origin = np.column_stack([rays[k] for k in ('ox', 'oy', 'oz')])
+    direction = np.column_stack((rays['tx']*tangent+rays['rx'], rays['ry'], rays['tz']*tangent+rays['rz']))
+    aa = np.sum(direction[:, 1:]**2, axis=1)
+    bb = 2*np.sum(origin[:, 1:]*direction[:, 1:], axis=1)
+    cc = np.sum(origin[:, 1:]**2, axis=1)-1
+    hit = origin+((-bb+np.sqrt(bb*bb-4*aa*cc))/(2*aa))[:, None]*direction
+    actual = np.column_stack((hit[:, 0], np.arctan2(hit[:, 1], hit[:, 2])))
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-14)
+
+
+@pytest.mark.parametrize('saturated', [False, True])
+def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_path, saturated):
+    from ssb_tools.global_geometry import Trajectory, GeometrySettings
+    from ssb_tools.global_mosaic import run
+    from ssb_tools.match_bands import verified_bands
+    from ssb_tools.provenance import stage_record
+    from ssb_tools.session import sha256_file
+    root = tmp_path/'public'; cal, index = public_fixture(root)
+    if saturated:
+        data = np.fromfile(root/'raw/block.u8', np.uint8).reshape(-1, 32)
+        data[:, 16] = 255; data.tofile(root/'raw/block.u8')
+        index['blocks'][0]['sha256'] = sha256_file(root/'raw/block.u8')
+        (root/'raw/index.json').write_text(json.dumps(index))
+        summary = json.loads((root/'session.json').read_text())
+        summary['files']['raw/index.json'] = sha256_file(root/'raw/index.json')
+        (root/'session.json').write_text(json.dumps(summary))
+    # Target centres stay inside captured centres; nearest-row angular footprint
+    # alone is insufficient for a converged D3 inverse outside the recorded span.
+    config = json.loads((root/'config/observable_config.json').read_text())
+    config['inspection']['theta_rad'] = [-.04, .04]
+    (root/'config/observable_config.json').write_text(json.dumps(config))
+    summary = json.loads((root/'session.json').read_text())
+    summary['files']['config/observable_config.json'] = sha256_file(root/'config/observable_config.json')
+    (root/'session.json').write_text(json.dumps(summary))
+    d1 = tmp_path/'d1'; reconstruct(root, cal, d1, pitch=.004)
+    sampler, upstream, inputs = verified_bands(d1)
+    settings = GeometrySettings()
+    model = Trajectory(sampler, 1., .7, settings)
+    fit = tmp_path/'fit'; fit.mkdir()
+    (fit/'trajectory.json').write_text(json.dumps(model.serialize(np.zeros(model.size))))
+    (fit/'windows.json').write_text('[]')
+    (fit/'report.json').write_text(json.dumps(dict(schema='ssb.global_optimization.v1',
+        settings=vars(settings), grid=upstream['grid'], optical_signature=upstream['optical_signature'],
+        source_observation_hashes=upstream['source_observation_hashes'])))
+    (fit/'provenance.json').write_text(json.dumps(stage_record('global_optimization',
+        [d1/name for name in ('projection.npy', 'mapping.npz', 'bands.json')], sorted(fit.iterdir()), {})))
+    sampler.native.close()
+    baseline = {p: sha256_file(p) for folder in (root, d1, fit) for p in folder.rglob('*') if p.is_file()}
+    output = tmp_path/'mosaic'
+    report = run(d1, fit, output, angular_tile_rows=3, tile_columns=5)
+    products = [read_products(output/name) for name in ('nominal', 'optimized')]
+    for a, b in zip(*products):
+        np.testing.assert_array_equal(a, b)
+    code, count, runs = products[1]
+    assert np.array_equal(code == 65535, count == 0)
+    stats = report['products']['optimized']['coverage']
+    assert stats['missing_pixels'] == int(np.count_nonzero(count == 0))
+    assert np.sum(runs['x_end']-runs['x_begin']) == count.size
+    assert report['coverage_gate']['status'] == ('fail' if saturated else 'pass')
+    assert report['performance']['peak_rss_bytes'] > 0
+    provenance = json.loads((output/'provenance.json').read_text())
+    assert provenance['stage'] == 'global_mosaic'
+    assert all(sha256_file(path) == digest for path, digest in provenance['outputs'].items())
+    assert all(sha256_file(path) == digest for path, digest in baseline.items())
+    assert not (root/'evaluation').exists() and (output/'review.html').is_file()
+    from ssb_tools.validate_global_mosaic import validate
+    checked = validate(d1, fit, output, tmp_path/'validation')
+    assert checked['full_pixel_consistency'] and checked['total_pixels'] == count.size
+    assert checked['coverage_gate'] == report['coverage_gate']['status']
+    assert checked['cpu_reference']['maximum_code_error'] <= 1
+    with (output/'optimized/mosaic_u16.npy').open('r+b') as file:
+        file.seek(-2, 2); file.write(b'xx')
+    with pytest.raises(ValueError, match='product hash mismatch'):
+        validate(d1, fit, output, tmp_path/'rejected_validation')
+    with pytest.raises(ValueError, match='separate'):
+        run(d1, fit, d1/'wrong')
+
+
+def test_global_cuda_rejects_nonfinite_or_unbounded_parameters_and_excessive_tiles():
+    from ssb_tools.global_geometry import Trajectory
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    sampler = analytic_sampler(raw=True); model = Trajectory(sampler, 1., .7)
+    c = np.zeros(model.size); c[model.starts[2]] = 11.
+    with pytest.raises(ValueError, match='physical bounds'):
+        GlobalCudaRaster(model, c)
+    c[:] = np.nan
+    with pytest.raises(ValueError, match='finite'):
+        GlobalCudaRaster(model, c)
+    raster = GlobalCudaRaster(model, np.zeros(model.size))
+    try:
+        with pytest.raises(RuntimeError, match='tile dimensions'):
+            raster.tile(np.array([0.]), np.zeros((1 << 20)+1))
+        with pytest.raises(ValueError, match='finite ordered'):
+            raster.tile(np.array([np.nan]), np.array([.5]))
+    finally:
+        raster.close()
+
+
+def test_global_cuda_matches_cpu_at_declared_motion_bounds_and_large_native_window(tmp_path):
+    from ssb_tools.global_geometry import Trajectory, GeometrySettings
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    from ssb_tools.global_resample import corrected_tile
+    from ssb_tools.initial_unroll import BandSampler, PROJECTION
+    from ssb_tools.native_rows import MemoryRows
+    phase = np.linspace(-2.2, 2.2, 44001)
+    p = np.zeros(len(phase), PROJECTION)
+    p['sequence'] = p['lattice_row'] = np.arange(len(p))
+    p['theta_rad'] = phase; p['x_axis_m'] = 12.+.1*phase
+    width = 32; offsets = np.linspace(-.4, .4, width)
+    raw = np.random.default_rng(52).integers(0, 255, (len(p), width), dtype=np.uint8)
+    flat = dict(offset=[3.]*width, gain=[1.1]*width, valid=[True]*width)
+    sampler = BandSampler(p, MemoryRows(raw, flat), offsets, offsets, np.ones(width, bool), .0001001)
+    model = Trajectory(sampler, 2.75, 1.715, GeometrySettings(fit_translation=True))
+    c = np.concatenate([np.full(n, v) for n, v in zip(model.sizes, [29., -29., 9.9, -9.9, 4.9, -4.9])])
+    q = 2.75*np.array([-2.19, -.3, 0., .7, 2.19]); x = np.linspace(11.75, 12.45, 19)
+    expected, count = corrected_tile(model, c, q, x)
+    engine = GlobalCudaRaster(model, c)
+    try:
+        # Individual row tiles exercise compact loading, not whole-band upload.
+        for i in range(len(q)):
+            actual, n, _ = engine.tile(q[i:i+1]/2.75, x)
+            np.testing.assert_array_equal(n, count[i:i+1])
+            np.testing.assert_allclose(actual, expected[i:i+1], atol=3e-5, rtol=0, equal_nan=True)
+    finally:
+        engine.close()

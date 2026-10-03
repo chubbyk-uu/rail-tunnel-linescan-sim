@@ -205,7 +205,8 @@ def candidate_bands(sampler, xs):
 
 
 def render_tile(sampler, angles, xs, accelerator=None):
-    bands = candidate_bands(sampler, xs)
+    bands = (accelerator.candidate_bands(xs) if accelerator is not None and
+             hasattr(accelerator, 'candidate_bands') else candidate_bands(sampler, xs))
     if accelerator is not None: return accelerator.tile(angles, xs, bands)
     return cpu_tile(sampler, angles, xs, bands)
 
