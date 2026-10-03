@@ -140,9 +140,16 @@ def test_demo_generation_preserves_lens_key_and_preflight_rejects_other_rig(tmp_
                     '--output',str(demo),'--calibration',str(cal)],check=True,capture_output=True)
     generated=yaml.safe_load((demo/'capture.yaml').read_text())
     assert generated['motion']['start_theta_deg']==180.
+    assert generated['gate']=={'start_deg':-125.,'end_deg':125.}
     assert generated['truth']['lens_k1']==.006
     assert generated['truth']['optical_key']==config['truth']['optical_key']
     assert check_calibration(demo/'capture.yaml',demo/'calibration.json')==identity
+    # A radiometric change must not silently reuse the old flat-field identity.
+    with pytest.raises(subprocess.CalledProcessError):
+        subprocess.run(['python3',str(repo/'tools/prepare_contact_demo.py'),'--world',str(world),
+                        '--config',str(cfg),'--spec',str(repo/'src/ssb_tools/config/stage_b_scene.yaml'),
+                        '--response-gain','2.4','--output',str(tmp_path/'new_gain_old_cal'),
+                        '--calibration',str(cal)],check=True,capture_output=True)
     generated['truth']['lens_k1']=.008
     wrong=tmp_path/'wrong.yaml';wrong.write_text(yaml.safe_dump(generated))
     with pytest.raises(subprocess.CalledProcessError):check_calibration(wrong,cal)
