@@ -200,7 +200,7 @@ def run(unroll, trajectory, observable, output, raw_root=None):
         complete = [k for k, r in enumerate(references) if r['observed_travel_m'] > .35]
         if not complete:
             raise ValueError('no sufficiently complete raw band for the helix illustration')
-        band = complete[0]
+        band = complete[len(complete)//2]
         first, end = sampler.bounds[band]
         raw_stride = max(1, math.ceil(max(end-first, width)/1800))
         row_ids = np.arange(first, end, raw_stride)
@@ -223,6 +223,7 @@ def run(unroll, trajectory, observable, output, raw_root=None):
         page = ['<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>原始螺旋条带与接缝对比</title>',
             '<style>body{margin:24px;background:#202124;color:#eee;font:16px sans-serif;line-height:1.6}a{color:#9cf}.overview{display:flex;gap:16px;align-items:flex-start}.overview figure{margin:0;flex:1;min-width:0}.overview img{width:100%;height:auto}.pair{display:flex;gap:16px;flex-wrap:wrap}.pair figure{margin:0}.pair img{width:512px;max-width:100%;height:auto}.notice{color:#ffcb80}figcaption{margin:8px 0}img{image-rendering:auto}button{padding:8px;cursor:pointer}</style>',
             '<h1>三种状态：原始螺旋条带 → 名义展开 → 全局优化</h1>',
+            '<p><a href="#raw-band">直接看原始倾斜条带</a> · <a href="#features">直接看板缝与裂缝接缝</a> · <a href="geometry/review.html">误差窗口</a></p>',
             '<p>原来的左图属于第二种：已经根据每行编码器位置补偿前进位移，所以板缝大部分不再倾斜。第一张保留圈内前进造成的真实斜向变化，没有人为旋转图像。</p>',
             '<p>原始图按每圈首个可用曝光的轴向位置摆放，同一圈各行固定在该位置；像素直接取原始 Mono8，未做畸变、平场或位移补偿。它只是条带摆放示意，不能拿来作为 D3 精度基线。后两张在同一网格上完成采后光学校正；D3 只与名义展开比较。</p>',
             f'<p class="notice">名义 → 优化的留出 P95：{scores["heldout_before"]["norm_px"]["p95"]:.3f} → {scores["heldout_after"]["norm_px"]["p95"]:.3f} px；仍未通过 0.5 px 目标，独立网格验收待做。</p>',
@@ -231,9 +232,9 @@ def run(unroll, trajectory, observable, output, raw_root=None):
                             ('geometry/nominal.png', '② 编码器名义展开（原来的左图）'),
                             ('geometry/optimized.png', '③ 图像匹配与全局轨迹优化')):
             page.append(f'<figure><figcaption>{label}</figcaption><a href="{file}"><img src="{file}"></a></figure>')
-        page.append('</div><h2>单圈原始图：圈内前进造成的倾斜</h2>')
+        page.append('</div><h2 id="raw-band">单圈原始图：圈内前进造成的倾斜</h2>')
         page.append(f'<p>条带 {band}，原始 {width} 列 × {end-first} 曝光行；这一采集段编码器前进 {references[band]["observed_travel_m"]:.3f} m。横轴为曝光顺序，纵轴为传感器列；只转置并每隔 {raw_stride} 个像素抽样，不做图像变形。竖直板缝在此视图中呈斜线。</p><a href="raw_band.png"><img style="width:100%;height:auto" src="raw_band.png"></a>')
-        page.append('<h2>板缝 / 裂缝形态附近的硬接缝</h2><p>位置仅从公开图像的细长暗结构选取，未读取裂缝编号、场景坐标或真值。形态标签不是独立缺陷鉴定；这些图用于看连续性，不另报挑选区域的验收分数。接缝在每张图正中，左右分别取相邻圈。</p>')
+        page.append('<h2 id="features">板缝 / 裂缝形态附近的硬接缝</h2><p>位置仅从公开图像的细长暗结构选取，未读取裂缝编号、场景坐标或真值。形态标签不是独立缺陷鉴定；这些图用于看连续性，不另报挑选区域的验收分数。接缝在每张图正中，左右分别取相邻圈。</p>')
         for crop in crops:
             identifier = crop['id']
             item = crop['candidate']
@@ -251,6 +252,7 @@ def run(unroll, trajectory, observable, output, raw_root=None):
                      nominal_column_pitch_m=pitch, invalid_pixels=int(np.count_nonzero(~valid)),
                      band_references=references,
                      single_band=dict(band=band, original_shape=[end-first, width],
+                                      selection='middle sufficiently complete band',
                                       transpose=True, integer_stride=raw_stride)), search=search, crops=crops,
             image_consistency_gate=geometry['image_consistency_gate'],
             performance=dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
