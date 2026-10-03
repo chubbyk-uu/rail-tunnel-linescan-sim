@@ -1,6 +1,6 @@
 # README 界面媒体
 
-更新：2026-10-02。这里保存真实运行界面的两张静态图和两段 GIF，不包含示意图或生成图片。
+更新：2026-10-03。这里保存真实运行界面的两张静态图、两段 GIF，以及实际采集图像的重建对比，不包含生成图冒充采集数据。
 
 2026-10-03：采集响应增益从 3.2 改为 2.4，以下媒体仍对应旧配置，仅展示界面和机构运动。用户已于 2026-10-03 确认增益 2.4 为新视觉基线；媒体未重新录制，不能作为新基线的成像画质证据。
 
@@ -35,3 +35,23 @@ ffmpeg -y -ss 1 -t 8 -i local_data/readme_media_20261002/rviz.mp4 \
 ```
 
 源视频不随 Git 提供。若更新机器人、界面或光照，需重新运行并录制视频，不能仅改文字后继续把这些媒体称为当前版本。
+
+## 重建对比图片（2026-10-03）
+
+新增 20 m 带假设噪声档、2 mm 轨道起伏数据的板缝/裂缝形态对比与单圈原始条带。采集/重建 `c77d762`，复核页 `3efba53`，导出器 `842f038`；源数据为 `sessions/d3_noise_20m_v2_20261003/feature_review/`，原图和完整成果保留。
+
+`joint_comparison_20m.png` 与 `crack_comparison_20m.png` 分别选图像检测器给出的首个宽/细结构，不使用缺陷真值或真实误差选图。每侧 512×512，两个面板逐字节等于源 PNG 的 RGB 像素，只在面板之外加标题。左右同一标定、网格和固定亮度；无融合、锐化或调色。`raw_band_20m.png` 是源 `raw_band.png` 的原样复制：原始 59,259×4096 曝光数据只转置并每隔 33 像素抽样，未作光学校正和圈内位移补偿。
+
+完整输出覆盖和保存值核验通过，但末圈 15 个预定双圈评价点缺测，整体验收仍失败；展示图不能豁免该失败，也不代表所有位置都达到 1 px。两组局部图由本机可选假设噪声档生成，不替换默认关闭噪声的演示。来源、候选位置和哈希见 `manifest.json` 的 `reconstruction_figures`。
+
+重新生成自己的复核页后，使用已构建的 Python 包导出（输出目录须为新目录）：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+python3 tools/export_readme_comparisons.py \
+  --features sessions/d3_features_NEW \
+  --output local_data/readme_export_NEW
+```
+
+输出 `joint_comparison.png`、`crack_comparison.png`、`raw_band.png`、报告与自动溯源；导出前核验源文件身份，导出后核验所有面板像素。README 中的后缀 `20m` 表示本次数据范围，导出器自身也可用于其他范围。

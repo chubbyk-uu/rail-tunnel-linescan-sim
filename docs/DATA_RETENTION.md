@@ -15,6 +15,9 @@
 | 3 m 噪声验证 | `sessions/d3_noise_assumed_20261003/`、`local_data/evaluation/d3_noise_assumed_20261003/` | 原图、独立重放、D1/D2/D3、两幅全图与全量核验；重放原图为独立校验后的硬链接 |
 | 噪声档资产与标定 | `local_data/stage_b/noise_assumed_20261003/`、`local_data/evaluation/sensor_noise_implementation_20261003/` | 独立标定和生成参数；只读素材与默认演示硬链接，不能原位改写共享文件。495 项测试及默认关闭后的兼容性证据 |
 | 无噪声兼容重放 | `sessions/noise_off_compatibility_20261003/` | 98 个二进制文件与旧正式会话相同；重复原图校验后链接原始块，保留元数据和溯源 |
+| 新 20 m 带噪声完整输出 | `sessions/d3_noise_20m_v2_20261003/`、`local_data/evaluation/d3_noise_20m_v2_20261003/` | 原图、独立重成像、D1/D2/D3、两幅全图（约 32.3 GiB）、逐像素核验及复核页；整体接缝因末圈 15 个双圈点缺测仍失败 |
+| 首次 20 m 规模失败记录 | `sessions/d3_noise_20m_20261003/`、`local_data/evaluation/d3_noise_20m_20261003/` | D3 来源检查发现 39 个边缘坐标不一致；保留原图和失败链条，不称为优化验收通过；重复原图已按哈希去重 |
+| 20 m README 对比源 | `local_data/readme_export_20m_final_20261003/`、`docs/media/` | 候选来源、逐像素等同核验和导出溯源，已入 Git 的只有公开 PNG 与媒体清单 |
 | 20 m 原始采集与诊断 | `sessions/stage_c_20m_acceptance_20261002/`，不含已删除的 `wall_replay/` | 后续 D1/D2/D3、原始采集和独立评价基线 |
 | 20 m 任务私有输入 | `local_data/mission_runs/20261002_113730_eae97f12/` | 生成和独立评价；不是重建输入 |
 | v1 CPU 展开（瘦身） | `sessions/stage_d1_3m_final_20261002/` | 报告、溯源、预览及 8765 复核页；大数组已删，v2 等价记录见 STAGE_D |
@@ -108,3 +111,9 @@ local_data/evaluation/cleanup_20261002_public/
 现行正式 3 m 证据为 `sessions/d3_holdout_rebuilt_20261003/`，配套协议与评分在 `local_data/evaluation/d3_holdout_rebuilt_20261003/`。旧 `d3_holdout_12_15_20261003` 保留为历史原图/数值结果与新增门限的反向验证，不把其二进制身份 false 改为 true。
 
 新旧两次采集各自完成独立重成像；验收后仅对重复原图作哈希核对和硬链接去重，174 块释放约 2.71 GiB，内容/路径/元数据/独立重成像报告均保留。明细为 `replay_deduplication.json`。删除被最终回归替代的 `/tmp/ssb_holdout_provenance_suite/`，最终 470 项测试目录保留；两轮日志/XML/摘要已核验并批量归档为单个 `test_reports.tar.gz`。
+
+## 2026-10-03 新 20 m 数据去重
+
+两个 20 m 批次均独立重成像并通过原图/表文件比较，之后才按实际 SHA-256 和尺寸共享不可变原图块。两个重成像各 495 块、第二批采集与第一批相同的 494 块改为硬链接，共释放 **23.18 GiB**（24,894,095,360 字节）。不删除失败批次、原始曝光、元数据、独立评价或重建输入，不把第二批不同的一个块强行当成相同；内容与所有路径/哈希记录保留。明细见两份 `replay_deduplication.json`。
+
+删除三个已结束回归目录中的 12 个临时夹具目录，以及两份被正式导出替代的临时 README 图片目录。日志、XML、摘要仍保留，三个测试归档逐文件核验通过；正式 501 项测试报告及 README 导出溯源不删。清单 `local_data/evaluation/d3_noise_20m_v2_20261003/cleanup.json`。

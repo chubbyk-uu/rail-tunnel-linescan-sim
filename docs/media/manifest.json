@@ -114,5 +114,167 @@
     "viewer recordings are separate 3 m tasks",
     "GUI media is not raw line-scan image quality or a performance benchmark",
     "Git contains GIF/PNG; source MP4 remains local"
-  ]
+  ],
+  "reconstruction_figures": {
+    "date": "2026-10-03",
+    "capture_commit": "c77d762",
+    "feature_review_commit": "3efba53",
+    "exporter_commit": "842f038",
+    "session": "sessions/d3_noise_20m_v2_20261003",
+    "source": "sessions/d3_noise_20m_v2_20261003/feature_review",
+    "assumed_sensor_noise": true,
+    "response_gain": 2.4,
+    "method": "first wide/thin public image candidates; 1:1 panels, titles outside image",
+    "panels": [
+      {
+        "file": "joint_comparison.png",
+        "candidate": {
+          "shape": [
+            512,
+            512
+          ],
+          "seam_column": 256,
+          "bands": [
+            10,
+            11
+          ],
+          "x_first_m": 6.298660788096433,
+          "q_first_m": 1.0907974492410852,
+          "grid_pitch_m": [
+            0.0002,
+            0.00019999953231409427
+          ],
+          "invalid_pixels": [
+            0,
+            0
+          ],
+          "candidate": {
+            "kind": "wide",
+            "centre_px": [
+              512,
+              37
+            ],
+            "bbox_px": [
+              0,
+              26,
+              1024,
+              40
+            ],
+            "thickness_px": 11.0,
+            "score": 24750.9375,
+            "window": {
+              "id": 1272,
+              "bands": [
+                10,
+                11
+              ],
+              "q_center_m": 1.1418973297473363,
+              "status": "planned",
+              "shape": [
+                512,
+                1024
+              ],
+              "x_first_m": 6.247460788096434,
+              "q_first_m": 1.0907974492410852
+            },
+            "x_m": 6.349860788096434,
+            "q_m": 1.0981974319367067
+          },
+          "id": 0
+        },
+        "source_pixels_identical": true,
+        "panel_shape": [
+          512,
+          512
+        ]
+      },
+      {
+        "file": "crack_comparison.png",
+        "candidate": {
+          "shape": [
+            512,
+            512
+          ],
+          "seam_column": 256,
+          "bands": [
+            29,
+            30
+          ],
+          "x_first_m": 17.573113922545243,
+          "q_first_m": -2.5245774297731125,
+          "grid_pitch_m": [
+            0.0002,
+            0.00019999953231409427
+          ],
+          "invalid_pixels": [
+            0,
+            0
+          ],
+          "candidate": {
+            "kind": "thin",
+            "centre_px": [
+              512,
+              254
+            ],
+            "bbox_px": [
+              0,
+              141,
+              1024,
+              252
+            ],
+            "thickness_px": 4.0,
+            "score": 47295.99609375,
+            "window": {
+              "id": 3514,
+              "bands": [
+                29,
+                30
+              ],
+              "q_center_m": -2.4734775492668613,
+              "status": "planned",
+              "shape": [
+                512,
+                1024
+              ],
+              "x_first_m": 17.52191392254524,
+              "q_first_m": -2.5245774297731125
+            },
+            "x_m": 17.62431392254524,
+            "q_m": -2.4737775485653324
+          },
+          "id": 2
+        },
+        "source_pixels_identical": true,
+        "panel_shape": [
+          512,
+          512
+        ]
+      }
+    ],
+    "raw_band": {
+      "band": 17,
+      "original_shape": [
+        59259,
+        4096
+      ],
+      "selection": "middle sufficiently complete band",
+      "transpose": true,
+      "integer_stride": 33
+    },
+    "source_inputs": {
+      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review/report.json": "6eeae1328e0254a4174a23b6de87d44dc194f4b8c054a5b73f9e6da1c3f3a83e",
+      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review/provenance.json": "a01d1f0db490c0db807c64f50ef4c17d24562cb5d25b867d29a7bc88fee0cb93",
+      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review/feature_0_nominal.png": "a0eca6c710d2f53bc310e4f22d7f48a7abe7cd6dec01fd256a062a97986d8946",
+      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review/feature_0_optimized.png": "5e7e081597ebe708de8dce0e4399a7ea4233733abd787f98e036840cbcb5065f",
+      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review/feature_2_nominal.png": "3e73cc9377564f9426cbb560224507d6098ab4adf9a5adaac73f67df9482ae85",
+      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review/feature_2_optimized.png": "0be27706e975652918f577e8ae7c6f163090869b5e243ddede12f4e13ab7dd7f",
+      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review/raw_band.png": "7a9a7b33e873d5fc9a1f2b84d31f2b433e632580f9eaf87f67537a26f9713b90"
+    },
+    "output_hashes": {
+      "joint_comparison_20m.png": "3dc94a08833810acdda169434e0ed272a7e1c3cb447e1a32cf23d9df225cfde6",
+      "crack_comparison_20m.png": "e0e3c6d7d98cdda7fc430aba0667eeb6dbc7b4d869a07788c4fc91150e7c19f3",
+      "raw_band_20m.png": "7a9a7b33e873d5fc9a1f2b84d31f2b433e632580f9eaf87f67537a26f9713b90"
+    },
+    "limitation": "full image coverage passed, but seam acceptance still fails with 15 missing planned two-band samples; no fusion or sharpening"
+  }
 }
