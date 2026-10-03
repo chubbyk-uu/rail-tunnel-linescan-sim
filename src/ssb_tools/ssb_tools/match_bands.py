@@ -141,20 +141,27 @@ def match_one(sampler, grid, window, settings):
 
 
 _WORKER = None
+_WORKER_AUDIT = None
+_WORKER_SOURCE = None
 
 
 def _start_worker(root, raw_root):
-    global _WORKER
+    global _WORKER, _WORKER_AUDIT, _WORKER_SOURCE
     # Inherit the parent's public-input audit before any input is opened.
-    public_audit.install_from_environment()
+    _WORKER_AUDIT = public_audit.install_from_environment()
     cv2.setNumThreads(1)
-    # D1 products are hash-checked again here; raw blocks are hashed when first read.
-    _WORKER = verified_bands(root, raw_root, verify_raw=False)[0]
+    _WORKER, _WORKER_SOURCE = None, (root, raw_root)
 
 
 def _match_chunk(task):
+    global _WORKER
+    # First task checks D1 inside the audit. A rejected input then propagates its
+    # actual exception, rather than killing the initializer with BrokenProcessPool.
+    if _WORKER is None:
+        _WORKER = verified_bands(*_WORKER_SOURCE, verify_raw=False)[0]
     grid, settings, chunk = task
-    return [match_one(_WORKER, grid, window, settings) for window in chunk]
+    results = [match_one(_WORKER, grid, window, settings) for window in chunk]
+    return results, dict(_WORKER_AUDIT) if _WORKER_AUDIT is not None else None
 
 
 def match_all(root, raw_root, sampler, grid, planned, settings, workers):
@@ -162,13 +169,20 @@ def match_all(root, raw_root, sampler, grid, planned, settings, workers):
     with a fixed RANSAC seed per window, so the worker count cannot change any output."""
     workers = min(workers, len(planned))
     if workers <= 1:
-        return [match_one(sampler, grid, window, settings) for window in planned]
+        return [match_one(sampler, grid, window, settings) for window in planned], []
     # Contiguous chunks keep each worker on neighbouring bands and raw blocks.
     bounds = np.linspace(0, len(planned), 4*workers+1).round().astype(int)
     tasks = [(grid, settings, planned[a:b]) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
     with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context('spawn'),
                              initializer=_start_worker, initargs=(str(root), raw_root)) as pool:
-        return [result for chunk in pool.map(_match_chunk, tasks) for result in chunk]
+        results, audits = [], {}
+        for chunk, state in pool.map(_match_chunk, tasks):
+            results.extend(chunk)
+            if state is not None:
+                audits[state['pid']] = state  # latest cumulative snapshot per data worker
+        if os.environ.get(public_audit.ENVIRONMENT) and not audits:
+            raise RuntimeError('parallel matching has no worker audit evidence')
+        return results, [audits[pid] for pid in sorted(audits)]
 
 
 def pack_matches(sampler, grid, window, matches):
@@ -271,7 +285,7 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
     planned = [window for window in windows if window['status'] == 'planned']
     matching_start = time.monotonic()
     try:
-        results = match_all(root, raw_root, sampler, grid, planned, settings, workers)
+        results, worker_audits = match_all(root, raw_root, sampler, grid, planned, settings, workers)
     finally:
         cv2.setNumThreads(previous_threads)
     for window, (diagnostic, part, sampled, matched) in zip(planned, results):
@@ -308,6 +322,7 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
         performance=dict(input_check_s=input_s, workers=workers, sampling_s=sampling_s, matching_s=matching_s,
             matching_wall_s=matching_wall_s,
             timing_note='sampling_s/matching_s sum per-window times over all workers'))
+    report['worker_audits'] = worker_audits
     review_start = time.monotonic(); write_review(sampler, grid, windows, table, output)
     report['performance'].update(review_s=time.monotonic()-review_start,
         wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes())

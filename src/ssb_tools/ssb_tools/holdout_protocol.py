@@ -13,6 +13,7 @@ from .global_geometry import GeometrySettings
 from .optical_identity import check_calibration
 from .session import Session, read_json, sha256_file
 from .evaluate_global_geometry import SAMPLING_SCHEMA
+from .public_audit import POLICY
 
 
 def evaluation_path(path):
@@ -39,7 +40,7 @@ def declare(workspace, demo, output, start, length):
                ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py',
                 'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
                 'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py')]
-    record = dict(schema='ssb.d3_holdout_protocol.v4',
+    record = dict(schema='ssb.d3_holdout_protocol.v5',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
         d2=dict(spacing_m=.2, height=512, max_width=1024, halo_m=.25, settings=asdict(MatchSettings())),
@@ -80,7 +81,7 @@ def capture_checks(session, expected_commit):
                 stage_b_acceptance=bool(stage_b_ok))
 
 
-def public_run_valid(root):
+def public_run_valid(root, strong=True):
     """The scored D2/D3 products are exactly those of the audited public-only run."""
     path = root/'public_run/report.json'
     if not path.is_file():
@@ -90,7 +91,14 @@ def public_run_valid(root):
     current = {str(p.resolve()): sha256_file(p) for name in ('matches', 'fit')
                for p in sorted((root/name).iterdir()) if p.is_file()} if all(
                    (root/name).is_dir() for name in ('matches', 'fit')) else {}
-    return (report.get('schema') == 'ssb.public_reconstruction.v1' and report.get('status') == 'pass' and
+    states = report.get('audit_states', [])
+    audited = (report.get('schema') == 'ssb.public_reconstruction.v2' and bool(states) and
+               all(s.get('policy') == POLICY and s.get('installed') is True and
+                   type(s.get('blocked_reads')) is int and s['blocked_reads'] == 0 and
+                   type(s.get('data_reads')) is int and s['data_reads'] > 0 for s in states))
+    if not strong and report.get('schema') == 'ssb.public_reconstruction.v1':
+        audited = True  # historical v4 evidence retains its original, weaker meaning
+    return (audited and report.get('status') == 'pass' and
             report.get('private_input_opens') == 0 and bool(current) and
             {str(Path(k).resolve()): v for k, v in outputs.items()} == current)
 
@@ -115,13 +123,14 @@ def verify(protocol_file, root, output):
         holdout_roi_correct=read_json(root/'unroll/report.json')['grid']['target_x_m'] == protocol['holdout_roi_m'],
         input_hashes_unchanged=hashes_match(protocol['input_hashes']),
         production_sources_unchanged=hashes_match(protocol['production_sources']))
-    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v4':
-        checks['public_only_production_run'] = public_run_valid(root)
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5'):
+        checks['public_only_production_run'] = public_run_valid(root,
+            strong=protocol['schema'] == 'ssb.d3_holdout_protocol.v5')
     else:
         checks['public_replay_identical'] = read_json(root/'public_replay/report.json').get(
             'geometry_and_residuals_identical') is True
     checks.update(capture_checks(session, protocol['code_commit']))
-    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v3', 'ssb.d3_holdout_protocol.v4'):
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v3', 'ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5'):
         checks['sampling_protocol_unchanged'] = protocol['sampling'] == dict(
             schema=SAMPLING_SCHEMA, spacing_q_m=.2, phase_fractions=[.25, .75], samples_across=9,
             column_guard_pixels=2, original_nominal_probes_retained=True,

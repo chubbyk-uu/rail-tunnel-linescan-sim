@@ -95,7 +95,7 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
         assert record['holdout_roi_m'] == [12., 15.]
         assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance',
                                                'public_only_production_run']
-        assert record['schema'] == 'ssb.d3_holdout_protocol.v4'
+        assert record['schema'] == 'ssb.d3_holdout_protocol.v5'
         assert record['code_commit'] == 'frozen' and output.exists()
         assert record['sampling']['schema'] == 'ssb.public_common_overlap.v2'
         assert record['sampling']['exact_plan_saved_before_truth'] is True
@@ -112,12 +112,15 @@ def public_run_fixture(root):
         (root/name/'report.json').write_text(name)
     outputs = {str(p): sha256_file(p) for name in ('matches', 'fit') for p in sorted((root/name).iterdir())}
     (root/'public_run').mkdir()
-    report = dict(schema='ssb.public_reconstruction.v1', status='pass', private_input_opens=0, outputs=outputs)
+    from ssb_tools.public_audit import POLICY
+    report = dict(schema='ssb.public_reconstruction.v2', status='pass', private_input_opens=0, outputs=outputs,
+        audit_states=[dict(policy=POLICY, installed=True, blocked_reads=0, data_reads=3)])
     (root/'public_run/report.json').write_text(json.dumps(report))
     return report
 
 
-@pytest.mark.parametrize('change', [None, 'missing', 'replaced_output', 'extra_output', 'failed'])
+@pytest.mark.parametrize('change', [None, 'missing', 'replaced_output', 'extra_output', 'failed',
+                                  'missing_audit', 'blocked_read', 'legacy'])
 def test_scored_products_must_be_those_of_the_audited_public_run(tmp_path, change):
     report = public_run_fixture(tmp_path)
     if change == 'missing':
@@ -129,4 +132,10 @@ def test_scored_products_must_be_those_of_the_audited_public_run(tmp_path, chang
     elif change == 'failed':
         report['status'] = 'fail'
         (tmp_path/'public_run/report.json').write_text(json.dumps(report))
+    elif change in ('missing_audit', 'blocked_read', 'legacy'):
+        if change == 'missing_audit': report['audit_states'] = []
+        elif change == 'blocked_read': report['audit_states'][0]['blocked_reads'] = 1
+        else: report['schema'] = 'ssb.public_reconstruction.v1'
+        (tmp_path/'public_run/report.json').write_text(json.dumps(report))
+        if change == 'legacy': assert public_run_valid(tmp_path, strong=False)
     assert public_run_valid(tmp_path) is (change is None)

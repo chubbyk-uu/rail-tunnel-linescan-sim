@@ -56,16 +56,17 @@ def run(unroll, observable, root, raw_root=None, workers=8, spacing_m=.2,
     d1, config, raw, blocks = stage(unroll, observable, record/'public', raw_root)
     staged_s = time.monotonic()-started
     reads = set()
-    public_audit.install(record/'public', raw, reads, recorded=[matches])
+    audit = public_audit.install(record/'public', raw, reads, recorded=[matches, fit])
     d2 = match(d1, matches, spacing_m, 512, 1024, MatchSettings(), .25, raw, workers)
     if d2['status'] == 'unmeasurable':
         raise ValueError('D2 found no usable matches')
     d3 = optimize(d1, matches, config, fit, settings, raw)
     outputs = {str(path): sha256_file(path) for directory in (matches, fit)
                for path in sorted(directory.iterdir()) if path.is_file()}
-    report = dict(schema='ssb.public_reconstruction.v1', status='pass',
+    states = public_audit.verified_states(audit, d2['worker_audits'])
+    report = dict(schema='ssb.public_reconstruction.v2', status='pass',
         public_raw_blocks=blocks, public_files_opened=sorted(reads), outputs=outputs,
-        private_input_opens=0, worker_audit=public_audit.ENVIRONMENT,
+        private_input_opens=sum(s['blocked_reads'] for s in states), audit_states=states,
         d2=dict(status=d2['status'], windows=d2['windows'], matches=d2['matches']['total']),
         d3=dict(status=d3['status'], image_consistency_gate=d3['image_consistency_gate']['status']),
         performance=dict(staging_s=staged_s, d2_wall_s=d2['performance']['wall_s'],

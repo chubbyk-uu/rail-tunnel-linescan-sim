@@ -204,6 +204,6 @@ def test_worker_processes_inherit_the_public_input_audit(tmp_path, monkeypatch):
     # Only workers install the hook here (it cannot be removed from pytest itself):
     # their raw reads come from the unstaged capture directory and must fail.
     monkeypatch.setenv(public_audit.ENVIRONMENT, json.dumps(dict(public=str(public), raw=str(public/'raw'))))
-    with pytest.raises(RuntimeError, match='original raw locator'):
+    with pytest.raises(RuntimeError, match='outside public read allowlist'):
         run(root, tmp_path/'out', spacing_m=.04, height=128, max_width=256,
             settings=MatchSettings(max_shift_mm=4.), workers=2)
