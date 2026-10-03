@@ -2,6 +2,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import yaml
+from test_wall_coverage import nominal
 
 from ssb_tools.holdout_protocol import capture_checks
 from ssb_tools.session import sha256_file
@@ -68,3 +70,30 @@ def test_missing_or_incomplete_stage_b_evidence_is_rejected(tmp_path, change):
         # Deliberately leave overall='pass': an inconsistent summary must fail.
         path.write_text(json.dumps(report))
     assert capture_checks(session, 'frozen')['stage_b_acceptance'] is False
+
+
+@pytest.mark.parametrize('start,length,valid', [(12., 3., True), (19., 3., False), (12., .5, False)])
+def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp_path, monkeypatch, nominal, start, length, valid):
+    import ssb_tools.holdout_protocol as module
+    config, calibration = nominal
+    demo = tmp_path/'demo'
+    demo.mkdir()
+    (demo/'capture.yaml').write_text(yaml.safe_dump(config))
+    (demo/'calibration.json').write_text(json.dumps(calibration))
+    (demo/'bundle.json').write_text('{}')
+    source = tmp_path/'src/ssb_tools/ssb_tools'
+    source.mkdir(parents=True)
+    for name in ('match_bands.py', 'band_matching.py', 'optimize_bands.py', 'global_geometry.py', 'initial_unroll.py'):
+        (source/name).write_text('# fixture source\n')
+    monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: 'frozen 0 '+('a'*64))
+    monkeypatch.setattr(module, 'check_calibration', lambda *a: 'measured-rig')
+    output = tmp_path/'evaluation/protocol.json'
+    if valid:
+        record = module.declare(tmp_path, demo, output, start, length)
+        assert record['holdout_roi_m'] == [12., 15.]
+        assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance']
+        assert record['code_commit'] == 'frozen' and output.exists()
+    else:
+        with pytest.raises(ValueError):
+            module.declare(tmp_path, demo, output, start, length)
+        assert not output.exists()

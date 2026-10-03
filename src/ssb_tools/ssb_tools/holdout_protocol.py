@@ -31,7 +31,7 @@ def declare(workspace, demo, output, start, length):
         raise ValueError('a protocol cannot be redeclared or overwritten')
     from .mission_plan import wall_plan
     config = yaml.safe_load((demo/'capture.yaml').read_text())
-    wall_plan(config, start, length)  # Reject invalid bounds before recording a protocol.
+    wall_plan(config, start, length, read_json(demo/'calibration.json'))
     check_calibration(demo/'capture.yaml', demo/'calibration.json')
     settings = GeometrySettings(attitude_spacing_m=.02, observed_knots=True)
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
