@@ -299,6 +299,54 @@ python3 -m ssb_tools.evaluate_global_geometry \
 
 0.5 px 是工程目标而非标准，在本输出网格上对应 0.1 mm；其适用条件及裂缝检查限制见 DESIGN §11。图像留出残差与真实网格接缝是不同指标，不能相互替代。下一步冻结验证方案后采集新的平轨 3 m 会话，保留原材质和光照；不把既有带起伏会话误称为理想基线，不用独立评价的真值修正量调整生产轨迹。
 
+### 冻结方法与新采集复核（2026-10-03）
+
+匹配及求解方案在 `61fe961` 冻结（工作区干净），本次新采集不再调节 D2/D3 参数：周向匹配间距 0.2 m、曝光区姿态节点间距 0.02 m、默认四项模型。先重新生成无外加轨道起伏的直轨世界，再按名义壁面 `[3,6] m` 规划前后缓冲并实际采集。保留 0.2 mm 轮胎静态压缩、真实接触动力学、原混凝土材质/缺陷、0.6% 镜头畸变和完整条光照明；“平轨”不等于数学上完全无误差的相机。镜头/平场沿用兼容的独立标定，原始采集不做补偿，D1 才按需校正。
+
+产物为 `sessions/stage_d3_3m_frozen_20261003/`，含 `flat_capture`、`flat_unroll`、`flat_matches`、`flat_fit`、`material_fit` 和两套 `*_public_replay`。独立真值评价另放 `local_data/evaluation/stage_d3_frozen_20261003/{material,flat}/`。轨迹及留出残差对仅包含公开配置、D1/D2 产物和原图的搬迁副本逐字节复现，两次 Python 输入审计均未读取 `evaluation/`、场景或世界文件。
+
+| 独立检查 | 既有 2 mm 档起伏场景，3 m ROI | 新平轨 3 m 采集 |
+|---|---:|---:|
+| 实际光学网格接缝 P95，名义 → 优化 | 51.530 → 0.678 px | 0.219 → 0.304 px |
+| 留出图像残差 P95，名义 → 优化 | 51.122 → 0.631 px | 0.632 → 0.257 px |
+| 优化后轴向端点平均漂移 | +0.179 mm | +0.538 mm |
+| 优化后轴向尺度误差 | +0.00598% | +0.01794% |
+| 严格 / 受控接缝检查 | 未通过 / 通过 | 通过 / 通过 |
+| 优化后的精确四边支撑 | 缺 8,962 像素 | 无缺口 |
+
+平轨结果是一个必须保留的反例：名义几何本已准确，匹配中的光度偏差被部分吸收到轨迹，图像残差改善却使真实接缝 P95 和轴向漂移略增。不能宣称所有场景的真实几何均有改善。平轨接缝 P99 仍约 1.072 px、最大约 4.080 px；受控场景 P99 约 1.439 px、最大约 4.052 px，因此总体 P95 通过也不代表每处接缝达标。评价对所有预定可测采样评分，未因位于板缝而剔除。
+
+新会话保存 341,334 行，原图约 1.30 GiB；无 GUI 动力学实时率 0.9997、成像进度实时率 0.9559，写盘完成滞后 0.913 s。D1 12.52 s / 381 MiB，D2 31.56 s / 286 MiB，D3 13.03 s / 489 MiB；独立评价 17.01 s / 678 MiB。内存均为各进程峰值 RSS，非并行总和；不将无 GUI 性能冒充 GUI 实时率。完整测试为 433 项，0 失败、0 跳过，用时约 23.97 s，记录 `/tmp/ssb_d3_step2_final_suite/`。
+
+D1 全像素覆盖统计还记录了 336 个内部无效像素（863,940,000 像素中约 0.000039%），四边及 49×33 独立网格采样均未碰到这些小区域。138 段无效游程各取一个代表位置，只读公开原图检查：全部存在几何支撑，全部含 255 饱和贡献像素，没有另一条带的有效取样可替代。这个诊断不等于对 336 个像素逐个完成独立真值评价；缺口保持无效，不用周围像素补洞。先前仅用编码器和标定的名义覆盖报告为完整，它不检查逐行饱和，所以两个报告并不矛盾。**本轮完成的是方法冻结及新数据复核，不是完整全图通过验收。**
+
+复现新采集（先按 README 从公开素材构建默认演示资产；每次使用新输出目录）：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+python3 tools/prepare_contact_demo.py --demo local_data/stage_b/contact_demo \
+  --output local_data/stage_b/d3_flat_NEW --track-chord-mm 0 --track-cross-level-mm 0 \
+  > /tmp/d3_flat_NEW_prepare.log 2>&1
+bash tools/run_wall_capture.sh sessions/d3_flat_NEW/capture 3 3 \
+  local_data/stage_b/d3_flat_NEW > /tmp/d3_flat_NEW_capture.log 2>&1
+python3 -m ssb_tools.initial_unroll --session sessions/d3_flat_NEW/capture \
+  --calibration local_data/stage_b/d3_flat_NEW/calibration.json \
+  --output sessions/d3_flat_NEW/unroll --backend cuda > /tmp/d3_flat_NEW_d1.log 2>&1
+python3 -m ssb_tools.match_bands --unroll sessions/d3_flat_NEW/unroll \
+  --spacing-m 0.2 --output sessions/d3_flat_NEW/matches > /tmp/d3_flat_NEW_d2.log 2>&1
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python3 -m ssb_tools.optimize_bands \
+  --unroll sessions/d3_flat_NEW/unroll --matches sessions/d3_flat_NEW/matches \
+  --observable sessions/d3_flat_NEW/capture/config/observable_config.json \
+  --observed-knots --attitude-spacing-m 0.02 --output sessions/d3_flat_NEW/fit \
+  > /tmp/d3_flat_NEW_d3.log 2>&1
+python3 -m ssb_tools.evaluate_global_geometry --session sessions/d3_flat_NEW/capture \
+  --unroll sessions/d3_flat_NEW/unroll --trajectory sessions/d3_flat_NEW/fit \
+  --output local_data/evaluation/d3_flat_NEW > /tmp/d3_flat_NEW_evaluation.log 2>&1
+```
+
+剩余工作按顺序：处理饱和保护和优化映射边缘支撑（不得默默裁减 240° 目标），检查光度偏差在低运动场景下对几何的影响；再补噪声档位及最终覆盖验收，最后输出 20 m 全图并做亮度/接缝融合。用于 README 的板缝、裂缝前后对比待最终成果完成后挑选，不能用当前诊断图暗示完整验收已通过。
+
 ## 后续 D3 验收与扩展
 
 先分解第一版剩余残差，并对优化后映射做独立光学网格接缝评价及有效边界核查；在公开观测确有支持时补充模型，而非增加自由形变来吸收误差。继续保留横滚/俯仰相对变化的观测，检查尺度与共同姿态变化的退化。姿态节点间距由窗口观测密度约束，不开放每窗任意仿射自由度，不在无观测区域凭平滑先验恢复高频晃动。几何通过后再导出最终全分辨率全图，并考虑亮度与窄带融合，再扩展到 20 m 和受控误差场景。正式评价匹配稳健性前补充可开关噪声档位；无噪声基线只用于实现检查。IMU 仍不加入，真值只用于独立评估。

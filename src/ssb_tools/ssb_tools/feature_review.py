@@ -220,13 +220,15 @@ def run(unroll, trajectory, observable, output, raw_root=None):
         # Keep the previous error-based diagnostics and metrics beside feature-selected crops.
         geometry = geometry_review(unroll, trajectory, output/'geometry', raw_root)
         scores = optimized['image_consistency']
+        gate = geometry['image_consistency_gate']
+        gate_label = '通过' if gate['status'] == 'pass' else '未通过'
         page = ['<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>原始螺旋条带与接缝对比</title>',
             '<style>body{margin:24px;background:#202124;color:#eee;font:16px sans-serif;line-height:1.6}a{color:#9cf}.overview{display:flex;gap:16px;align-items:flex-start}.overview figure{margin:0;flex:1;min-width:0}.overview img{width:100%;height:auto}.pair{display:flex;gap:16px;flex-wrap:wrap}.pair figure{margin:0}.pair img{width:512px;max-width:100%;height:auto}.notice{color:#ffcb80}figcaption{margin:8px 0}img{image-rendering:auto}button{padding:8px;cursor:pointer}</style>',
             '<h1>三种状态：原始螺旋条带 → 名义展开 → 全局优化</h1>',
             '<p><a href="#raw-band">直接看原始倾斜条带</a> · <a href="#features">直接看板缝与裂缝接缝</a> · <a href="geometry/review.html">误差窗口</a></p>',
             '<p>原来的左图属于第二种：已经根据每行编码器位置补偿前进位移，所以板缝大部分不再倾斜。第一张保留圈内前进造成的真实斜向变化，没有人为旋转图像。</p>',
             '<p>原始图按每圈首个可用曝光的轴向位置摆放，同一圈各行固定在该位置；像素直接取原始 Mono8，未做畸变、平场或位移补偿。它只是条带摆放示意，不能拿来作为 D3 精度基线。后两张在同一网格上完成采后光学校正；D3 只与名义展开比较。</p>',
-            f'<p class="notice">名义 → 优化的留出 P95：{scores["heldout_before"]["norm_px"]["p95"]:.3f} → {scores["heldout_after"]["norm_px"]["p95"]:.3f} px；仍未通过 0.5 px 目标，独立网格验收待做。</p>',
+            f'<p class="notice">名义 → 优化的留出 P95：{scores["heldout_before"]["norm_px"]["p95"]:.3f} → {scores["heldout_after"]["norm_px"]["p95"]:.3f} px；图像一致性检查{gate_label}（P95 ≤ {gate["threshold_p95_px"]:g} px）。本页不读取独立真值评价，不能用图像残差替代真实网格接缝、漂移和覆盖验收。</p>',
             '<p>x 轴向水平，q 周向竖直。概览缩小显示，点击查看文件；下方局部图每个输出像素约 0.2 mm，默认按 100% 像素显示。固定 DN 0–255，无锐化、自动对比度或接缝融合。</p><div class="overview">']
         for file, label in (('raw_helix.png', '① 未补偿的原始条带摆放'),
                             ('geometry/nominal.png', '② 编码器名义展开（原来的左图）'),
