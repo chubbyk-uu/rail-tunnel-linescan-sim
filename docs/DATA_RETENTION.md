@@ -18,6 +18,8 @@
 | D2 偏置来源对照 | `sessions/bias_study_20261003/`、`local_data/bias_study_20261003/` | 平法线/仅反照率变体原始采集、v2 展开与匹配、带符号网格评价（约 18 GiB）；平法线 v2 展开为 D3 实现检查基线；原光照重放仅保留逐字节一致记录 |
 | D1 v2 验收 | `sessions/stage_d1_3m_v2_20261003/` | v2 展开（25 MB）、D2、CUDA/CPU 公开复现及 D2 公开复现；`public_cuda` 内原图为硬链接 |
 | 20 m D1/D2 v2 | `sessions/stage_d_20m_v2_20261003/` | 完整 20 m 展开（137 MB）、D2 对应点及带符号网格评价；D3 的 20 m 输入 |
+| 3 m D3 诊断与对比 | `sessions/stage_d3_3m_review_20261003/`、`sessions/stage_d3_3m_20261003/` | `robust/` 为当前冻结优化、无融合复核及公开复现；其他子目录为首轮小型诊断。未通过最终精度验收，不替代原始采集或 D1/D2；公开复现原图为硬链接 |
+| D3 测试与输入边界证据 | `local_data/evaluation/stage_d3_3m_20261003/` | 冻结代码、406 项回归、假匹配回归与公开搬迁完全一致记录；仅独立证据，重建不读取 |
 | 早期采集基线 | `sessions/gz_a/`、`sessions/default_acceptance/` 及其 dynamics | 阶段 A/B 基线，不保留重复的重放原图 |
 | 双测量轮试验 | `sessions/measuring_trials/` | 轨道起伏、横滚/俯仰及里程基线 |
 | README 源视频 | `local_data/readme_media_20261002/` | 可重新生成已入 Git 的 GIF/PNG；任务原始行图另已清理 |
