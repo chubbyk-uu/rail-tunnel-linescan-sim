@@ -73,6 +73,7 @@ def build(sources, work, output, runtime):
             '--demo', work/'optics', '--world', work/'gui/world.sdf',
             '--config', work/'optics/capture.yaml', '--spec', spec,
             '--track-chord-mm', '2', '--track-cross-level-mm', '2', '--wheel-deflection-mm', '.2',
+            '--gate-margin-deg', '5', '--response-gain', '2.4',
             '--output', work/'demo'])
         run('8/8 Prepare calibration targets', module('optical_bench', '--config', work/'demo/capture.yaml',
                                                      '--output', work/'demo/bench'))

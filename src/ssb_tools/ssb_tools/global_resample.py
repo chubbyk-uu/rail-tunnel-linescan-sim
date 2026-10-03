@@ -199,7 +199,7 @@ def run(unroll, trajectory, output, raw_root=None):
             '<style>body{background:#202124;color:#eee;font:16px sans-serif;margin:24px}a{color:#9cf}.pair{display:flex;gap:16px;flex-wrap:wrap}.pair img{max-width:100%;height:auto}.overview img{max-height:800px;width:auto}figure{margin:8px;max-width:48%}figcaption{margin:8px 0}.notice{color:#ffcb80}</style>',
             '<h1>3 米：编码器名义拼接 / 全局轨迹优化</h1>',
             '<p>两侧均采后校正，按同一 0.2 mm 网格从原始列取样。固定 DN 0–255；无锐化、自动对比度或接缝融合。x 水平，q 周向竖直。</p>',
-            f'<p class="notice">留出点 P95：{scores["heldout_before"]["norm_px"]["p95"]:.3f} → {scores["heldout_after"]["norm_px"]["p95"]:.3f} px；0.5 px 图像一致性检查：{html.escape(gate["status"])}。这不是独立网格接缝验收。</p>',
+            f'<p class="notice">留出点 P95：{scores["heldout_before"]["norm_px"]["p95"]:.3f} → {scores["heldout_after"]["norm_px"]["p95"]:.3f} px；{gate["threshold_p95_px"]:g} px 图像一致性检查：{html.escape(gate["status"])}。这不是独立网格接缝验收。</p>',
             '<p>图像可点击查看原尺寸。概览是每隔固定网格间距的采样；下方局部图为 100% 输出像素。黑色可包含无效样本，不补洞。</p>',
             '<div class="pair overview"><figure><figcaption>编码器名义位置</figcaption><a href="nominal.png"><img src="nominal.png"></a></figure><figure><figcaption>全局轨迹优化</figcaption><a href="optimized.png"><img src="optimized.png"></a></figure></div>']
         for crop in crops:

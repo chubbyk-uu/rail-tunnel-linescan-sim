@@ -2,6 +2,7 @@
 """Reuse accepted optical/GUI assets with contact physics and chassis work lights."""
 import argparse
 import json
+import math
 from pathlib import Path
 import shutil
 import sys
@@ -29,6 +30,10 @@ def main():
     p.add_argument('--output',required=True,type=Path)
     p.add_argument('--calibrate',action='store_true',help='render independent targets and fit this demo rig')
     p.add_argument('--calibration',type=Path,help='reuse a compatible measured calibration')
+    p.add_argument('--gate-margin-deg',type=float,default=5.,
+                   help='extra capture on each side of the fixed upper 240 degree output (0..10; default 5)')
+    p.add_argument('--response-gain',type=float,
+                   help='override the camera radiometric gain; changed gain requires a compatible new calibration')
     p.add_argument('--geometry',type=Path,
                    help='lining meshes (prepare_stage_b_scene output, same layout) replacing those the source scene and '
                         'world name; optical settings, key and calibration are kept (meshes are not in the optical '
@@ -47,6 +52,10 @@ def main():
     p.add_argument('--wheel-deflection-mm',type=float,default=.2,
                    help='realized polyurethane tread static deflection (assumption, >=0.15; 0 = rigid wheels)')
     a=p.parse_args();out=a.output.resolve()
+    if not math.isfinite(a.gate_margin_deg) or not 0<=a.gate_margin_deg<=10:
+        p.error('gate margin must be finite and within 0..10 degrees')
+    if a.response_gain is not None and (not math.isfinite(a.response_gain) or a.response_gain<=0):
+        p.error('response gain must be finite and positive')
     a.demo=a.demo.resolve()
     a.world=a.world or a.demo/'world/world.sdf'
     a.config=a.config or a.demo/'capture.yaml'
@@ -64,6 +73,7 @@ def main():
     c['contact']={'enabled':True,'settle_s':2.}
     c['motion']['start_x_m']=3.
     c['motion']['start_theta_deg']=180.  # bottom -> right lower gate -> top -> left
+    c['gate']={'start_deg':-120.-a.gate_margin_deg,'end_deg':120.+a.gate_margin_deg}
     c['motion']['profile']=[[0.,0.],[1.,1.],[15.,1.],[16.,0.],[17.,0.]]
     c['acceptance']['valid_x_m']=[3.1,5.7]
     # Physical truth options; the world is generated from them and the plugin checks the match.
@@ -90,6 +100,8 @@ def main():
     source=Path(c['render']['optical_scene'])
     if not source.is_absolute():source=a.config.resolve().parent/source
     scene=json.loads(source.read_text())
+    if a.response_gain is not None:
+        scene['response_gain']=a.response_gain
     # Resolve all old scene-relative asset references before changing its directory.
     def resolve(node):
         if isinstance(node,dict):

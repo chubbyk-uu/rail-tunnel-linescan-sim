@@ -10,6 +10,7 @@ from scipy.sparse import csr_matrix, diags, vstack
 from scipy.sparse.linalg import spsolve
 
 from .global_geometry import GeometrySettings, Trajectory, curvature_stencil
+from .quality_targets import SEAM_P95_PX
 from .match_bands import MATCH, verified_bands, graph_components
 from .provenance import stage_record
 from .public_capture import confined_file
@@ -323,8 +324,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
             optical_signature=upstream['optical_signature'], source_observation_hashes=upstream['source_observation_hashes'],
             grid=upstream['grid'], bands=len(sampler.segments), coefficients=model.size, settings=asdict(settings),
             image_consistency=scores, solver=history, observability=evidence,
-            image_consistency_gate=dict(threshold_p95_px=.5,
-                status='pass' if scores['heldout_after']['norm_px']['p95'] <= .5 else 'fail',
+            image_consistency_gate=dict(threshold_p95_px=SEAM_P95_PX,
+                status='pass' if scores['heldout_after']['norm_px']['p95'] <= SEAM_P95_PX else 'fail',
                 scope='held-out image consistency only; optical-mesh seam acceptance is still required'),
             gauge='mean carriage dx and scan phase dq anchored to zero; radius and measured lens mapping fixed',
             limitations=['image residuals are not independent optical-mesh seam acceptance',

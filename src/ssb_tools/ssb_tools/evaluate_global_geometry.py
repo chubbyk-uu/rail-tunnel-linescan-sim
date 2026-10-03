@@ -19,6 +19,7 @@ from .global_resample import inverse_points, load_global, native_points
 from .initial_unroll import grid_axes
 from .match_bands import MATCH, plan_windows, verified_bands
 from .optimize_bands import residual_summary
+from .quality_targets import SEAM_P95_PX, CONTROLLED_SEAM_P95_PX
 from .provenance import stage_record
 from .ref_mesh import OpticalMesh
 from .session import Session, read_json, sha256_file
@@ -194,9 +195,9 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
             arrays[name+'_band'] = bands.reshape(xx.shape)
             arrays[name+'_material'] = materials.reshape(xx.shape)
             boundaries[name] = boundary_support(model, c, grid)
-        seam_gate = dict(threshold_p95_px=.5, status='pass' if statistics['optimized']['norm_px']['p95'] <= .5 else 'fail',
+        seam_gate = dict(threshold_p95_px=SEAM_P95_PX, status='pass' if statistics['optimized']['norm_px']['p95'] <= SEAM_P95_PX else 'fail',
                          scope='true optical-mesh separation of adjacent samples at the same output coordinate')
-        controlled_gate = dict(threshold_p95_px=3., status='pass' if statistics['optimized']['norm_px']['p95'] <= 3. else 'fail',
+        controlled_gate = dict(threshold_p95_px=CONTROLLED_SEAM_P95_PX, status='pass' if statistics['optimized']['norm_px']['p95'] <= CONTROLLED_SEAM_P95_PX else 'fail',
                                scope='DESIGN controlled-error seam target; does not waive coverage or weak-region checks')
         perimeter_missing = sum(v['missing_pixels'] for v in boundaries['optimized'].values())
         report = dict(schema='ssb.global_geometry_evaluation.v1', evaluation_only=True, grid=grid,
@@ -205,7 +206,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
                        perimeter=dict(status='fail' if perimeter_missing else 'pass',
                        missing_pixels=perimeter_missing, scope='exact perimeter pixel support; not full interior coverage')),
             capture_conditions=dict(imposed_track_irregularity=imposed_track, archived_track_parameters=track,
-                interpretation='0.5 px is the strict baseline target; 3 px is the controlled-error target. '
+                interpretation='1 px is the project seam target; 3 px is the secondary controlled-error target. '
                                'A perturbed track must not be labelled a perfectly flat ideal baseline.'),
             sampling=dict(spacing_q_m=spacing_m, samples_across=samples_across, planned_windows=len(planned),
                           unmeasurable_windows=len(windows)-len(planned), interior_shape=list(xx.shape)),

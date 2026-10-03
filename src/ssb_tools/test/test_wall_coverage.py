@@ -48,6 +48,26 @@ def nominal_lines(config, task):
     return x[selected], theta[selected]
 
 
+@pytest.mark.parametrize('margin', [0., .5, 5., 10.])
+def test_capture_guard_keeps_the_full_fixed_wall_target(nominal, margin):
+    config, calibration = nominal
+    config['gate'].update(start_deg=-120.-margin, end_deg=120.+margin,
+                          start_rad=math.radians(-120.-margin), end_rad=math.radians(120.+margin))
+    planned, task = wall_plan(config, 3., 3., calibration)
+    np.testing.assert_allclose(planned['inspection']['theta_rad'], [-2*math.pi/3, 2*math.pi/3])
+    assert task['output_arc_deg'] == 240.
+    assert task['capture_gate_deg'] == [-120.-margin, 120.+margin]
+    assert planned['gate'] == config['gate']
+
+
+@pytest.mark.parametrize('start,end', [(-110.,130.),(-131.,131.),(-120.,119.)])
+def test_wall_target_cannot_be_shrunk_or_outside_capture_gate(nominal,start,end):
+    config, calibration = nominal
+    config['gate'].update(start_deg=start,end_deg=end)
+    with pytest.raises(ValueError,match='fixed upper 240'):
+        wall_plan(config,3.,3.,calibration)
+
+
 @pytest.mark.parametrize('start,length', [(0., 1.), (3., 3.), (0., 20.)])
 @pytest.mark.parametrize('phase', [180., -130., 0., 120.])
 def test_wall_plan_covers_requested_target_for_all_initial_phases(nominal, start, length, phase):

@@ -134,14 +134,19 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     vehicle_end = start+length+pitch-right-mount+ramp_margin+guard
     c, task = _travel_plan(config, vehicle_start, vehicle_end-vehicle_start, inspection_domain=False)
     gate = config['gate']
-    theta_start = math.radians(gate['start_deg'])
-    arc = (gate['end_deg']-gate['start_deg']) % 360
-    if arc != 240:
-        raise ValueError('Wall coverage baseline requires the agreed upper 240 degree acquisition gate')
+    # The requested wall stays fixed in tunnel coordinates even when the head
+    # captures a wider angular guard for body roll/pitch. Never shrink the target.
+    theta_start = math.radians(-120.)
+    arc = 240.
+    capture_arc = (gate['end_deg']-gate['start_deg']) % 360.
+    offset = (-120.-gate['start_deg']) % 360.
+    if not (240. <= capture_arc <= 260. and offset+arc <= capture_arc+1e-9):
+        raise ValueError('Acquisition gate must contain the fixed upper 240 degree wall target (at most 260 degrees)')
     c['inspection'] = dict(schema='ssb.wall_target.v1', target_x_m=[start, start+length],
                            theta_rad=[theta_start, theta_start+math.radians(arc)],
                            grid_pitch_m=grid_pitch, guard_m=guard)
     task.update(mode='wall', target_x_m=[start, start+length], target_length_m=length,
+                capture_gate_deg=[gate['start_deg'], gate['end_deg']], output_arc_deg=arc,
                 nominal_usable_span_m=[left, right], ramp_margin_m=ramp_margin, guard_m=guard,
                 nominal_row_step_m=row_step*config['calibration']['radius_m'],
                 minimum_row_footprint_m=footprint*config['calibration']['radius_m'],
