@@ -524,7 +524,7 @@ def reconstruct(root, calibration_path, output, target_x=None, pitch=.0002, angu
         resampling='flat-correct native uint8 columns on demand; measured geometric inverse and angular interpolation in one projection',
         provenance_mapping='grid + projection.npy + mapping.npz + native_source.json recover raw block/row/column interpolation weights (trace_pixel)',
         limitations=['nominal centered cylinder; no IMU or actual body pose', 'no matching, optimization or seam blending',
-                     'calibration assumes radial lens and square pixels; sensor is currently noiseless'],
+                     'calibration assumes radial lens and square pixels; sensor noise parameters are not reconstruction inputs'],
         backend=backend_info,
         performance=dict(wall_s=time.monotonic()-started, stages=timings, peak_rss_bytes=peak_rss_bytes(),
                          rss_source='current executable /proc/self/status VmHWM'))

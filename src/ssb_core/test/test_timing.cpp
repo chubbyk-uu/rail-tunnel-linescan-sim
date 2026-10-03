@@ -270,3 +270,73 @@ TEST(Config, PublicMissionLimitsAreValidatedWithoutChangingOpticalIdentity) {
   c.mission["minimum_distance_m"]=1.;c.mission["inspection_x_m"]={0.,200.};
   EXPECT_THROW(c.Validate(),std::runtime_error);
 }
+
+TEST(SensorNoise, CounterStreamsHaveExpectedNormalAndLowCountPoissonMoments) {
+  const int n=131072;
+  for (double mean : {0.2, 2., 20., 63., 64., 2000.}) {
+    double sum=0, square=0;
+    for (int i=0;i<n;++i) {
+      double sample=PhotonCount(float(mean),NoiseHash(uint64_t(i)+0x321123ull));
+      sum+=sample;square+=sample*sample;
+    }
+    double average=sum/n, variance=square/n-average*average;
+    EXPECT_NEAR(average,mean,.02*std::sqrt(mean)+.003);
+    EXPECT_NEAR(variance,mean,.03*mean+.01);
+  }
+  double sum=0,square=0;
+  for(int i=0;i<n;++i) {double v=NoiseNormal(NoiseHash(i),5);sum+=v;square+=v*v;}
+  EXPECT_NEAR(sum/n,0,.015);EXPECT_NEAR(square/n,1,.025);
+}
+
+TEST(SensorNoise, AnalogReadoutMeanVarianceAndPositiveFixedResponse) {
+  SensorNoise noise=DefaultSensorNoise();noise.enabled=true;noise.prnu_fraction=.005f;
+  double gain_sum=0,gain_square=0;
+  for(unsigned column=0;column<65536;++column) {
+    double gain=ColumnResponse(noise,column);ASSERT_GT(gain,0.);
+    gain_sum+=gain;gain_square+=gain*gain;
+  }
+  double gain_mean=gain_sum/65536,gain_var=gain_square/65536-gain_mean*gain_mean;
+  EXPECT_NEAR(gain_mean,1.,.0001);EXPECT_NEAR(std::sqrt(gain_var),.005,.0001);
+  for (float signal : {0.f, 80.f, 180.f}) {
+    double sum=0,square=0;
+    constexpr int n=131072;
+    for(int row=0;row<n;++row) {
+      double dn=SensorDN(signal,1.f,row,11,noise,8e-6);
+      sum+=dn;square+=dn*dn;
+    }
+    double mean=sum/n,var=square/n-mean*mean;
+    double expected_mean=4.+signal+8e-6*100/20;
+    double expected_var=(signal*20+8e-6*100+64)/(20*20);
+    EXPECT_NEAR(mean,expected_mean,.025);EXPECT_NEAR(var,expected_var,.03*expected_var+.005);
+  }
+  EXPECT_NE(SensorDN(80,1,1,2,noise,8e-6),SensorDN(80,1,2,1,noise,8e-6));
+  noise.enabled=false;EXPECT_EQ(SensorDN(31.25,2.f,999,11,noise,1.),31.25f);
+}
+
+TEST(SensorNoise, TruthOnlyParametersAndOpticalIdentitySeparateFixedAndTemporalSeeds) {
+  auto c=BaseConfig();const auto original=c.OpticalSignature();
+  c.truth.sensor_noise.realization_seed=55;
+  EXPECT_EQ(c.OpticalSignature(),original);
+  c.truth.sensor_noise.enabled=true;
+  const auto signature=c.OpticalSignature();EXPECT_NE(signature,original);
+  c.truth.sensor_noise.realization_seed++;
+  EXPECT_EQ(c.OpticalSignature(),signature);
+  c.truth.sensor_noise.pattern_seed++;
+  EXPECT_NE(c.OpticalSignature(),signature);
+  const auto public_json=c.ObservableJson();
+  EXPECT_TRUE(public_json.at("camera").at("sensor_noise_enabled"));
+  for(const auto* name : {"pattern_seed","realization_seed","electrons_per_dn","read_noise_e","dark_current_e_per_s","bias_dn","prnu_fraction"})
+    EXPECT_EQ(public_json.dump().find(name),std::string::npos);
+  EXPECT_EQ(c.TruthJson().at("sensor_noise").at("realization_seed"),56);
+  c.truth.sensor_noise.read_noise_e=-1;EXPECT_THROW(c.Validate(),std::runtime_error);
+  c.truth.sensor_noise.read_noise_e=8;c.truth.sensor_noise.prnu_fraction=.2;EXPECT_THROW(c.Validate(),std::runtime_error);
+}
+
+TEST(SensorNoise, ParsesExplicitPrivateModelAndRejectsUnknownOrNonfiniteParameters) {
+  auto c=BaseConfig();std::string text=c.source_text;
+  const auto at=text.find("truth:\n");ASSERT_NE(at,std::string::npos);
+  text.insert(at+7,"  sensor_noise:\n    model: shot_read_prnu_v1\n    enabled: true\n    pattern_seed: 7\n    realization_seed: 9\n    electrons_per_dn: 20\n    read_noise_e: 8\n    dark_current_e_per_s: 100\n    bias_dn: 4\n    prnu_fraction: 0.005\n");
+  const auto parsed=Config::Parse(text);EXPECT_EQ(parsed.truth.sensor_noise.pattern_seed,7);EXPECT_TRUE(parsed.truth.sensor_noise.enabled);
+  auto bad=text;bad.replace(bad.find("shot_read_prnu_v1"),16,"unknown");EXPECT_THROW(Config::Parse(bad),std::runtime_error);
+  bad=text;bad.replace(bad.find("electrons_per_dn: 20"),19,"electrons_per_dn: .nan");EXPECT_THROW(Config::Parse(bad),std::runtime_error);
+}

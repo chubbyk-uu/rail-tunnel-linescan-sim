@@ -1,0 +1,10 @@
+# Generator-only assumptions, not measured DALSA specifications or reconstruction inputs.
+model: shot_read_prnu_v1
+enabled: true
+pattern_seed: 2026100301
+realization_seed: 2026100302
+electrons_per_dn: 20
+read_noise_e: 8
+dark_current_e_per_s: 100
+bias_dn: 4
+prnu_fraction: 0.005

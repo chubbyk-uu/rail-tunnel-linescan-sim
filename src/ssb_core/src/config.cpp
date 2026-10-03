@@ -125,6 +125,19 @@ Config Config::Parse(const std::string& text) {
   m.tilt_z_rad = Get<double>(mount, "tilt_z_rad", "truth.mount.");
   m.twist_rad = Get<double>(mount, "twist_rad", "truth.mount.");
 
+  if (const auto node = truth["sensor_noise"]) {
+    Check(Get<std::string>(node,"model","truth.sensor_noise.")=="shot_read_prnu_v1", "unsupported sensor noise model");
+    auto& noise = c.truth.sensor_noise;
+    noise.enabled = Get<bool>(node,"enabled","truth.sensor_noise.");
+    noise.pattern_seed = Get<uint64_t>(node,"pattern_seed","truth.sensor_noise.");
+    noise.realization_seed = Get<uint64_t>(node,"realization_seed","truth.sensor_noise.");
+    noise.electrons_per_dn = Get<float>(node,"electrons_per_dn","truth.sensor_noise.");
+    noise.read_noise_e = Get<float>(node,"read_noise_e","truth.sensor_noise.");
+    noise.dark_current_e_per_s = Get<float>(node,"dark_current_e_per_s","truth.sensor_noise.");
+    noise.bias_dn = Get<float>(node,"bias_dn","truth.sensor_noise.");
+    noise.prnu_fraction = Get<float>(node,"prnu_fraction","truth.sensor_noise.");
+  }
+
   const auto cal = Require(root, "calibration", "");
   c.calibration.wheel_diameter_m = Get<double>(cal, "wheel_diameter_m", "calibration.");
   c.calibration.radius_m = Get<double>(cal, "radius_m", "calibration.");
@@ -193,6 +206,11 @@ void Config::Validate() const {
   }
   Check(Finite({base_reference_z_m,scan_axis_height_m}) && base_reference_z_m>0 && scan_axis_height_m>0,
         "invalid robot base reference or scan axis height");
+  const auto& noise = truth.sensor_noise;
+  Check(Finite({noise.electrons_per_dn,noise.read_noise_e,noise.dark_current_e_per_s,noise.bias_dn,noise.prnu_fraction}) &&
+        noise.electrons_per_dn>=1 && noise.electrons_per_dn<=10000 && noise.read_noise_e>=0 && noise.read_noise_e<=1000 &&
+        noise.dark_current_e_per_s>=0 && noise.dark_current_e_per_s<=1e9 && noise.bias_dn>=0 && noise.bias_dn<=64 &&
+        noise.prnu_fraction>=0 && noise.prnu_fraction<=.1, "invalid or excessive sensor noise parameters");
   Check(truth.optical_key.size()==64 && truth.optical_key.find_first_not_of("0123456789abcdef")==std::string::npos,
         "truth.optical_key must be 64 lowercase hex characters");
   Check(std::isfinite(truth.lens_k1) && truth.lens_k1>=0 && truth.lens_k1<=.05,
@@ -258,6 +276,11 @@ std::string Config::OpticalSignature() const {
     key["lamp"]=scene.at("lamp");key["response_gain"]=scene.at("response_gain");
     key["indirect_fill"]=scene.value("indirect_fill_relative",0.);
   }
+  if (truth.sensor_noise.enabled) {
+    auto sensor = TruthJson().at("sensor_noise");
+    sensor.erase("realization_seed"); // a new temporal realization does not change the optical rig
+    key["sensor_response"] = sensor;
+  }
   return HmacSha256Hex(truth.optical_key, key.dump());
 }
 
@@ -273,6 +296,7 @@ nlohmann::json Config::ObservableJson() const {
                  {"nominal_distance_m", nominal_distance_m}, {"exposure_s", exposure_s},
                  {"trigger_delay_s", trigger_delay_s}, {"max_line_rate_hz", max_line_rate_hz},
                  {"focal_length_m", FocalLength()}, {"optical_signature", OpticalSignature()}};
+  j["camera"]["sensor_noise_enabled"] = truth.sensor_noise.enabled;
   j["gate"] = {{"start_rad", gate_start_rad}, {"end_rad", gate_end_rad}};
   j["odometer"] = {{"ppr", odo_ppr}, {"edges_per_cycle", odo_edges_per_cycle}, {"gear_ratio", odo_gear_ratio}};
   j["motion"] = {{"line_rate_hz", line_rate_hz}, {"advance_per_rev_m", advance_per_rev_m},
@@ -307,6 +331,11 @@ nlohmann::json Config::TruthJson() const {
            {{"e_m", m.e_m}, {"tangential_m", m.tangential_m}, {"dy_m", m.dy_m}, {"dz_m", m.dz_m},
             {"tilt_y_rad", m.tilt_y_rad}, {"tilt_z_rad", m.tilt_z_rad}, {"twist_rad", m.twist_rad}}},
           {"config_sha256", source_sha256}};
+  const auto& noise = truth.sensor_noise;
+  j["sensor_noise"]={{"model","shot_read_prnu_v1"},{"enabled",noise.enabled},
+    {"pattern_seed",noise.pattern_seed},{"realization_seed",noise.realization_seed},
+    {"electrons_per_dn",noise.electrons_per_dn},{"read_noise_e",noise.read_noise_e},
+    {"dark_current_e_per_s",noise.dark_current_e_per_s},{"bias_dn",noise.bias_dn},{"prnu_fraction",noise.prnu_fraction}};
   if(contact_enabled){j["odo_left_diameter_m"]=odo_left_true;j["odo_right_diameter_m"]=odo_right_true;}
   return j;
 }

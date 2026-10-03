@@ -1,10 +1,12 @@
 #pragma once
 #include <optix.h>
 #include "ssb_core/surface_types.hpp"
+#include "ssb_core/sensor_noise.hpp"
 
 // Stage A traces with x=0 per row. Stage B traces in a fixed 2 m chunk frame;
 // origin_x stays global double, and frame_x is subtracted BEFORE conversion to float.
 struct DeviceRow {
+  uint64_t row_sequence;
   double origin_x;
   float origin_y, origin_z;
   float optical[3];
@@ -20,6 +22,9 @@ struct LaunchParams {
   const float* tangents;
   const float2* pixel_steps; // inverse lens Jacobian (line, perpendicular)
   unsigned width, row_count;
+  ssb::SensorNoise sensor_noise;
+  const float* sensor_column_response;
+  double exposure_s;
   double radius, axis_z, x_min, x_max;
   double frame_x;
   const double* primitive_origin_x;

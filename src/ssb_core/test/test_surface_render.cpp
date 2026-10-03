@@ -550,3 +550,41 @@ TEST_F(SurfaceFixture, NormalMapScaleIsExactAtOneAndRemovesTiltedShadingAtZero) 
   EXPECT_GT(changed,flat.first.size()/2);         // shading actually depends on the normal map
   for(double invalid:{-.1,1.1}) {scene["normal_map_scale"]=invalid;SaveScene();EXPECT_THROW(StageBAssets bad(c),std::runtime_error);}
 }
+
+TEST_F(SurfaceFixture, SensorNoiseIsDeterministicAcrossBatchingForBothIntegrationPaths) {
+  c.truth.sensor_noise.enabled=true;
+  std::vector<RowJob> jobs(37);
+  for(size_t i=0;i<jobs.size();++i) {jobs[i].record.sequence=100+i;jobs[i].pose.x=8.;jobs[i].pose.theta=.3123+i*.0001;}
+  for (bool integrated : {false,true}) {
+    scene["sampling"]["time_samples"]=3;scene["sampling"]["integrated_cracks"]=integrated;SaveScene();
+    OptixRenderer renderer(c,DefaultPtxPath(),jobs.size());
+    std::vector<uint8_t> whole,part,split,repeat;std::vector<double> h,hp,hs,hr;
+    renderer.Render(jobs,whole,h);renderer.Render(jobs,repeat,hr);
+    EXPECT_EQ(whole,repeat);EXPECT_EQ(h,hr);
+    for(size_t first=0;first<jobs.size();first+=7) {
+      renderer.Render(std::vector<RowJob>(jobs.begin()+first,jobs.begin()+std::min(jobs.size(),first+7)),part,hp);
+      split.insert(split.end(),part.begin(),part.end());hs.insert(hs.end(),hp.begin(),hp.end());
+    }
+    EXPECT_EQ(whole,split);EXPECT_EQ(h,hs);
+    auto changed=jobs;for(auto& j:changed)j.record.sequence+=200;
+    renderer.Render(changed,repeat,hr);EXPECT_NE(whole,repeat);EXPECT_EQ(h,hr);
+  }
+}
+
+TEST_F(SurfaceFixture, ShaderDarkAndBrightNoiseHaveExpectedMeasuredMoments) {
+  c.truth.sensor_noise.enabled=true;c.truth.sensor_noise.prnu_fraction=0;
+  c.width=128;c.fov_at_nominal_m=.04;c.debug_column_stride=32;
+  std::vector<RowJob> jobs(2048);
+  for(size_t i=0;i<jobs.size();++i){jobs[i].record.sequence=i;jobs[i].pose.x=8;jobs[i].pose.theta=.3123;}
+  for (unsigned target : {3u,1u}) {
+    scene["calibration_target"]={{"kind",target},{"origin_x_m",8.},{"pitch_m",.02},{"bar_width_m",.003},{"albedo",.22}};
+    SaveScene();OptixRenderer renderer(c,DefaultPtxPath(),jobs.size());
+    EXPECT_TRUE(renderer.SelfCheck().at("passed"));
+    std::vector<uint8_t> pixels;std::vector<double> hits;renderer.Render(jobs,pixels,hits);
+    double sum=0,square=0;for(double dn:pixels){sum+=dn;square+=dn*dn;}
+    double mean=sum/pixels.size(),var=square/pixels.size()-mean*mean;
+    EXPECT_NEAR(mean,target==3?4.:60.1,.03);
+    if(target==3){EXPECT_GT(var,.18);EXPECT_LT(var,.28);}
+    else EXPECT_NEAR(var,56.1/20+.16+1./12,.15);
+  }
+}

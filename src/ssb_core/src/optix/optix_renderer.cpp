@@ -389,6 +389,13 @@ OptixRenderer::OptixRenderer(const Config& config, const std::filesystem::path& 
   for (int u = 0; u < config.width; ++u) tangents[u] = static_cast<float>(config.PixelTangent(u));
   std::vector<int> slot(config.width, -1);
   for (size_t i = 0; i < s.debug_columns.size(); ++i) slot[s.debug_columns[i]] = static_cast<int>(i);
+  s.params.sensor_noise = config.truth.sensor_noise;
+  s.params.exposure_s = config.exposure_s;
+  if (config.truth.sensor_noise.enabled) {
+    std::vector<float> response(config.width);
+    for (int column=0;column<config.width;++column) response[column]=ColumnResponse(config.truth.sensor_noise,column);
+    s.params.sensor_column_response=s.Alloc<float>(response.size(),response.data());
+  }
   s.params.width = config.width;
   s.params.radius = R;
   s.params.axis_z = zc;
@@ -470,6 +477,7 @@ void OptixRenderer::Render(const std::vector<RowJob>& jobs, std::vector<uint8_t>
     }
     const HeadPose h=TrueHeadPose(s.config,pose);
     DeviceRow& r=rows[i*s.params.row_stride+sample];
+    r.row_sequence=static_cast<uint64_t>(jobs[i].record.sequence);
     r.body_pose=pose.body_valid?1:0;
     r.origin_x=h.origin[0];r.origin_y=h.origin[1];r.origin_z=h.origin[2];
     for(int k=0;k<3;++k) {r.optical[k]=h.optical[k];r.line[k]=h.line[k];r.scan[k]=h.scan[k];}
@@ -555,6 +563,8 @@ nlohmann::json OptixRenderer::Describe() const {
           {"texture_footprint_samples",s.params.texture_footprint_samples},
           {"normal_map_scale",s.assets?s.assets->normal_map_scale:1.},
           {"joint_filler_texture",bool(s.params.filler)},{"texture_prefilter",bool(s.params.texture_prefilter)},
+          {"sensor_noise_enabled", s.config.truth.sensor_noise.enabled},
+          {"sensor_noise_model", "shot_read_prnu_v1; low-count Poisson, high-count Gaussian"},
           {"optix_abi_version", OPTIX_VERSION},
           {"device", s.device.name},
           {"compute_capability", std::to_string(s.device.major) + "." + std::to_string(s.device.minor)},
@@ -646,7 +656,7 @@ nlohmann::json OptixRenderer::SelfCheck() {
       worst=std::max({worst,std::abs(hits[2*i]-x),std::abs(hits[2*i+1]-q)});
     }
     auto range=std::minmax_element(pixels.begin(),pixels.end());
-    bool ok=worst<5e-6 && (s.assets->calibration_target==3 ? *range.second==0 : *range.second>0);
+    bool ok=worst<5e-6 && (s.assets->calibration_target==3 ? (c.truth.sensor_noise.enabled || *range.second==0) : *range.second>0);
     nlohmann::json result={{"passed",ok},{"max_debug_hit_error_m",worst},{"min_code",*range.first},
                            {"geometry_probe_columns",s.debug_columns},
                            {"max_code",*range.second},{"geometry_reference","independent double triangle intersections"},
@@ -658,7 +668,7 @@ nlohmann::json OptixRenderer::SelfCheck() {
   for (int u = 0; u < c.width; ++u) {
     double x, q;
     if (!AnalyticHit(c, h, c.PixelTangent(u), &x, &q)) throw std::runtime_error("self-check: analytic miss");
-    mismatched += pixels[u] != AlbedoCode(WallAlbedo(x, q));
+    if (!c.truth.sensor_noise.enabled) mismatched += pixels[u] != AlbedoCode(WallAlbedo(x, q));
   }
   double max_hit_error = 0;
   for (size_t i = 0; i < s.debug_columns.size(); ++i) {
@@ -670,7 +680,8 @@ nlohmann::json OptixRenderer::SelfCheck() {
   const bool ok = mismatched <= c.width / 100 && max_hit_error < 1e-5;
   nlohmann::json result = {{"probe_theta_rad", job.pose.theta},
                            {"geometry_probe_columns",s.debug_columns},
-                           {"pixels_differing_from_host", mismatched},
+                           {"pixels_differing_from_host", c.truth.sensor_noise.enabled ? nlohmann::json(nullptr) : nlohmann::json(mismatched)},
+                           {"radiometry_reference", c.truth.sensor_noise.enabled ? "noise statistics tested separately" : "analytic noiseless texture"},
                            {"max_debug_hit_error_m", max_hit_error},
                            {"passed", ok}};
   if (!ok) throw std::runtime_error("OptiX self-check failed: " + result.dump());

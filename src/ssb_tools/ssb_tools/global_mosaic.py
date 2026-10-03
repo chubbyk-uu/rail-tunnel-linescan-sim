@@ -110,7 +110,7 @@ def run(unroll, trajectory, output, raw_root=None, backend='cuda', comparison=Tr
                                requirement='all declared grid pixels have at least one valid native observation'),
             inputs='public raw rows, encoders, measured optical calibration and image-fitted trajectory only',
             limitations=['coverage does not certify geometric accuracy', 'nominal cylinder; no actual poses or optical mesh',
-                         'no seam fusion, inpainting, sharpening or contrast adjustment', 'sensor noise not yet modeled'],
+                         'no seam fusion, inpainting, sharpening or contrast adjustment', 'noise robustness requires independent capture evidence'],
             performance=dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
         page = ['<!doctype html><meta charset="utf-8"><title>Full-resolution D3 comparison</title>',

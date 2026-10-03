@@ -47,12 +47,16 @@ def prepare(config_path, output):
     scene['convex_panel_visibility'] = False
     x = (tunnel['x_min_m']+tunnel['x_max_m'])/2
     pitch = .02; fov = config['camera']['fov_at_nominal_m']; targets = {}
-    for name, kind, shift, albedo, theta in [('dark',3,0,.22,0), ('bright',1,0,.22,0),
-            ('bars',2,0,.22,0), ('bright_holdout',1,0,.18,.19), ('bars_holdout',2,.007,.22,0)]:
+    for target_index, (name, kind, shift, albedo, theta) in enumerate( [('dark',3,0,.22,0), ('bright',1,0,.22,0),
+            ('bars',2,0,.22,0), ('bright_holdout',1,0,.18,.19), ('bars_holdout',2,.007,.22,0)]):
         target_scene = copy.deepcopy(scene)
         target_scene['calibration_target'] = dict(kind=kind, origin_x_m=x+shift, pitch_m=pitch, bar_width_m=.003, albedo=albedo)
         target_json = output/(name+'.json'); target_json.write_text(json.dumps(target_scene, indent=2)+'\n')
         target_config = copy.deepcopy(config); target_config['render']['optical_scene'] = str(target_json)
+        noise = target_config['truth'].get('sensor_noise', {})
+        if noise.get('enabled'):
+            # Separate temporal realizations; fixed PRNU is the same physical rig.
+            noise['realization_seed'] = (noise['realization_seed']+target_index+1) % (1 << 64)
         target_yaml = output/(name+'.yaml'); target_yaml.write_text(yaml.safe_dump(target_config, sort_keys=False))
         # All designed stripes in the camera's nominal field; incomplete edge stripes are excluded.
         positions = [i*pitch+shift for i in range(-100,101) if abs(i*pitch+shift) < .99*fov/2]
@@ -60,6 +64,7 @@ def prepare(config_path, output):
                              positions_m=positions, camera_x_m=x-config['truth']['head_mount_x_m'])
     meta = dict(schema='ssb.optical_bench.v1', fov_m=fov, targets=targets,
                 config_sha256=sha256_file(config_path), target_sha256=sha256_file(mesh),
+                sensor_noise_enabled=bool(config['truth'].get('sensor_noise', {}).get('enabled')),
                 description='Known smooth cylindrical target, nominal distance; held-out shifted bars and different gray/angle.')
     (output/'bench.json').write_text(json.dumps(meta, indent=2)+'\n')
     return meta

@@ -56,7 +56,7 @@ add_custom_command(OUTPUT "${SSB_PTX}"
   COMMAND ${CUDAToolkit_NVCC_EXECUTABLE} --ptx -O3 -std=c++17 -arch=compute_75
           -I${SSB_OPTIX_SDK}/include -I${CMAKE_CURRENT_SOURCE_DIR}/include
           ${CMAKE_CURRENT_SOURCE_DIR}/src/optix/scan.cu -o "${SSB_PTX}"
-  DEPENDS src/optix/scan.cu src/optix/launch_params.h include/ssb_core/texture.hpp include/ssb_core/surface_types.hpp include/ssb_core/crack_integral.hpp
+  DEPENDS src/optix/scan.cu src/optix/launch_params.h include/ssb_core/texture.hpp include/ssb_core/surface_types.hpp include/ssb_core/crack_integral.hpp include/ssb_core/sensor_noise.hpp
   COMMENT "Compiling OptiX PTX")
 add_custom_target(ssb_ptx ALL DEPENDS "${SSB_PTX}")
 

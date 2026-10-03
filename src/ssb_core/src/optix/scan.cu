@@ -40,6 +40,12 @@ extern "C" __global__ void __closesthit__tunnel() {
 
 extern "C" __global__ void __miss__primary() { optixSetPayload_2(0u); }
 
+__device__ unsigned char SensorCode(float ideal_dn, unsigned u, const DeviceRow& row) {
+  float dn = ssb::SensorDN(ideal_dn, params.sensor_noise.enabled ? params.sensor_column_response[u] : 1.f,
+                         row.row_sequence, u, params.sensor_noise, params.exposure_s);
+  return static_cast<unsigned char>(fminf(255.f,fmaxf(0.f,dn+.5f)));
+}
+
 __device__ void StageBScan(unsigned u, unsigned r);
 
 extern "C" __global__ void __raygen__scan() {
@@ -64,7 +70,10 @@ extern "C" __global__ void __raygen__scan() {
     const double y = row.origin_y + t * d.y, z = row.origin_z + t * d.z;
     q = params.radius * atan2(y, z - params.axis_z);
     valid = x >= params.x_min && x <= params.x_max;
-    if (valid) code = ssb::AlbedoCode(ssb::WallAlbedo(x, q));
+    if (valid) {
+      const double albedo = ssb::WallAlbedo(x, q);
+      code = params.sensor_noise.enabled ? SensorCode(float(albedo*255.), u, row) : ssb::AlbedoCode(albedo);
+    }
   }
   if (!valid) atomicAdd(params.invalid + r, 1u);
   params.pixels[static_cast<size_t>(r) * params.width + u] = code;
@@ -218,7 +227,7 @@ __device__ float Shade(const DeviceRow& row,float3 point,float3 view,unsigned pr
   // Materials: 0 lining panel and chamfers (texture, normal map, cracks); 1 groove walls/floor
   // (dusty concrete, face normal); 2 joint filler (mortar); 3 gasket/void behind the contact gap.
   // Calibration replaces the target's material, not the illumination/ray path.
-  // Covered sensor is ideal zero DN (this model has no dark-current/noise source yet).
+  // Covered sensor receives no photoelectrons; dark/read noise is applied at readout.
   if(params.calibration_target==3)return 0;
   if(params.calibration_target) {
     float albedo=params.target_albedo;
@@ -443,7 +452,7 @@ __device__ bool IntegratedPixel(unsigned u,unsigned r,const DeviceRow& centre,do
     sum+=params.texture_prefilter?Shade(row,points[t],dirs[t],ids[t],xs[t],qs[t],make_float4(mean.x*w,mean.y*w,mean.z*w,mean.w*w),coverage,visibility):shaded*w;
   }
   float value=sum/3*params.response_gain;
-  params.pixels[size_t(r)*params.width+u]=static_cast<unsigned char>(fminf(255.f,fmaxf(0.f,value*255.f+.5f)));
+  params.pixels[size_t(r)*params.width+u]=SensorCode(value*255.f,u,centre);
   return true;
 }
 __device__ void StageBScan(unsigned u,unsigned r) {
@@ -507,5 +516,5 @@ __device__ void StageBScan(unsigned u,unsigned r) {
   }
   if(!valid) atomicAdd(params.invalid+r,1u);
   float value=sum/(params.time_samples*count)*params.response_gain;
-  params.pixels[size_t(r)*params.width+u]=static_cast<unsigned char>(fminf(255.f,fmaxf(0.f,value*255.f+.5f)));
+  params.pixels[size_t(r)*params.width+u]=SensorCode(value*255.f,u,centre);
 }

@@ -117,13 +117,18 @@ def fit(bench, output):
     uniformity = float(np.std(profile)/np.mean(profile))
     raw_profile = images['bright_holdout'].mean(axis=0)
     raw_uniformity = float(raw_profile.std()/raw_profile.mean())
+    temporal_std = float(np.median(bright[:, bright_valid.all(axis=0)].std(axis=0, ddof=1)))
+    dark_std = float(np.median(images['dark'].std(axis=0, ddof=1)))
     if error > .5 or uniformity > .01:
         raise ValueError(f'holdout failed: {error=}, {uniformity=}')
     result = dict(schema='ssb.measured_optical_calibration.v1', optical_signature=signatures.pop(),
                   flat=flat, geometry=geometry, image_sha256=hashes,
                   validation=dict(holdout_max_error_px=error, flat_cv=uniformity, raw_flat_cv=raw_uniformity,
-                                  valid_output_fraction=float(np.mean(geometry['valid']))),
-                  limitations='Ideal noiseless sensor; fixed nominal-distance calibration; no extrapolation at edges.')
+                                  valid_output_fraction=float(np.mean(geometry['valid'])),
+                                  measured_dark_temporal_std_dn=dark_std,
+                                  measured_bright_temporal_std_dn=temporal_std,
+                                  rows_per_target={k:len(v) for k,v in images.items()}),
+                  limitations='Measured from independent targets; finite-row noise remains; fixed nominal distance; no edge extrapolation or true sensor parameters.')
     with Path(output).open('x') as f:
         json.dump(result, f, indent=2); f.write('\n')
     return result
