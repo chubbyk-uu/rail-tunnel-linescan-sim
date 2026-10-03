@@ -17,6 +17,7 @@ from .band_matching import MatchSettings, match_window
 from .matching_structures import STRUCTURE_MODEL, LK_STRUCTURE_RADIUS
 from .initial_unroll import load_bands, release_pages, display
 from . import public_audit
+from .parallel_budget import resolve_workers
 from .public_capture import confined_file
 from .provenance import stage_record
 from .session import read_json, sha256_file
@@ -272,8 +273,7 @@ def write_review(sampler, grid, windows, table, output):
 
 def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSettings(), halo_m=.25, raw_root=None,
         workers=1):
-    if type(workers) is not int or not 1 <= workers <= (os.cpu_count() or 1):
-        raise ValueError('worker count must be between 1 and the CPU count')
+    workers = resolve_workers(workers)
     started = time.monotonic(); sampler, upstream, inputs = verified_bands(root, raw_root)
     input_s = time.monotonic()-started; grid = upstream['grid']
     output = Path(output).resolve()
@@ -347,8 +347,8 @@ def main():
     parser.add_argument('--keep-long-structures', action='store_true',
                         help='explicit diagnostic ablation; include long dark bands in matching')
     parser.add_argument('--raw', help='relocated public raw directory of the source capture (hash-checked)')
-    parser.add_argument('--workers', type=int, default=8,
-                        help='window-matching processes; outputs are identical for any count')
+    parser.add_argument('--workers', type=int,
+                        help='window-matching processes; default min(8, available CPUs)')
     parser.add_argument('--halo-m', type=float, default=.25,
                         help='use already recorded native columns around ROI edges; no extra capture')
     args = parser.parse_args()

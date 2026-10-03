@@ -6,11 +6,11 @@ No renderer, scene, reference geometry or evaluation module is imported here.
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import math
-import os
 
 import numpy as np
 from scipy.interpolate import BSpline
 from scipy.sparse import csr_matrix, diags, hstack
+from .parallel_budget import resolve_workers
 
 
 @dataclass(frozen=True)
@@ -88,7 +88,7 @@ def curvature_stencil(knots, index, reference_spacing):
 # Fixed chunks keep temporaries in cache; their order (not the thread count)
 # defines every floating-point reduction, so results do not depend on threads.
 CHUNK_RAYS = 1 << 16
-THREADS = min(8, os.cpu_count() or 1)
+THREADS = resolve_workers()
 
 
 def in_chunks(function, count, factor=1.):

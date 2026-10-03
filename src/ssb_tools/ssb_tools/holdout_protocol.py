@@ -39,7 +39,7 @@ def declare(workspace, demo, output, start, length):
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
                ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py',
                 'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
-                'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py')]
+                'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py')]
     record = dict(schema='ssb.d3_holdout_protocol.v5',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],

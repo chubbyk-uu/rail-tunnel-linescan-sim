@@ -30,6 +30,10 @@ repo=$1; root=$2; evaluation=$3; demo=$4; start=$5; length=$6
 source /opt/ros/jazzy/setup.bash
 source "$repo/install/setup.bash"
 set -u
+worker_args=()
+if [[ -n ${SSB_OFFLINE_WORKERS:-} ]]; then
+  worker_args=(--workers "$SSB_OFFLINE_WORKERS")
+fi
 bash "$repo/tools/run_wall_capture.sh" "$root/capture" "$start" "$length" "$demo" > "$evaluation/capture.log" 2>&1
 "$repo/install/ssb_core/lib/ssb_core/ssb_render" --config "$root/capture/evaluation/config_source.yaml" \
   --session "$root/reimage" --poses "$root/capture/evaluation/pose_stream.bin" --batch-rows 333 > "$evaluation/reimage.log" 2>&1
@@ -39,11 +43,11 @@ python3 -m ssb_tools.raw_quality --session "$root/capture" --output "$root/raw_q
 python3 -m ssb_tools.initial_unroll --session "$root/capture" --calibration "$demo/calibration.json" --backend cuda --output "$root/unroll" > "$evaluation/unroll.log" 2>&1
 # D2/D3 run once from staged public inputs under the private-input audit; no separate replay.
 python3 -m ssb_tools.public_reconstruction --unroll "$root/unroll" --observable "$root/capture/config/observable_config.json" \
-  --root "$root" --workers 8 --spacing-m .2 --attitude-spacing-m .02 > "$evaluation/public_reconstruction.log" 2>&1
+  --root "$root" "${worker_args[@]}" --spacing-m .2 --attitude-spacing-m .02 > "$evaluation/public_reconstruction.log" 2>&1
 python3 -m ssb_tools.holdout_protocol verify --protocol "$evaluation/protocol.json" --root "$root" \
   --output "$evaluation/protocol_verification.json" > "$evaluation/protocol_verification.log" 2>&1
 python3 -m ssb_tools.evaluate_global_geometry --session "$root/capture" --unroll "$root/unroll" \
-  --trajectory "$root/fit" --output "$evaluation/geometry" --workers 8 > "$evaluation/geometry.log" 2>&1
+  --trajectory "$root/fit" --output "$evaluation/geometry" "${worker_args[@]}" > "$evaluation/geometry.log" 2>&1
 python3 - "$evaluation/geometry/report.json" "$evaluation/protocol.json" <<'PY'
 import hashlib, json, sys
 from pathlib import Path

@@ -8,7 +8,6 @@ the interior and seams are sampled; this does not claim complete image coverage.
 import argparse
 import json
 import multiprocessing
-import os
 from pathlib import Path
 import time
 
@@ -24,6 +23,7 @@ from .quality_targets import SEAM_P95_PX, CONTROLLED_SEAM_P95_PX
 from .provenance import stage_record
 from .ref_mesh import OpticalMesh
 from .session import Session, read_json, sha256_file
+from .parallel_budget import resolve_workers
 from .stage_b_scene import peak_rss_bytes
 
 SAMPLING_SCHEMA = 'ssb.public_common_overlap.v2'
@@ -416,8 +416,7 @@ def score_window(window, model, coefficients, samples_across, training_windows, 
 def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samples_across=9, raw_root=None,
         workers=1):
     started = time.monotonic()
-    if type(workers) is not int or not 1 <= workers <= (os.cpu_count() or 1):
-        raise ValueError('worker count must be between 1 and the CPU count')
+    workers = resolve_workers(workers)
     output = Path(output).resolve()
     if 'evaluation' not in output.parts:
         raise ValueError('independent truth-side results must be inside evaluation/')
@@ -561,8 +560,8 @@ def main():
     for name in ('session','unroll','trajectory','output'):
         parser.add_argument('--'+name, required=True)
     parser.add_argument('--scene'); parser.add_argument('--raw')
-    parser.add_argument('--workers', type=int, default=8,
-                        help='evaluation processes; every score is identical for any count')
+    parser.add_argument('--workers', type=int,
+                        help='evaluation processes; default min(8, available CPUs)')
     args = parser.parse_args()
     report = run(args.session,args.unroll,args.trajectory,args.output,args.scene,raw_root=args.raw,
                  workers=args.workers)

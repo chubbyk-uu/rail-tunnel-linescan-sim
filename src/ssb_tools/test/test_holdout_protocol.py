@@ -85,7 +85,7 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
     source.mkdir(parents=True)
     for name in ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py', 'global_geometry.py',
                  'initial_unroll.py', 'global_resample.py', 'evaluate_global_geometry.py',
-                 'public_audit.py', 'public_reconstruction.py'):
+                 'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py'):
         (source/name).write_text('# fixture source\n')
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: 'frozen 0 '+('a'*64))
     monkeypatch.setattr(module, 'check_calibration', lambda *a: 'measured-rig')

@@ -18,6 +18,7 @@ from .global_geometry import GeometrySettings
 from .match_bands import run as match
 from .optimize_bands import run as optimize
 from .session import read_json, sha256_file
+from .parallel_budget import resolve_workers
 
 D1_PRODUCTS = ('report.json', 'provenance.json', 'bands.json', 'projection.npy', 'mapping.npz',
                'native_source.json')
@@ -44,9 +45,10 @@ def stage(unroll, observable, public, raw_root=None):
     return d1, config/'observable_config.json', raw, len(source['blocks'])
 
 
-def run(unroll, observable, root, raw_root=None, workers=8, spacing_m=.2,
+def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
         settings=GeometrySettings(attitude_spacing_m=.02, observed_knots=True)):
     started = time.monotonic()
+    workers = resolve_workers(workers)
     root = Path(root).resolve()
     record, matches, fit = root/'public_run', root/'matches', root/'fit'
     if any(p.exists() for p in (record, matches, fit)):
@@ -81,7 +83,7 @@ def main():
     parser.add_argument('--unroll', required=True); parser.add_argument('--observable', required=True)
     parser.add_argument('--root', required=True, help='session root; writes matches/, fit/ and public_run/')
     parser.add_argument('--raw', help='relocated public raw directory of the source capture (hash-checked)')
-    parser.add_argument('--workers', type=int, default=8)
+    parser.add_argument('--workers', type=int, help='default min(8, available CPUs)')
     parser.add_argument('--spacing-m', type=float, default=.2)
     parser.add_argument('--attitude-spacing-m', type=float, default=.02)
     args = parser.parse_args()
