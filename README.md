@@ -273,6 +273,23 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory sessions/d1_3m_NEW
 
 浏览器打开 `http://localhost:8765/review.html` 查看初始展开。要查看匹配诊断，可将服务器目录换成 `sessions/d2_3m_NEW`。D2 的局部对齐图用于诊断对应点，尚不是全局优化后的成果。
 
+第一版 D3 可进一步用图像对应点拟合连续轨迹，并从原始列生成无融合对比图：
+
+```bash
+ros2 run ssb_tools optimize_bands \
+  --unroll sessions/d1_3m_NEW --matches sessions/d2_3m_NEW \
+  --observable SESSION/config/observable_config.json \
+  --output sessions/d3_3m_NEW > /tmp/ssb_d3.log 2>&1
+
+ros2 run ssb_tools review_global_bands \
+  --unroll sessions/d1_3m_NEW --trajectory sessions/d3_3m_NEW \
+  --output sessions/d3_review_NEW > /tmp/ssb_d3_review.log 2>&1
+
+python3 -m http.server 8765 --bind 127.0.0.1 --directory sessions/d3_review_NEW
+```
+
+对比页显示同一网格上的编码器名义拼接和全局优化拼接，以及 100% 像素的硬接缝局部图。初始展开已补偿名义螺旋位移；优化进一步修正图像估计的轨迹误差，两侧都不做融合或锐化。概览仅为固定间隔采样，尚未导出最终全分辨率成果。第一版在现有 3 米数据上把留出 P95 从约 52 px 降到约 0.70 px，**尚未通过 0.5 px 目标或独立网格接缝验收**；正常材质与平法线诊断组分别保留，详见 [D3 实现与限制](docs/STAGE_D.md#d3-第一版连续轨迹优化2026-10-03)。
+
 D1 默认使用 CUDA；可显式选择 `--backend cpu`，不会在 CUDA 失败时偷偷回退。处理输出目录必须是新的。当前 v2 按需读取原图、不保存原始列浮点缓存：3 米默认展开产物约 25 MB，20 米约 137 MB；只有显式选择 `--mosaic full` 才另存全分辨率图，3 米另加约 2.4 GiB。后续匹配仍需要相关原图块，搬家后用 D2 的 `--raw` 指定原图目录；不能只保留小型展开产物就删除原始采集。独立光学校正导出及验证命令见 [阶段 B §6](docs/STAGE_B.md#6-光学标定与校正) 和 [阶段 D](docs/STAGE_D.md)。
 
 ## 性能与资源

@@ -225,6 +225,13 @@ def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_cha
     assert all(sha256_file(path) == digest for path, digest in provenance['outputs'].items())
     assert all(sha256_file(path) == digest for path, digest in before.items())
     with pytest.raises(ValueError, match='separate'): run(d1, d2, observable, d1/'wrong')
+    from ssb_tools.global_resample import run as review
+    result = review(d1, output, tmp_path/'review')
+    assert len(result['crops']) >= 1 and (tmp_path/'review/review.html').is_file()
+    assert (tmp_path/'review/nominal.png').is_file() and (tmp_path/'review/optimized.png').is_file()
+    with (output/'trajectory.json').open('a') as file: file.write(' ')
+    with pytest.raises(ValueError, match='D3 product hash'):
+        review(d1, output, tmp_path/'rejected')
 
 
 def test_damped_normal_solver_honors_bounds_and_recovers_known_quadratic():
@@ -238,3 +245,43 @@ def test_damped_normal_solver_honors_bounds_and_recovers_known_quadratic():
     bounded, _ = damped_solve(lambda x: matrix @ x-target, lambda x: matrix,
                               np.zeros(2), np.array([.3, 1.]))
     assert abs(bounded[0]-.3) < 1e-8 and abs(bounded[1]) <= 1
+
+
+def test_pointwise_sampling_matches_band_sampler_and_preserves_invalid_footprints():
+    from ssb_tools.global_resample import native_points
+    model, _, _ = synthetic_matches()
+    sampler = model.sampler
+    image = np.arange(len(sampler.projection)*len(sampler.offsets), dtype=np.float32).reshape(sampler.native.shape)/10000
+    sampler.native.image[:] = image
+    sampler.geometry_valid[251] = False
+    qs = np.array([-.8001, -.3207, .2456, .7012]); xs = np.linspace(.24, .59, 23)
+    expected, mask, score = sampler.sample(0, qs, xs)
+    xx, qq = np.meshgrid(xs, qs)
+    actual, valid, actual_score, _ = native_points(sampler, 0, xx, qq, 1.)
+    np.testing.assert_array_equal(valid, mask)
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-5, equal_nan=True)
+    np.testing.assert_allclose(actual_score, score, rtol=1e-6, atol=1e-5)
+    _, valid, _, _ = native_points(sampler, 0, np.array([.45, -.5]), np.array([1.1, .2]), 1.)
+    assert not valid.any()
+
+
+def test_corrected_inverse_and_sampling_use_the_original_native_pixels_once():
+    from ssb_tools.global_resample import inverse_points, sample_corrected
+    model, _, _ = synthetic_matches()
+    sampler = model.sampler
+    image = np.broadcast_to(np.arange(512, dtype=np.float32)[None, :], sampler.native.shape).copy()
+    sampler.native.image[:] = image
+    coefficients = np.zeros(model.size)
+    for k in range(4):
+        coefficients[model.starts[k]:model.starts[k+1]] = [.5, -.3, .8, -.6][k]
+    x = np.array([.4, .45, .51]); q = np.array([-.5, -.1, .4])
+    target, supported = model.forward(0, x, q, coefficients)
+    nx, nq, valid = inverse_points(model, coefficients, 0, target[:, 0], target[:, 1])
+    assert valid.all() and supported.all()
+    np.testing.assert_allclose(nx, x, atol=1e-8, rtol=0)
+    np.testing.assert_allclose(nq, q, atol=1e-8, rtol=0)
+    qs, xs = np.array([-.4, .21]), np.array([.39, .47])
+    zero, valid, _ = sample_corrected(model, np.zeros(model.size), 0, qs, xs)
+    expected, mask, _ = sampler.sample(0, qs, xs)
+    np.testing.assert_array_equal(valid, mask)
+    np.testing.assert_allclose(zero, expected, atol=1e-4, rtol=0)

@@ -211,6 +211,30 @@ python3 -m ssb_tools.optimize_bands \
 
 新增测试覆盖独立矩阵旋转与射线求交、非零姿态耦合、稀疏雅可比、已知合成对应点、留出点隔离、方向权重和窗口信息上限、空/断开数据、公开配置身份与符号链接、D1/D2 哈希链、公开输入端到端运行、求解器已知解和参数边界。这里的数字属于实现诊断；后续还需正常材质、优化映射重采样和独立网格接缝评价。
 
+### 无融合对比与公开数据复现
+
+`global_resample` 验证 D3 产物及其 D1 身份，通过优化映射反解每个输出网格点，再在原始列上完成暗场/平场和一次双线性取样；不读取初始全图，不对已展开图像做二次变形。反解不收敛、未标定区域、缺行或饱和保持无效。以最靠近传感器中心的有效观测选条带，不平均、不融合。原图取样每批最多 2048 个不同曝光行，图像按 16 个周向行分块，输出只有两张概览、至多三组原尺度接缝图和报告，不生成大量小瓦片或全图浮点缓存。
+
+```bash
+python3 -m ssb_tools.global_resample \
+  --unroll sessions/bias_study_20261003/flatnormal_d1v2 \
+  --trajectory sessions/d3_flat_NEW --output sessions/d3_flat_review_NEW \
+  > /tmp/d3_flat_review_NEW.log 2>&1
+```
+
+概览沿 D1 网格每隔固定步长采样，不能用于判断 0.2–0.6 mm 裂缝清晰度。局部图为 100% 输出像素，左半来自前一圈、右半来自后一圈，中线为硬接缝；选择最大名义错位、最大剩余留出残差和中间窗口，同时展示明显改善与剩余问题，不只展示表现最好的窗口。所有显示固定 DN 0–255，无自动对比度和锐化。原始位置对比指编码器名义圆柱展开，已补偿名义螺旋位移，并不等于把未经展开的斜向扫描条带直接摆放。
+
+`tools/test_global_optimization.py` 使用已安装包，搬运公开 D1/D2 文件、公开装配配置与相关原图块（同一文件系统上优先硬链接，避免重复大文件 I/O），不携带真值、场景或世界。显式用 `--raw` 定位迁移后的原图，Python 输入审计拒绝打开 `evaluation/`、`truth.json`、`scene.json`、SDF 或原地址中的 `.u8` 块；重新优化的轨迹、窗口报告和残差数组应与参考完全一致。此输入审计的范围是 Python 生产读文件路径，不冒充操作系统级沙箱。
+
+```bash
+python3 tools/test_global_optimization.py \
+  --unroll sessions/bias_study_20261003/flatnormal_d1v2 \
+  --matches sessions/bias_study_20261003/flatnormal_d2v2 \
+  --observable sessions/bias_study_20261003/flatnormal/config/observable_config.json \
+  --reference sessions/d3_flat_NEW --output sessions/d3_public_NEW \
+  > /tmp/d3_public_NEW.log 2>&1
+```
+
 ## 后续 D3 验收与扩展
 
 把相邻圈对应点与公开编码器轨迹组成低维全局优化，保留横滚/俯仰相对变化的观测，同时检查尺度与共同姿态变化的退化。姿态节点间距由窗口观测密度约束，不开放每窗任意仿射自由度，不在无观测区域凭平滑先验恢复高频晃动。先比较未经融合的接缝误差，几何通过后再考虑亮度与窄带融合。正式评价匹配稳健性前补充可开关噪声档位；无噪声基线只用于实现检查。IMU 仍不加入，真值只用于独立评估。

@@ -278,11 +278,14 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
         np.savez(output/'match_residuals.npz', before_m=before, after_m=after,
                  inlier=table['inlier'], holdout=table['holdout'], window=table['window'])
         per_window = []
+        source_windows = {w['id']: w for w in windows if w['status'] == 'accepted'}
         for item in noise:
             selected = (table['window'] == item['window']) & table['inlier'].astype(bool) & table['holdout'].astype(bool)
             if not selected.any():
                 raise ValueError('accepted window has no held-out inlier support')
-            per_window.append(dict(item, heldout_before=residual_summary(before[selected],
+            extent = source_windows[item['window']]
+            source_window = {k: extent[k] for k in ('bands', 'shape', 'x_first_m', 'q_first_m')}
+            per_window.append(dict(item, source_window=source_window, heldout_before=residual_summary(before[selected],
                 [upstream['grid']['dx_m'], upstream['grid']['dq_m']]), heldout_after=residual_summary(after[selected],
                 [upstream['grid']['dx_m'], upstream['grid']['dq_m']])))
         (output/'windows.json').write_text(json.dumps(per_window, indent=2)+'\n')
