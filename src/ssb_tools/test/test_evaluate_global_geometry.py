@@ -166,14 +166,46 @@ def test_common_overlap_keeps_q_locations_and_retains_original_boundary_probes(t
 
 def test_empty_shared_interval_cannot_remove_a_planned_location():
     model, *_ = independent_fixture()
-    c = np.zeros(model.size); c[:model.sizes[0]] = 20.
-    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=[.345, .346], dx_m=.0001)
+    # Both fields individually stay within the declared 30 mm correction bound,
+    # but their truly narrow fields of view no longer overlap anywhere.
+    model.sampler.offsets[:] *= .106/.256
+    knot = model.knots[0]
+    greville = np.array([knot[i+1:i+4].mean() for i in range(model.sizes[0])])
+    c = np.zeros(model.size); c[:model.sizes[0]] = .2*(greville-.5)/model.scale
+    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=[.4, .6], dx_m=.001)
     original = seam_plan(model.sampler, grid)
     shared = shared_seam_plan(model, c, grid)
     assert len(shared) == len(original)
     target = next(w for w in shared if abs(w['q_center_m']) < 1e-12)
     assert target['status'] == 'planned' and target['shared_support'] == 'unmeasurable'
     assert target['x_m'] == target['nominal_probe_x_m']
+
+
+@pytest.mark.parametrize('translation,target', [(.02, [.345, .346]), (-.02, [.654, .655])])
+def test_observed_common_interval_outside_output_is_distinct_from_missing_observations(translation, target):
+    model, *_ = independent_fixture()
+    def forbidden(*args):
+        raise AssertionError('outside-target proof must not inspect intensities')
+    model.sampler.native.gather = forbidden
+    c = np.zeros(model.size); c[:model.sizes[0]] = translation/model.scale
+    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=target, dx_m=.0001)
+    windows = shared_seam_plan(model, c, grid)
+    window = next(w for w in windows if abs(w['q_center_m']) < 1e-12)
+    assert window['status'] == 'outside_target' and 'nominal_probe_x_m' in window
+    lo, hi = window['outside_target_shared_x_m']
+    assert lo >= target[1] or hi <= target[0]
+    assert window['outside_target_proof_points'] == 9
+
+
+def test_outside_target_exclusion_requires_actual_angular_observations(monkeypatch):
+    import ssb_tools.evaluate_global_geometry as module
+    model, *_ = independent_fixture()
+    c = np.zeros(model.size); c[:model.sizes[0]] = 20.
+    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=[.345, .346], dx_m=.0001)
+    monkeypatch.setattr(module, 'geometry_supported', lambda *args: False)
+    plan = shared_seam_plan(model, c, grid)
+    window = next(w for w in plan if abs(w['q_center_m']) < 1e-12)
+    assert window['status'] == 'planned' and window['shared_support'] == 'unmeasurable'
 
 
 def test_shared_plan_does_not_adapt_to_saturation_or_move_q_away_from_missing_exposures():

@@ -46,6 +46,7 @@ def declare(workspace, demo, output, start, length):
         d3=asdict(settings), sampling=dict(schema=SAMPLING_SCHEMA, spacing_q_m=.2,
             phase_fractions=[.25, .75], samples_across=9, column_guard_pixels=2,
             original_nominal_probes_retained=True, angular_gaps_not_trimmed=True,
+            outside_target_requires_observed_common_interval=True,
             exact_plan_saved_before_truth=True),
         required_evidence=['binary_matches_source', 'stage_b_acceptance'],
         input_hashes={str(demo/name): sha256_file(demo/name)
@@ -105,6 +106,7 @@ def verify(protocol_file, root, output):
         checks['sampling_protocol_unchanged'] = protocol['sampling'] == dict(
             schema=SAMPLING_SCHEMA, spacing_q_m=.2, phase_fractions=[.25, .75], samples_across=9,
             column_guard_pixels=2, original_nominal_probes_retained=True,
+            outside_target_requires_observed_common_interval=True,
             angular_gaps_not_trimmed=True, exact_plan_saved_before_truth=True)
     checks['capture_complete'] = session.summary.get('status') == 'complete'
     report = dict(schema='ssb.d3_holdout_verification.v2', status='pass' if all(checks.values()) else 'fail',

@@ -24,7 +24,7 @@ from .ref_mesh import OpticalMesh
 from .session import Session, read_json, sha256_file
 from .stage_b_scene import peak_rss_bytes
 
-SAMPLING_SCHEMA = 'ssb.public_common_overlap.v1'
+SAMPLING_SCHEMA = 'ssb.public_common_overlap.v2'
 
 
 def column_clearances(model, coefficients, bands, x, q):
@@ -57,14 +57,66 @@ def column_clearances(model, coefficients, bands, x, q):
     return result
 
 
+def column_interval(model, coefficients, bands, q, bounds, guard):
+    """Bounded intersection of the two public sensor domains, ignoring intensity."""
+    left, right = bounds
+    if right <= left:
+        return None
+    def clear(x):
+        return column_clearances(model, coefficients, bands, x, q)
+    edges = clear([left, right])
+    if edges[1, 0] < guard or edges[0, 1] < guard:
+        return None
+    if edges[0, 0] < guard:
+        a, b = left, right
+        for _ in range(20):
+            mid = (a+b)/2
+            if clear([mid])[0, 0] >= guard:
+                b = mid
+            else:
+                a = mid
+        left = b
+    if edges[1, 1] < guard:
+        a, b = left, right
+        for _ in range(20):
+            mid = (a+b)/2
+            if clear([mid])[0, 1] >= guard:
+                a = mid
+            else:
+                b = mid
+        right = a
+    if right <= left or np.min(clear([left, right])) < guard-1e-8:
+        return None
+    return [left, right]
+
+
+def geometry_supported(model, coefficients, bands, x, q):
+    """Proof from public exposure rows and calibration only, never brightness."""
+    q = np.full(len(x), q)
+    for c in (np.zeros(model.size), coefficients):
+        for band in bands:
+            nx, nq, valid = inverse_points(model, c, band, x, q)
+            lo, hi, _, _ = model.sampler.row_sources(band, nq/model.radius)
+            for ids in (lo, hi):
+                delta = nx-model.sampler.projection['x_axis_m'][ids]
+                col = np.interp(delta, model.sampler.output_offsets, model.sampler.columns)
+                c0 = np.floor(col).astype(int)
+                c1 = np.minimum(c0+1, len(model.sampler.columns)-1)
+                valid &= model.sampler.geometry_valid[c0] & model.sampler.geometry_valid[c1]
+            if not valid.all():
+                return False
+    return True
+
+
 def shared_seam_plan(model, coefficients, grid, spacing_m=.2):
     """Keep the fixed q lattices; bound x by BOTH public sampling maps.
 
     The algorithm is frozen before capture, the exact locations are written
     before opening truth. Original nominal boundary probes remain diagnostics.
-    A location with no shared interval stays planned/unmeasurable, never drops
-    out of the gate. Only sensor-column edges are trimmed; gaps and bad pixels
-    still fail when the predeclared nine points are sampled.
+    A truly missing common interval stays planned/unmeasurable. A seam can be
+    outside the output target only if an unclipped common interval AND public
+    exposure support are proved. Original probes stay in the diagnostic either
+    way. Gaps and bad pixels inside the target still fail at the fixed samples.
     """
     coefficients = np.asarray(coefficients, float)
     if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all():
@@ -75,34 +127,22 @@ def shared_seam_plan(model, coefficients, grid, spacing_m=.2):
         if window['status'] != 'planned':
             continue
         window['nominal_probe_x_m'] = list(window['x_m'])
-        left, right = window['x_m']
-        def clear(x):
-            return column_clearances(model, coefficients, window['bands'], x, window['q_center_m'])
-        edges = clear([left, right])
-        if edges[1, 0] < guard or edges[0, 1] < guard:
-            window.update(shared_support='unmeasurable', reason='no common public sensor-column interval')
-            continue
-        if edges[0, 0] < guard:
-            a, b = left, right
-            for _ in range(20):
-                mid = (a+b)/2
-                if clear([mid])[0, 0] >= guard:
-                    b = mid
-                else:
-                    a = mid
-            left = b
-        if edges[1, 1] < guard:
-            a, b = left, right
-            for _ in range(20):
-                mid = (a+b)/2
-                if clear([mid])[0, 1] >= guard:
-                    a = mid
-                else:
-                    b = mid
-            right = a
-        if right <= left or np.min(clear([left, right])) < guard-1e-8:
-            window.update(shared_support='unmeasurable', reason='no converged common column interval')
+        bounds = column_interval(model, coefficients, window['bands'], window['q_center_m'],
+                                 window['x_m'], guard)
+        if bounds is None:
+            full = column_interval(model, coefficients, window['bands'], window['q_center_m'],
+                                   window['nominal_unclipped_x_m'], guard)
+            target = grid['target_x_m']
+            outside = full is not None and (full[1] <= target[0]+guard or full[0] >= target[1]-guard)
+            if outside and geometry_supported(model, coefficients, window['bands'],
+                                              np.linspace(*full, 9), window['q_center_m']):
+                window.update(status='outside_target', shared_support='outside_target',
+                              outside_target_shared_x_m=full, outside_target_proof_points=9,
+                              reason='common publicly observed interval lies outside output target')
+            else:
+                window.update(shared_support='unmeasurable', reason='no converged common column interval')
         else:
+            left, right = bounds
             window.update(x_m=[left, right], shared_support='measurable',
                           column_guard_m=guard,
                           trimmed_m=[left-window['nominal_probe_x_m'][0],
@@ -238,6 +278,8 @@ def seam_plan(sampler, grid, spacing_m=.2):
                 if len(ranges) != 2:
                     item.update(status='unmeasurable', reason='unsupported nominal exposure angle')
                 else:
+                    item['nominal_unclipped_x_m'] = [max(r[0] for r in ranges)+2*grid['dx_m'],
+                                                    min(r[1] for r in ranges)-2*grid['dx_m']]
                     left = max(grid['target_x_m'][0], *(r[0] for r in ranges))+2*grid['dx_m']
                     right = min(grid['target_x_m'][1], *(r[1] for r in ranges))-2*grid['dx_m']
                     if right <= left:
@@ -320,17 +362,22 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         per_window, samples, legacy = [], [], []
         stratum_missing = {name: dict(within_match_window=0, between_match_windows=0)
                            for name in ('nominal', 'optimized')}
-        for window in planned:
-            x = np.linspace(*window['x_m'], samples_across)
-            q = np.full(len(x), window['q_center_m'])
-            labels = match_membership(x, q, window['bands'], training_windows, grid)
+        for window in windows:
+            if 'nominal_probe_x_m' not in window:
+                continue
             original_x = np.linspace(*window['nominal_probe_x_m'], samples_across)
+            q = np.full(len(original_x), window['q_center_m'])
             original_valid = [sources_at(model, coefficients, band, original_x, q)[1]
                               for band in window['bands']]
             legacy.append(dict(window=window['id'], bands=window['bands'],
                                x_m=window['nominal_probe_x_m'], q_m=float(q[0]),
                                missing_samples=int((~(original_valid[0] & original_valid[1])).sum()),
                                side_valid=[v.tolist() for v in original_valid]))
+            if window['status'] != 'planned':
+                sampler.native.release()
+                continue
+            x = np.linspace(*window['x_m'], samples_across)
+            labels = match_membership(x, q, window['bands'], training_windows, grid)
             record = dict(window=window['id'], bands=window['bands'], phase=window['phase'],
                           q_m=float(q[0]), x_m=[float(x[0]), float(x[-1])],
                           stratum_counts={s: int((labels == s).sum()) for s in stratum_missing['nominal']})
@@ -404,6 +451,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
                           rule='fixed q lattices; common nominal/fitted public sensor-column domain; '
                                'exact points saved before truth; original boundary probes retained',
                           shared_unmeasurable_windows=sum(w.get('shared_support') == 'unmeasurable' for w in windows),
+                          outside_target_windows=sum(w['status'] == 'outside_target' for w in windows),
                           unmeasurable_windows=sum(w['status'] == 'unmeasurable' for w in windows),
                           excluded_windows=sum(w['status'] == 'excluded' for w in windows),
                           interior_shape=list(xx.shape)),

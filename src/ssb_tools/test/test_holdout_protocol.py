@@ -94,7 +94,7 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
         assert record['holdout_roi_m'] == [12., 15.]
         assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance']
         assert record['code_commit'] == 'frozen' and output.exists()
-        assert record['sampling']['schema'] == 'ssb.public_common_overlap.v1'
+        assert record['sampling']['schema'] == 'ssb.public_common_overlap.v2'
         assert record['sampling']['exact_plan_saved_before_truth'] is True
         assert any(name.endswith('evaluate_global_geometry.py') for name in record['production_sources'])
     else:
