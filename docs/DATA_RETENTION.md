@@ -12,7 +12,7 @@
 | 环缝开发对照与原内点评价 | `sessions/ring_phase_dev_20261003/`、`local_data/evaluation/ring_phase_20261003/` | 原 15.396 px 开发失败、新 0.690 px、141 个原接受窗口的带符号网格诊断、冻结计划和汇总哈希；原失败不覆盖 |
 | 未调参轨道生成资产 | `local_data/stage_b/ring_holdout_seed20261005/` | 仅改变轨道起伏种子，共享不可变光学资产；源配置、世界和标定不变；含生成端私有配置，不分享为公开重建输入 |
 | 双圈共同域协议新采 | `sessions/d3_common_target_3m_20261003/`、`local_data/evaluation/d3_common_target_3m_20261003/` | `81fe051` 冻结复采，公共输入复现、采集验收与协议检查通过；已规划接缝通过，目标外及不可规划位置单列。保留原图和独立重成像 |
-| 共同域 v1 失败反例 | `sessions/d3_common_domain_3m_20261003/`、`local_data/evaluation/d3_common_domain_3m_20261003/` | 目标末端 9 点缺测的旧规则失败及公开支撑诊断；不能用新协议覆盖旧报告 |
+| 共同域 v1 失败反例 | `sessions/d3_common_domain_3m_20261003/`、`local_data/evaluation/d3_common_domain_3m_20261003/` | 目标末端 9 点缺测的旧规则失败及公开支撑诊断；不能用新协议覆盖旧报告。2026-10-03 起只保留报告、溯源与日志，原图及大数组已删，不能再复现 |
 | 新巡航余量 20 m 反例 | `sessions/d3_noise_20m_support_20261003/`、`local_data/evaluation/d3_noise_20m_support_20261003/` | 已规划共同域无缺测，但窗口间 P95 4.232 px 仍失败；原协议与补充 v2 评价分别保留，新批次尚未生成优化整幅输出 |
 | README 未补偿螺旋对比 | `sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/`、`local_data/readme_export_rawleft_20m_20261003/` | 旧采集原图和重建不变，`284e265` 生成原始左图、优化右图，逐像素与哈希核验通过；当前 8769 特征复核页 |
 | 双圈支撑回归证据 | `local_data/evaluation/double_support_fix_20261003/` | 日志归档、完整 XML、真实空隙/旧实现变异检查、导出像素校验及清理清单 |
@@ -26,14 +26,14 @@
 | 噪声档资产与标定 | `local_data/stage_b/noise_assumed_20261003/`、`local_data/evaluation/sensor_noise_implementation_20261003/` | 独立标定和生成参数；只读素材与默认演示硬链接，不能原位改写共享文件。495 项测试及默认关闭后的兼容性证据 |
 | 无噪声兼容重放 | `sessions/noise_off_compatibility_20261003/` | 98 个二进制文件与旧正式会话相同；重复原图校验后链接原始块，保留元数据和溯源 |
 | 新 20 m 带噪声完整输出 | `sessions/d3_noise_20m_v2_20261003/`、`local_data/evaluation/d3_noise_20m_v2_20261003/` | 原图、独立重成像、D1/D2/D3、两幅全图的报告、预览与哈希（约 32.3 GiB 大数组已删，可按溯源重新生成）、逐像素核验及复核页；整体接缝因末圈 15 个双圈点缺测仍失败 |
-| 首次 20 m 规模失败记录 | `sessions/d3_noise_20m_20261003/`、`local_data/evaluation/d3_noise_20m_20261003/` | D3 来源检查发现 39 个边缘坐标不一致；保留原图和失败链条，不称为优化验收通过；重复原图已按哈希去重 |
+| 首次 20 m 规模失败记录 | `sessions/d3_noise_20m_20261003/`、`local_data/evaluation/d3_noise_20m_20261003/` | D3 来源检查发现 39 个边缘坐标不一致；不称为优化验收通过。2026-10-03 起本目录只保留报告、溯源与日志；同一次采集的原图仍在 `d3_noise_20m_v2_20261003/capture/raw` |
 | 20 m README 对比源 | `local_data/readme_export_20m_final_20261003/`、`docs/media/` | 候选来源、逐像素等同核验和导出溯源，已入 Git 的只有公开 PNG 与媒体清单 |
 | 20 m 原始采集与诊断 | `sessions/stage_c_20m_acceptance_20261002/`，不含已删除的 `wall_replay/` | 后续 D1/D2/D3、原始采集和独立评价基线 |
 | 20 m 任务私有输入 | `local_data/mission_runs/20261002_113730_eae97f12/` | 生成和独立评价；不是重建输入 |
 | v1 CPU 展开（瘦身） | `sessions/stage_d1_3m_final_20261002/` | 报告、溯源、预览及 8765 复核页；大数组已删，v2 等价记录见 STAGE_D |
 | v1 CUDA 展开（瘦身） | `sessions/stage_d1_3m_cuda_final_20261002/` | 报告与溯源；后续匹配输入改用 `sessions/stage_d1_3m_v2_20261003/` |
 | 最终 D2 与公开输入证明 | `sessions/stage_d2_public_verified_20261002/` | 对应点、带真值的独立评价及公开数据隔离证明，8766 复核页 |
-| D2 偏置来源对照 | `sessions/bias_study_20261003/`、`local_data/bias_study_20261003/` | 平法线/仅反照率变体原始采集、v2 展开与匹配、带符号网格评价（约 18 GiB）；平法线 v2 展开为 D3 实现检查基线；原光照重放仅保留逐字节一致记录 |
+| D2 偏置来源对照 | `sessions/bias_study_20261003/`、`local_data/bias_study_20261003/` | 平法线变体原始采集、两种变体的 v2 展开与匹配、带符号网格评价；平法线 v2 展开为 D3 实现检查基线；仅反照率变体的原图与大数组已于 2026-10-03 删除，只保留报告和溯源；原光照重放仅保留逐字节一致记录 |
 | D1 v2 验收 | `sessions/stage_d1_3m_v2_20261003/` | v2 展开（25 MB）、D2、CUDA/CPU 公开复现及 D2 公开复现；`public_cuda` 内原图为硬链接 |
 | 20 m D1/D2 v2 | `sessions/stage_d_20m_v2_20261003/` | 完整 20 m 展开（137 MB）、D2 对应点及带符号网格评价；D3 的 20 m 输入 |
 | 3 m D3 历史诊断与对比 | `sessions/stage_d3_3m_review_20261003/`、`sessions/stage_d3_3m_20261003/` | `robust/`、`features_final/` 与 `frozen_v2_*` 是历史对照；公开链接仍保留。被替代的 `frozen_material_review`、`frozen_flat_review`、`frozen_material_features` 已归档清理，不替代最新采集 |
@@ -155,3 +155,11 @@ local_data/evaluation/cleanup_20261002_public/
 - **删除旧 colcon 日志（0.49 GB，349 项）**：只保留 `log/COLCON_IGNORE`。正式测试日志另有归档。
 
 **操作失误记录**：抽查去重结果时，`validate_stage_b --compare` 把重新生成的报告写回了 `sessions/ring_high_seed20261005_20261003` 和 `sessions/d3_noise_20m_support_20261003` 的 `capture/evaluation/reports/stage_b_smoke.json`，原文件被覆盖。原报告没有单独留存哈希，因此无法证明两者逐字节相同。不过，重新生成时使用的检验代码（`validate_stage_b`、`validate_stage_a`、`ref_geometry`、`session`）自这两次采集以来没有改动，输入文件内容也相同；24 项检查名称和结果与 `local_data/evaluation/*/stage_b.log` 中的原始运行日志逐项一致，全部通过。以后抽查请先把会话复制到临时目录，或改为只读检查。
+
+## 2026-10-03 历史反例清理
+
+用户确认这些历史反例只需保留记录，不要求能用完整数据复现。清理记录：`local_data/evaluation/cleanup_20261003_history/cleanup.json`，逐个列出 1,812 个已删文件的路径、大小、SHA-256 和删除前的硬链接数。
+
+- 删除范围：`sessions/d3_noise_20m_20261003/`、`sessions/bias_study_20261003/albedo/`、`sessions/d3_common_domain_3m_20261003/` 中大于 1 MB 的 `.u8/.bin/.npy/.npz/.csv`，即原图块、重成像、生成端位姿和命中、D1/D2 大数组。报告、溯源、JSON 摘要、日志和预览图都保留。
+- 逻辑大小 33.0 GB，实际释放 **13.1 GB**。`d3_noise_20m_20261003` 的 8.3 GB 原图与 `d3_noise_20m_v2_20261003`（同一次采集）共用硬链接，删除这些路径不释放空间；v2 的 495 个原图块在清理后已重新核验哈希。
+- 这三处结果以后只能查阅，不能再复现。
