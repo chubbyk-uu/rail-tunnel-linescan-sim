@@ -9,7 +9,8 @@
 | 默认完整演示及标定 | `local_data/stage_b/contact_demo/` | Gazebo/RViz 默认入口；当前采集 250°、输出 240°、增益 2.4，带 2 mm 档轨道起伏。旧光学场景及 `*_baseline_240_20261003` 配置/标定保留，新旧会话不能混用标定 |
 | 三种公开素材原图 | `local_data/stage_b/sources/` | 从网站原图重新生成资产 |
 | 原生成链及旧演示配置 | `local_data/stage_b/` 下 c034、几何、缺陷、GUI、砂浆及 unbundled 目录 | 历史评价仍记录原资产身份和路径，暂不清理 |
-| 画质基线复核页 | `local_data/stage_b/final_review_20261001/` | 已确认的背景、裂缝、填缝与照明局部图 |
+| 历史画质基线复核页 | `local_data/stage_b/final_review_20261001/` | 增益调整前已确认的背景、裂缝、填缝与照明局部图 |
+| 现行增益画质确认 | `sessions/stage_d3_3m_review_20261003/gain_comparison/` | 2026-10-03 已确认响应增益 2.4；包含原图 DN 投影及采后校正对照 |
 | 20 m 原始采集与诊断 | `sessions/stage_c_20m_acceptance_20261002/`，不含已删除的 `wall_replay/` | 后续 D1/D2/D3、原始采集和独立评价基线 |
 | 20 m 任务私有输入 | `local_data/mission_runs/20261002_113730_eae97f12/` | 生成和独立评价；不是重建输入 |
 | v1 CPU 展开（瘦身） | `sessions/stage_d1_3m_final_20261002/` | 报告、溯源、预览及 8765 复核页；大数组已删，v2 等价记录见 STAGE_D |
@@ -93,6 +94,6 @@ local_data/evaluation/cleanup_20261002_public/
 
 ## 2026-10-03 留出区段验证与画质对照
 
-保留 `sessions/d3_holdout_12_15_20261003/` 的 3 m 原始采集、公开重建及硬链接复现，约 1.7 GiB；协议、冻结检查与两组网格评价在 `local_data/evaluation/d3_holdout_20261003/`。开发区段原图和历史 20 m 原图继续保留。新增复核页 `sessions/stage_d3_3m_review_20261003/{holdout_12_15,gain_comparison}/`；增益 2.4 仍是待用户确认的候选画质基线。
+保留 `sessions/d3_holdout_12_15_20261003/` 的 3 m 原始采集、公开重建及硬链接复现，约 1.7 GiB；协议、冻结检查与两组网格评价在 `local_data/evaluation/d3_holdout_20261003/`。开发区段原图和历史 20 m 原图继续保留。新增复核页 `sessions/stage_d3_3m_review_20261003/{holdout_12_15,gain_comparison}/`；2026-10-03 用户已确认增益 2.4 为新画质基线。独立确认记录保存在 `local_data/evaluation/d3_holdout_20261003/visual_acceptance.json`；不改写确认之前的生成报告或其哈希链。
 
 只删除本轮被成功完整回归替代的 `/tmp/ssb_review_repairs_suite/` 测试工作目录（约 522 MiB），保留最终 `/tmp/ssb_review_repairs_suite_v2/`。删除前将两轮日志、XML 和摘要批量保存到私有评价目录的单个 `test_reports.tar.gz`，逐文件核对内容哈希；没有删除原图、独立验证证据或正在服务的复核页面。

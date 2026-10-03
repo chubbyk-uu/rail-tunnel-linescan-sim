@@ -1,8 +1,8 @@
 # 隧道巡检机器人仿真采集与内壁全图重建设计
 
-版本：v0.10，2026-10-02。
+版本：v0.10，更新于 2026-10-03。
 
-状态：阶段 A、B 已验收，阶段 B 的画质已获用户确认并冻结。阶段 C 已完成 20 m 原始采集、名义覆盖检查、独立重放和 Gazebo/RViz 联合界面资源与性能验收；光学校正、拼接与全局优化（阶段 D）尚未完成。完整采集结果见 [docs/STAGE_C.md](docs/STAGE_C.md)。阶段 B 的现行配置、操作命令和验收结果见 [docs/STAGE_B.md](docs/STAGE_B.md)；开发守则见 [docs/DEVELOPMENT_RULES.md](docs/DEVELOPMENT_RULES.md)；过程记录和旧版设计见 [docs/history/](docs/history/README.md)。
+状态：阶段 A、B 已验收，阶段 B 的现行响应增益 2.4、8 µs 曝光与兼容标定的画质已于 2026-10-03 获用户确认并冻结。阶段 C 已完成 20 m 原始采集、名义覆盖检查、独立重放和 Gazebo/RViz 联合界面资源与性能验收；阶段 D 已实现采后光学校正、展开、匹配与首版全局轨迹优化，完整全图覆盖和最终融合仍待验收。完整采集结果见 [docs/STAGE_C.md](docs/STAGE_C.md)。阶段 B 的现行配置、操作命令和验收结果见 [docs/STAGE_B.md](docs/STAGE_B.md)；开发守则见 [docs/DEVELOPMENT_RULES.md](docs/DEVELOPMENT_RULES.md)；过程记录和旧版设计见 [docs/history/](docs/history/README.md)。
 
 本文只写设计要求和现行方案。标为“工程假设”“暂定”的数值不代表实测或真机参数。
 
