@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from ssb_tools.evaluate_band_matches import mesh_points
-from ssb_tools.evaluate_global_geometry import sources_at, endpoint_drift, boundary_coordinates, boundary_support, verify_session, run
+from ssb_tools.evaluate_global_geometry import (sources_at, endpoint_drift, boundary_coordinates,
+    boundary_support, verify_session, run, seam_plan, match_membership, stratum_gate)
 from ssb_tools.global_geometry import Trajectory, GeometrySettings
 from ssb_tools.initial_unroll import BandSampler, PROJECTION
 from ssb_tools.native_rows import MemoryRows
@@ -118,3 +119,43 @@ def test_truth_reference_requires_the_original_archived_identity(tmp_path,change
     (tmp_path/changed).write_text('{"replaced":true}')
     with pytest.raises(ValueError,match='archived identity'):
         verify_session(session,upstream)
+
+
+def test_fixed_seam_plan_interleaves_gaps_without_using_matching_planner(monkeypatch):
+    import ssb_tools.match_bands as matching
+    def forbidden(*args, **kwargs):
+        raise AssertionError('evaluation must not reuse D2 window selection')
+    monkeypatch.setattr(matching, 'plan_windows', forbidden)
+    model, *_ = independent_fixture()
+    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=[.4, .6], dx_m=.001)
+    plan = seam_plan(model.sampler, grid, .2)
+    planned = [w for w in plan if w['status'] == 'planned']
+    # Hand-computed quarter/three-quarter spacing from lower q = -0.15.
+    np.testing.assert_allclose(sorted(w['q_center_m'] for w in planned), [-.1, 0., .1], atol=1e-15)
+    assert {w['phase'] for w in planned} == {.25, .75}
+    for w in planned:
+        assert .4 < w['x_m'][0] < w['x_m'][1] < .6
+    grid['target_x_m'] = [10., 11.]
+    excluded = seam_plan(model.sampler, grid, .2)
+    assert excluded and all(w['status'] == 'excluded' for w in excluded)
+
+
+def test_seam_membership_checks_axial_and_angular_training_bounds():
+    grid = dict(dx_m=.01, dq_m=.01)
+    training = [dict(source_window=dict(bands=[0, 1], shape=[3, 3],
+                                       x_first_m=1., q_first_m=2.))]
+    labels = match_membership(np.array([1.01, 1.04, 1.01]),
+                              np.array([2.01, 2.01, 2.04]), [0, 1], training, grid)
+    assert labels.tolist() == ['within_match_window', 'between_match_windows', 'between_match_windows']
+    assert (match_membership(np.array([1.01]), np.array([2.01]), [1, 2], training, grid)
+            == 'between_match_windows').all()
+
+
+@pytest.mark.parametrize('gap_status,missing,p95,expected', [
+    ('measured', 0, .9, 'pass'), ('measured', 0, 1.1, 'fail'),
+    ('measured', 1, .9, 'fail'), ('unmeasurable', 0, 0., 'unmeasurable')])
+def test_gate_cannot_hide_bad_or_missing_gap_samples(gap_status, missing, p95, expected):
+    strata = dict(optimized=dict(
+        within_match_window=dict(status='measured', missing_samples=0, norm_px=dict(p95=.2)),
+        between_match_windows=dict(status=gap_status, missing_samples=missing, norm_px=dict(p95=p95))))
+    assert stratum_gate(strata, 1.)['status'] == expected

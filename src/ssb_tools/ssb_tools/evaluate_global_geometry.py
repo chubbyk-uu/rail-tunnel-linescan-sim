@@ -13,11 +13,10 @@ import time
 import numpy as np
 import yaml
 
-from .band_matching import MatchSettings
 from .evaluate_band_matches import mesh_points
 from .global_resample import inverse_points, load_global, native_points
 from .initial_unroll import grid_axes
-from .match_bands import MATCH, plan_windows, verified_bands
+from .match_bands import MATCH, verified_bands
 from .optimize_bands import residual_summary
 from .quality_targets import SEAM_P95_PX, CONTROLLED_SEAM_P95_PX
 from .provenance import stage_record
@@ -125,6 +124,80 @@ def verify_session(session, upstream):
             raise ValueError('evaluation archived identity mismatch: '+name)
 
 
+def seam_plan(sampler, grid, spacing_m=.2):
+    """Two fixed interleaved lattices, independent of matches, fit and truth.
+
+    At the frozen 0.2 m spacing the phases are 0.05 and 0.15 m from the
+    output's lower q boundary. All exclusions are retained, never selected
+    using a score. Axial points cover a bounded nominal overlap at that q.
+    """
+    if not np.isfinite(spacing_m) or spacing_m < .09:
+        raise ValueError('bounded fixed seam sampling plan required')
+    lower, upper = np.asarray(grid['theta_rad'])*grid['radius_m']
+    usable = sampler.output_offsets[sampler.geometry_valid]
+    plan = []
+    for band in range(len(sampler.segments)-1):
+        if sampler.segments[band+1] != sampler.segments[band]+1:
+            continue
+        for phase in (.25, .75):
+            for q in np.arange(lower+phase*spacing_m, upper, spacing_m):
+                item = dict(id=len(plan), bands=[band, band+1], phase=phase,
+                            q_center_m=float(q))
+                ranges = []
+                for k in item['bands']:
+                    lo, hi, _, supported = sampler.row_sources(k, np.array([q/grid['radius_m']]))
+                    if not supported.all():
+                        break
+                    axis = sampler.projection['x_axis_m'][np.r_[lo, hi]]
+                    ranges.append((float(axis.max()+usable[0]), float(axis.min()+usable[-1])))
+                if len(ranges) != 2:
+                    item.update(status='unmeasurable', reason='unsupported nominal exposure angle')
+                else:
+                    left = max(grid['target_x_m'][0], *(r[0] for r in ranges))+2*grid['dx_m']
+                    right = min(grid['target_x_m'][1], *(r[1] for r in ranges))-2*grid['dx_m']
+                    if right <= left:
+                        item.update(status='excluded', reason='no nominal overlap inside output target')
+                    else:
+                        half = min((right-left)/2, 1023*grid['dx_m']/2)
+                        centre = (left+right)/2
+                        item.update(status='planned', x_m=[centre-half, centre+half])
+                plan.append(item)
+                if len(plan) > 32768:
+                    raise ValueError('evaluation exceeds 32768-location budget')
+    return plan
+
+
+def match_membership(x, q, bands, training_windows, grid):
+    """Label fixed evaluation points by verified D3 training rectangles.
+
+    Membership labels do not alter the sampling plan. Rejected D2 windows
+    absent from the fitted D3 report provide no training coverage.
+    """
+    inside = np.zeros(len(x), bool)
+    for item in training_windows:
+        source = item['source_window']
+        if source['bands'] != bands:
+            continue
+        height, width = source['shape']
+        x0, q0 = source['x_first_m'], source['q_first_m']
+        inside |= ((x >= x0) & (x <= x0+(width-1)*grid['dx_m']) &
+                   (q >= q0) & (q <= q0+(height-1)*grid['dq_m']))
+    return np.where(inside, 'within_match_window', 'between_match_windows')
+
+
+def stratum_gate(strata, threshold):
+    """Each stratum must be measurable and pass; pooled scores cannot hide gaps."""
+    groups = strata['optimized']
+    if any(v['status'] == 'unmeasurable' for v in groups.values()):
+        status = 'unmeasurable'
+    elif any(v['missing_samples'] or v['norm_px']['p95'] > threshold for v in groups.values()):
+        status = 'fail'
+    else:
+        status = 'pass'
+    return dict(threshold_p95_px=threshold, status=status,
+                scope='both within-match and between-match strata must pass with no missing planned samples')
+
+
 def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samples_across=9, raw_root=None):
     started = time.monotonic()
     output = Path(output).resolve()
@@ -140,25 +213,33 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
     try:
         verify_session(session, upstream)
         model, coefficients, optimized, trajectory_inputs = load_global(trajectory, sampler, upstream, unroll)
+        grid = upstream['grid']; pitch = [grid['dx_m'], grid['dq_m']]
+        windows = seam_plan(sampler, grid, spacing_m)
+        planned = [w for w in windows if w['status'] == 'planned']
+        if not planned:
+            raise ValueError('no nominal adjacent overlap to evaluate')
+        training_windows = read_json(Path(trajectory)/'windows.json')
         truth, config = session.truth(), session.config()
         generation = yaml.safe_load((session.root/'evaluation/config_source.yaml').read_text())
         track = generation.get('truth', {}).get('track_irregularity', {})
         imposed_track = any(float(track.get(k, 0)) > 0 for k in ('chord10_max_m', 'cross_level_tier_m'))
         rows = session.evaluation('row_truth')
         mesh = OpticalMesh.from_session(session, scene)
-        grid = upstream['grid']; pitch = [grid['dx_m'], grid['dq_m']]
-        windows = plan_windows(sampler, grid, spacing_m, 64, 1024, MatchSettings(max_shift_mm=1.))
-        planned = [w for w in windows if w['status'] == 'planned']
-        if not planned:
-            raise ValueError('no supported adjacent overlap to evaluate')
         per_window, samples = [], []
+        stratum_missing = {name: dict(within_match_window=0, between_match_windows=0)
+                           for name in ('nominal', 'optimized')}
         for window in planned:
-            x = np.linspace(window['x_first_m'], window['x_first_m']+(window['shape'][1]-1)*grid['dx_m'], samples_across)
+            x = np.linspace(*window['x_m'], samples_across)
             q = np.full(len(x), window['q_center_m'])
-            record = dict(window=window['id'], bands=window['bands'], q_m=float(q[0]), x_m=[float(x[0]), float(x[-1])])
+            labels = match_membership(x, q, window['bands'], training_windows, grid)
+            record = dict(window=window['id'], bands=window['bands'], phase=window['phase'],
+                          q_m=float(q[0]), x_m=[float(x[0]), float(x[-1])],
+                          stratum_counts={s: int((labels == s).sum()) for s in stratum_missing['nominal']})
             for name, c in (('nominal', np.zeros(model.size)), ('optimized', coefficients)):
                 tables = [sources_at(model, c, band, x, q) for band in window['bands']]
                 valid = tables[0][1] & tables[1][1]
+                for stratum in stratum_missing[name]:
+                    stratum_missing[name][stratum] += int(((labels == stratum) & ~valid).sum())
                 if not valid.any():
                     record[name] = dict(status='unmeasurable', missing_samples=len(x))
                     continue
@@ -167,7 +248,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
                 delta = b-a
                 record[name] = dict(status='measured', missing_samples=int((~valid).sum()),
                                     summary=residual_summary(delta, pitch))
-                samples.append((name, window['id'], window['bands'], x[valid], q[valid], delta, ma, mb))
+                samples.append((name, window['id'], window['bands'], x[valid], q[valid], delta, ma, mb, labels[valid]))
             per_window.append(record)
             sampler.native.release()
         statistics = {}
@@ -177,6 +258,16 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
                 raise ValueError('no independent seam samples: '+name)
             statistics[name] = residual_summary(np.concatenate(values), pitch)
             statistics[name]['missing_samples'] = sum(w[name]['missing_samples'] for w in per_window)
+        strata = {}
+        for name in ('nominal', 'optimized'):
+            strata[name] = {}
+            for stratum, missing in stratum_missing[name].items():
+                values = [v[5][v[8] == stratum] for v in samples if v[0] == name]
+                values = np.concatenate(values) if values else np.empty((0, 2))
+                result = (dict(status='measured', **residual_summary(values, pitch)) if len(values)
+                          else dict(status='unmeasurable', count=0))
+                result['missing_samples'] = missing
+                strata[name][stratum] = result
         # Deterministic interior grid, including both axial and angular endpoints.
         angles, all_x = grid_axes(grid)
         xs = all_x[np.unique(np.rint(np.linspace(0, len(all_x)-1, 33)).astype(int))]
@@ -195,13 +286,11 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
             arrays[name+'_band'] = bands.reshape(xx.shape)
             arrays[name+'_material'] = materials.reshape(xx.shape)
             boundaries[name] = boundary_support(model, c, grid)
-        seam_gate = dict(threshold_p95_px=SEAM_P95_PX, status='pass' if statistics['optimized']['norm_px']['p95'] <= SEAM_P95_PX else 'fail',
-                         scope='true optical-mesh separation of adjacent samples at the same output coordinate')
-        controlled_gate = dict(threshold_p95_px=CONTROLLED_SEAM_P95_PX, status='pass' if statistics['optimized']['norm_px']['p95'] <= CONTROLLED_SEAM_P95_PX else 'fail',
-                               scope='DESIGN controlled-error seam target; does not waive coverage or weak-region checks')
+        seam_gate = stratum_gate(strata, SEAM_P95_PX)
+        controlled_gate = stratum_gate(strata, CONTROLLED_SEAM_P95_PX)
         perimeter_missing = sum(v['missing_pixels'] for v in boundaries['optimized'].values())
-        report = dict(schema='ssb.global_geometry_evaluation.v1', evaluation_only=True, grid=grid,
-            seam=statistics, windows=per_window, mapping=maps, boundary=boundaries,
+        report = dict(schema='ssb.global_geometry_evaluation.v2', evaluation_only=True, grid=grid,
+            seam=statistics, seam_strata=strata, windows=per_window, mapping=maps, boundary=boundaries,
             gates=dict(strict_seam=seam_gate, controlled_seam=controlled_gate,
                        perimeter=dict(status='fail' if perimeter_missing else 'pass',
                        missing_pixels=perimeter_missing, scope='exact perimeter pixel support; not full interior coverage')),
@@ -209,7 +298,11 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
                 interpretation='1 px is the project seam target; 3 px is the secondary controlled-error target. '
                                'A perturbed track must not be labelled a perfectly flat ideal baseline.'),
             sampling=dict(spacing_q_m=spacing_m, samples_across=samples_across, planned_windows=len(planned),
-                          unmeasurable_windows=len(windows)-len(planned), interior_shape=list(xx.shape)),
+                          phase_fractions=[.25, .75], anchor='output lower q boundary',
+                          rule='nominal geometry only; fixed before truth tracing; training windows label only',
+                          unmeasurable_windows=sum(w['status'] == 'unmeasurable' for w in windows),
+                          excluded_windows=sum(w['status'] == 'excluded' for w in windows),
+                          interior_shape=list(xx.shape)),
             reference='archived float64 optical mesh and true native pixel-centre rays',
             limitations=['fixed seam/interior samples, not exhaustive surface accuracy or defect-width acceptance',
                 'native centre-ray barycentre reference; exposure/pixel-area integration is not a point measurement',
@@ -219,12 +312,14 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         output.mkdir(parents=True, exist_ok=False)
         arrays.update(output_x_m=xs, output_q_m=qs)
         np.savez(output/'mapping_samples.npz', **arrays)
+        (output/'sampling_plan.json').write_text(json.dumps(windows, indent=2)+'\n')
         dtype = [('variant','U10'), ('window','<i4'), ('band_a','<i2'), ('band_b','<i2'),
-                 ('x_m','<f8'), ('q_m','<f8'), ('dx_m','<f8'), ('dq_m','<f8'), ('material_a','<i2'), ('material_b','<i2')]
+                 ('x_m','<f8'), ('q_m','<f8'), ('dx_m','<f8'), ('dq_m','<f8'), ('material_a','<i2'), ('material_b','<i2'),
+                 ('stratum', 'U24')]
         records = []
-        for name, identifier, bands, x, q, delta, ma, mb in samples:
+        for name, identifier, bands, x, q, delta, ma, mb, labels in samples:
             records.extend(zip([name]*len(x), [identifier]*len(x), [bands[0]]*len(x), [bands[1]]*len(x),
-                               x, q, delta[:,0], delta[:,1], ma, mb))
+                               x, q, delta[:,0], delta[:,1], ma, mb, labels))
         np.save(output/'seam_samples.npy', np.array(records, dtype=dtype))
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
         manifest = read_json(session.root/'evaluation/manifest.json')
@@ -246,7 +341,7 @@ def main():
     parser.add_argument('--scene'); parser.add_argument('--raw')
     args = parser.parse_args()
     report = run(args.session,args.unroll,args.trajectory,args.output,args.scene,raw_root=args.raw)
-    print(json.dumps({k:report[k] for k in ('seam','mapping','boundary','gates','performance')}))
+    print(json.dumps({k:report[k] for k in ('seam','seam_strata','mapping','boundary','gates','performance')}))
 
 
 if __name__ == '__main__':
