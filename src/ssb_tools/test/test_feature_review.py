@@ -80,3 +80,11 @@ def test_image_locator_does_not_select_invalid_boundary_or_blank_image():
     image[100, 100] = np.nan
     with pytest.raises(ValueError, match='finite'):
         line_candidates(image, valid)
+
+
+def test_structure_ending_exactly_at_seam_search_boundary_is_not_indexed_outside():
+    image = np.full((512, 1024), 180., np.float32)
+    image[250:252, :256] = 60.
+    # The feature ends just before the admissible centre region. Clamping the
+    # centre to column 256 would index one column beyond this component.
+    assert line_candidates(image, np.ones(image.shape, bool)) == []

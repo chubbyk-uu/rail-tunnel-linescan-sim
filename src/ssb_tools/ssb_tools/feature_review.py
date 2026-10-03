@@ -87,7 +87,7 @@ def line_candidates(image, valid):
     for identifier in range(1, count):
         x, y, w, h, area = map(int, stats[identifier])
         # Structures must extend axially so a hard A/B splice can cross them.
-        if w < 120 or w < 2*h or area < 120 or x+w < width//4 or x > 3*width//4:
+        if w < 120 or w < 2*h or area < 120 or x+w <= width//4 or x > 3*width//4:
             continue
         component = labels[y:y+h, x:x+w] == identifier
         thickness = float(np.median(component.sum(axis=0)[w//5:4*w//5]))
