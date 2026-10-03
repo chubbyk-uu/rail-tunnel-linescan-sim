@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from ssb_tools.band_matching import MatchSettings, match_window
-from ssb_tools.matching_structures import (long_dark_mask, unsafe_structure_footprint,
+from ssb_tools.matching_structures import (long_dark_mask, column_nanmedian, unsafe_structure_footprint,
     safe_structure_points, masked_coarse_shift, LK_STRUCTURE_RADIUS)
 from test_band_matching import texture
 
@@ -84,3 +84,17 @@ def test_masked_correlation_refuses_no_common_supported_background():
 def test_invalid_detector_settings_are_refused():
     with pytest.raises(ValueError):MatchSettings(exclude_long_structures=1)
     with pytest.raises(ValueError):long_dark_mask(np.zeros((4,4)),np.ones((4,4)),0)
+
+
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+def test_column_median_is_bit_identical_to_nanmedian(dtype):
+    rng = np.random.default_rng(5)
+    for rows in (511, 512):
+        values = rng.normal(120, 9, (rows, 300)).astype(dtype)
+        values[:, 40] = values[0, 40]                       # ties
+        values[rng.random(values.shape) < .02] = np.nan     # partially missing columns
+        values[:, :25] = rng.normal(120, 9, (rows, 25)).astype(dtype)  # complete columns
+        profile = column_nanmedian(values)
+        expected = np.nanmedian(values, axis=0)
+        assert profile.dtype == expected.dtype
+        np.testing.assert_array_equal(profile, expected)

@@ -37,15 +37,13 @@ bash "$repo/tools/run_wall_capture.sh" "$root/capture" "$start" "$length" "$demo
 python3 -m ssb_tools.validate_stage_b "$root/capture" --compare "$root/reimage" > "$evaluation/stage_b.log" 2>&1
 python3 -m ssb_tools.raw_quality --session "$root/capture" --output "$root/raw_quality" > "$evaluation/raw_quality.log" 2>&1
 python3 -m ssb_tools.initial_unroll --session "$root/capture" --calibration "$demo/calibration.json" --backend cuda --output "$root/unroll" > "$evaluation/unroll.log" 2>&1
-python3 -m ssb_tools.match_bands --unroll "$root/unroll" --spacing-m .2 --output "$root/matches" > "$evaluation/matches.log" 2>&1
-python3 -m ssb_tools.optimize_bands --unroll "$root/unroll" --matches "$root/matches" --observable "$root/capture/config/observable_config.json" \
-  --observed-knots --attitude-spacing-m .02 --output "$root/fit" > "$evaluation/fit.log" 2>&1
-python3 "$repo/tools/test_global_optimization.py" --unroll "$root/unroll" --matches "$root/matches" --observable "$root/capture/config/observable_config.json" \
-  --reference "$root/fit" --output "$root/public_replay" > "$evaluation/public_replay.log" 2>&1
+# D2/D3 run once from staged public inputs under the private-input audit; no separate replay.
+python3 -m ssb_tools.public_reconstruction --unroll "$root/unroll" --observable "$root/capture/config/observable_config.json" \
+  --root "$root" --workers 8 --spacing-m .2 --attitude-spacing-m .02 > "$evaluation/public_reconstruction.log" 2>&1
 python3 -m ssb_tools.holdout_protocol verify --protocol "$evaluation/protocol.json" --root "$root" \
   --output "$evaluation/protocol_verification.json" > "$evaluation/protocol_verification.log" 2>&1
 python3 -m ssb_tools.evaluate_global_geometry --session "$root/capture" --unroll "$root/unroll" \
-  --trajectory "$root/fit" --output "$evaluation/geometry" > "$evaluation/geometry.log" 2>&1
+  --trajectory "$root/fit" --output "$evaluation/geometry" --workers 8 > "$evaluation/geometry.log" 2>&1
 python3 - "$evaluation/geometry/report.json" "$evaluation/protocol.json" <<'PY'
 import hashlib, json, sys
 from pathlib import Path

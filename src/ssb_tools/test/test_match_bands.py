@@ -169,6 +169,21 @@ def test_v2_raw_rows_reproduce_v1_cache_matches(tmp_path):
     assert not (tmp_path/'m4').exists()
 
 
+def test_worker_processes_reproduce_serial_products_exactly(tmp_path):
+    root = tmp_path/'d1'; raw_bands_fixture(root, tmp_path/'session')
+    (tmp_path/'session/raw').rename(tmp_path/'moved')
+    kwargs = dict(spacing_m=.04, height=128, max_width=256, settings=MatchSettings(max_shift_mm=4.),
+                  raw_root=tmp_path/'moved')
+    serial = run(root, tmp_path/'serial', **kwargs)
+    parallel = run(root, tmp_path/'parallel', workers=2, **kwargs)
+    assert parallel['performance']['workers'] == 2 and serial['windows'] == parallel['windows']
+    for name in ('matches.npy', 'windows.json'):
+        assert sha256_file(tmp_path/'serial'/name) == sha256_file(tmp_path/'parallel'/name), name
+    for workers in (0, 1.5, 10**6):
+        with pytest.raises(ValueError, match='worker count'): run(root, tmp_path/'bad', workers=workers, **kwargs)
+    assert not (tmp_path/'bad').exists()
+
+
 def test_v2_raw_block_cannot_escape_the_raw_directory(tmp_path):
     root = tmp_path/'d1'; raw_bands_fixture(root, tmp_path/'session')
     source = json.loads((root/'native_source.json').read_text())
@@ -180,3 +195,15 @@ def test_v2_raw_block_cannot_escape_the_raw_directory(tmp_path):
     with pytest.raises(ValueError, match='escapes'):
         run(root, tmp_path/'out', spacing_m=.04, height=128, max_width=256, settings=MatchSettings(max_shift_mm=4.))
     assert not (tmp_path/'out').exists()
+
+
+def test_worker_processes_inherit_the_public_input_audit(tmp_path, monkeypatch):
+    from ssb_tools import public_audit
+    root = tmp_path/'d1'; raw_bands_fixture(root, tmp_path/'session')
+    public = tmp_path/'public'; (public/'raw').mkdir(parents=True)
+    # Only workers install the hook here (it cannot be removed from pytest itself):
+    # their raw reads come from the unstaged capture directory and must fail.
+    monkeypatch.setenv(public_audit.ENVIRONMENT, json.dumps(dict(public=str(public), raw=str(public/'raw'))))
+    with pytest.raises(RuntimeError, match='original raw locator'):
+        run(root, tmp_path/'out', spacing_m=.04, height=128, max_width=256,
+            settings=MatchSettings(max_shift_mm=4.), workers=2)

@@ -3,7 +3,8 @@ import pytest
 
 from ssb_tools.evaluate_band_matches import mesh_points
 from ssb_tools.evaluate_global_geometry import (sources_at, endpoint_drift, boundary_coordinates,
-    boundary_support, verify_session, run, seam_plan, shared_seam_plan, match_membership, stratum_gate)
+    boundary_support, verify_session, run, seam_plan, shared_seam_plan, match_membership, stratum_gate,
+    map_points)
 from ssb_tools.global_geometry import Trajectory, GeometrySettings
 from ssb_tools.initial_unroll import BandSampler, PROJECTION
 from ssb_tools.native_rows import MemoryRows
@@ -260,3 +261,18 @@ def test_gate_cannot_hide_bad_or_missing_gap_samples(gap_status, missing, p95, e
         within_match_window=dict(status='measured', missing_samples=0, norm_px=dict(p95=.2)),
         between_match_windows=dict(status=gap_status, missing_samples=missing, norm_px=dict(p95=p95))))
     assert stratum_gate(strata, 1.)['status'] == expected
+
+
+def test_worker_count_cannot_change_any_evaluation_value():
+    import json
+    model, c, rows, camera, truth, mesh = independent_fixture(.02)
+    grid = dict(theta_rad=[-.15, .15], radius_m=1., target_x_m=[.2, .8], dx_m=.001)
+    serial = shared_seam_plan(model, c, grid, .1)
+    assert sum(w['status'] == 'planned' for w in serial) >= 2
+    assert json.dumps(shared_seam_plan(model, c, grid, .1, workers=2)) == json.dumps(serial)
+    x, q = np.linspace(.3, .7, 1200), np.linspace(-.1, .1, 1200)
+    expected = map_points(model, c, x, q, rows, camera, truth, mesh)
+    assert (expected[2] >= 0).sum() > 1000
+    for value, reference in zip(map_points(model, c, x, q, rows, camera, truth, mesh, workers=3), expected):
+        assert value.dtype == reference.dtype
+        np.testing.assert_array_equal(value, reference)

@@ -7,6 +7,8 @@ the interior and seams are sampled; this does not claim complete image coverage.
 """
 import argparse
 import json
+import multiprocessing
+import os
 from pathlib import Path
 import time
 
@@ -25,6 +27,33 @@ from .session import Session, read_json, sha256_file
 from .stage_b_scene import peak_rss_bytes
 
 SAMPLING_SCHEMA = 'ssb.public_common_overlap.v2'
+_SHARED = None
+
+
+def _apply(task):
+    function, items = task
+    return [function(item, **_SHARED) for item in items]
+
+
+def parallel_map(function, items, shared, workers):
+    """function(item, **shared) for each item, in order.
+
+    Each item keeps exactly the calls (and inverse-mapping batches) of the serial
+    loop, so the result cannot depend on the worker count. Forked workers share the
+    read-only model, raw mappings and mesh instead of rebuilding them.
+    """
+    global _SHARED
+    if workers <= 1 or len(items) < 2:
+        return [function(item, **shared) for item in items]
+    workers = min(workers, len(items))
+    bounds = np.linspace(0, len(items), 4*workers+1).round().astype(int)
+    tasks = [(function, items[a:b]) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
+    _SHARED = shared
+    try:
+        with multiprocessing.get_context('fork').Pool(workers) as pool:
+            return [result for chunk in pool.map(_apply, tasks) for result in chunk]
+    finally:
+        _SHARED = None
 
 
 def column_clearances(model, coefficients, bands, x, q):
@@ -108,7 +137,7 @@ def geometry_supported(model, coefficients, bands, x, q):
     return True
 
 
-def shared_seam_plan(model, coefficients, grid, spacing_m=.2):
+def shared_seam_plan(model, coefficients, grid, spacing_m=.2, workers=1):
     """Keep the fixed q lattices; bound x by BOTH public sampling maps.
 
     The algorithm is frozen before capture, the exact locations are written
@@ -122,32 +151,37 @@ def shared_seam_plan(model, coefficients, grid, spacing_m=.2):
     if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all():
         raise ValueError('finite verified trajectory required for a public seam plan')
     plan = seam_plan(model.sampler, grid, spacing_m)
-    guard = 2*grid['dx_m']
-    for window in plan:
-        if window['status'] != 'planned':
-            continue
-        window['nominal_probe_x_m'] = list(window['x_m'])
-        bounds = column_interval(model, coefficients, window['bands'], window['q_center_m'],
-                                 window['x_m'], guard)
-        if bounds is None:
-            full = column_interval(model, coefficients, window['bands'], window['q_center_m'],
-                                   window['nominal_unclipped_x_m'], guard)
-            target = grid['target_x_m']
-            outside = full is not None and (full[1] <= target[0]+guard or full[0] >= target[1]-guard)
-            if outside and geometry_supported(model, coefficients, window['bands'],
-                                              np.linspace(*full, 9), window['q_center_m']):
-                window.update(status='outside_target', shared_support='outside_target',
-                              outside_target_shared_x_m=full, outside_target_proof_points=9,
-                              reason='common publicly observed interval lies outside output target')
-            else:
-                window.update(shared_support='unmeasurable', reason='no converged common column interval')
-        else:
-            left, right = bounds
-            window.update(x_m=[left, right], shared_support='measurable',
-                          column_guard_m=guard,
-                          trimmed_m=[left-window['nominal_probe_x_m'][0],
-                                     window['nominal_probe_x_m'][1]-right])
+    planned = [index for index, window in enumerate(plan) if window['status'] == 'planned']
+    shared = dict(model=model, coefficients=coefficients, grid=grid, guard=2*grid['dx_m'])
+    for index, window in zip(planned, parallel_map(plan_window, [plan[i] for i in planned], shared, workers)):
+        plan[index] = window
     return plan
+
+
+def plan_window(window, model, coefficients, grid, guard):
+    window['nominal_probe_x_m'] = list(window['x_m'])
+    bounds = column_interval(model, coefficients, window['bands'], window['q_center_m'],
+                             window['x_m'], guard)
+    if bounds is None:
+        full = column_interval(model, coefficients, window['bands'], window['q_center_m'],
+                               window['nominal_unclipped_x_m'], guard)
+        target = grid['target_x_m']
+        outside = full is not None and (full[1] <= target[0]+guard or full[0] >= target[1]-guard)
+        if outside and geometry_supported(model, coefficients, window['bands'],
+                                          np.linspace(*full, 9), window['q_center_m']):
+            window.update(status='outside_target', shared_support='outside_target',
+                          outside_target_shared_x_m=full, outside_target_proof_points=9,
+                          reason='common publicly observed interval lies outside output target')
+        else:
+            window.update(shared_support='unmeasurable', reason='no converged common column interval')
+    else:
+        left, right = bounds
+        window.update(x_m=[left, right], shared_support='measurable',
+                      column_guard_m=guard,
+                      trimmed_m=[left-window['nominal_probe_x_m'][0],
+                                 window['nominal_probe_x_m'][1]-right])
+    model.sampler.native.release()
+    return window
 
 
 def sources_at(model, coefficients, band, x, q):
@@ -167,27 +201,34 @@ def sources_at(model, coefficients, band, x, q):
     return table, valid & inverse_ok, score
 
 
-def map_points(model, coefficients, x, q, rows, camera, truth, mesh):
+def map_points(model, coefficients, x, q, rows, camera, truth, mesh, workers=1):
     """Actual source selected by the production central-column rule, then true hit."""
     x, q = np.asarray(x), np.asarray(q)
+    chunks = [(x[start:start+512], q[start:start+512]) for start in range(0, len(x), 512)]
+    parts = parallel_map(map_chunk, chunks, dict(model=model, coefficients=coefficients, rows=rows,
+                                                 camera=camera, truth=truth, mesh=mesh), workers)
+    if not parts:
+        return np.full((0, 2), np.nan), np.full(0, -1, np.int16), np.full(0, -1, np.int16)
+    return tuple(np.concatenate(values) for values in zip(*parts))
+
+
+def map_chunk(chunk, model, coefficients, rows, camera, truth, mesh):
+    x, q = chunk
     points = np.full((len(x), 2), np.nan)
     material = np.full(len(x), -1, np.int16)
     selected_band = np.full(len(x), -1, np.int16)
-    for start in range(0, len(x), 512):
-        sl = slice(start, start+512)
-        best = np.full(len(x[sl]), -np.inf)
-        selected = np.zeros(len(x[sl]), MATCH)
-        for band in range(len(model.sampler.segments)):
-            table, valid, score = sources_at(model, coefficients, band, x[sl], q[sl])
-            use = valid & (score > best)
-            selected[use] = table[use]
-            best[use] = score[use]
-        valid = np.isfinite(best)
-        if valid.any():
-            points[sl][valid], material[sl][valid] = mesh_points(
-                selected[valid], 'a', rows, camera, truth, mesh)
-            selected_band[sl][valid] = selected['band_a'][valid]
-        model.sampler.native.release()
+    best = np.full(len(x), -np.inf)
+    selected = np.zeros(len(x), MATCH)
+    for band in range(len(model.sampler.segments)):
+        table, valid, score = sources_at(model, coefficients, band, x, q)
+        use = valid & (score > best)
+        selected[use] = table[use]
+        best[use] = score[use]
+    valid = np.isfinite(best)
+    if valid.any():
+        points[valid], material[valid] = mesh_points(selected[valid], 'a', rows, camera, truth, mesh)
+        selected_band[valid] = selected['band_a'][valid]
+    model.sampler.native.release()
     return points, material, selected_band
 
 
@@ -216,20 +257,26 @@ def boundary_coordinates(grid):
                 right=(np.full(len(qs)-2, xs[-1]), qs[1:-1]))
 
 
-def boundary_support(model, coefficients, grid):
+def boundary_chunk(chunk, model, coefficients):
+    x, q = chunk
+    supported = np.zeros(len(x), bool)
+    for band in range(len(model.sampler.segments)):
+        # Skip bands whose declared correction bounds cannot reach this x.
+        lo, hi = model.sampler.band_x[band]
+        margin = .03+.04*(model.radius+model.height)
+        if np.max(x) < lo-margin or np.min(x) > hi+margin:
+            continue
+        supported |= sources_at(model, coefficients, band, x, q)[1]
+    model.sampler.native.release()
+    return supported
+
+
+def boundary_support(model, coefficients, grid, workers=1):
     output = {}
     for name, (x, q) in boundary_coordinates(grid).items():
-        supported = np.zeros(len(x), bool)
-        for start in range(0, len(x), 512):
-            sl = slice(start, start+512)
-            for band in range(len(model.sampler.segments)):
-                # Skip bands whose declared correction bounds cannot reach this x.
-                lo, hi = model.sampler.band_x[band]
-                margin = .03+.04*(model.radius+model.height)
-                if np.max(x[sl]) < lo-margin or np.min(x[sl]) > hi+margin:
-                    continue
-                supported[sl] |= sources_at(model, coefficients, band, x[sl], q[sl])[1]
-            model.sampler.native.release()
+        chunks = [(x[start:start+512], q[start:start+512]) for start in range(0, len(x), 512)]
+        parts = parallel_map(boundary_chunk, chunks, dict(model=model, coefficients=coefficients), workers)
+        supported = np.concatenate(parts) if parts else np.zeros(0, bool)
         missing = np.flatnonzero(~supported)
         output[name] = dict(pixels=len(x), missing_pixels=len(missing),
                             missing_fraction=float(len(missing)/len(x)) if len(x) else 0.,
@@ -325,8 +372,52 @@ def stratum_gate(strata, threshold):
                 scope='both within-match and between-match strata must pass with no missing planned samples')
 
 
-def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samples_across=9, raw_root=None):
+def score_window(window, model, coefficients, samples_across, training_windows, grid, pitch,
+                 rows, camera, truth, mesh):
+    """Original-probe diagnostic plus nominal/optimized truth scores of one window."""
+    original_x = np.linspace(*window['nominal_probe_x_m'], samples_across)
+    q = np.full(len(original_x), window['q_center_m'])
+    original_valid = [sources_at(model, coefficients, band, original_x, q)[1]
+                      for band in window['bands']]
+    legacy = dict(window=window['id'], bands=window['bands'],
+                  x_m=window['nominal_probe_x_m'], q_m=float(q[0]),
+                  missing_samples=int((~(original_valid[0] & original_valid[1])).sum()),
+                  side_valid=[v.tolist() for v in original_valid])
+    if window['status'] != 'planned':
+        model.sampler.native.release()
+        return legacy, None, [], {}
+    x = np.linspace(*window['x_m'], samples_across)
+    labels = match_membership(x, q, window['bands'], training_windows, grid)
+    strata = ('within_match_window', 'between_match_windows')
+    record = dict(window=window['id'], bands=window['bands'], phase=window['phase'],
+                  q_m=float(q[0]), x_m=[float(x[0]), float(x[-1])],
+                  stratum_counts={s: int((labels == s).sum()) for s in strata})
+    samples, missing = [], {}
+    for name, c in (('nominal', np.zeros(model.size)), ('optimized', coefficients)):
+        tables = [sources_at(model, c, band, x, q) for band in window['bands']]
+        valid = tables[0][1] & tables[1][1]
+        if window['shared_support'] == 'unmeasurable':
+            valid[:] = False
+        for stratum in strata:
+            missing[name, stratum] = int(((labels == stratum) & ~valid).sum())
+        if not valid.any():
+            record[name] = dict(status='unmeasurable', missing_samples=len(x))
+            continue
+        a, ma = mesh_points(tables[0][0][valid], 'a', rows, camera, truth, mesh)
+        b, mb = mesh_points(tables[1][0][valid], 'a', rows, camera, truth, mesh)
+        delta = b-a
+        record[name] = dict(status='measured', missing_samples=int((~valid).sum()),
+                            summary=residual_summary(delta, pitch))
+        samples.append((name, window['id'], window['bands'], x[valid], q[valid], delta, ma, mb, labels[valid]))
+    model.sampler.native.release()
+    return legacy, record, samples, missing
+
+
+def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samples_across=9, raw_root=None,
+        workers=1):
     started = time.monotonic()
+    if type(workers) is not int or not 1 <= workers <= (os.cpu_count() or 1):
+        raise ValueError('worker count must be between 1 and the CPU count')
     output = Path(output).resolve()
     if 'evaluation' not in output.parts:
         raise ValueError('independent truth-side results must be inside evaluation/')
@@ -341,7 +432,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         verify_session(session, upstream)
         model, coefficients, optimized, trajectory_inputs = load_global(trajectory, sampler, upstream, unroll)
         grid = upstream['grid']; pitch = [grid['dx_m'], grid['dq_m']]
-        windows = shared_seam_plan(model, coefficients, grid, spacing_m)
+        windows = shared_seam_plan(model, coefficients, grid, spacing_m, workers)
         planned = [w for w in windows if w['status'] == 'planned']
         if not planned:
             raise ValueError('no nominal adjacent overlap to evaluate')
@@ -362,43 +453,18 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         per_window, samples, legacy = [], [], []
         stratum_missing = {name: dict(within_match_window=0, between_match_windows=0)
                            for name in ('nominal', 'optimized')}
-        for window in windows:
-            if 'nominal_probe_x_m' not in window:
+        scored = parallel_map(score_window, [w for w in windows if 'nominal_probe_x_m' in w],
+            dict(model=model, coefficients=coefficients, samples_across=samples_across,
+                 training_windows=training_windows, grid=grid, pitch=pitch, rows=rows,
+                 camera=config['camera'], truth=truth, mesh=mesh), workers)
+        for entry, record, window_samples, missing in scored:
+            legacy.append(entry)
+            if record is None:
                 continue
-            original_x = np.linspace(*window['nominal_probe_x_m'], samples_across)
-            q = np.full(len(original_x), window['q_center_m'])
-            original_valid = [sources_at(model, coefficients, band, original_x, q)[1]
-                              for band in window['bands']]
-            legacy.append(dict(window=window['id'], bands=window['bands'],
-                               x_m=window['nominal_probe_x_m'], q_m=float(q[0]),
-                               missing_samples=int((~(original_valid[0] & original_valid[1])).sum()),
-                               side_valid=[v.tolist() for v in original_valid]))
-            if window['status'] != 'planned':
-                sampler.native.release()
-                continue
-            x = np.linspace(*window['x_m'], samples_across)
-            labels = match_membership(x, q, window['bands'], training_windows, grid)
-            record = dict(window=window['id'], bands=window['bands'], phase=window['phase'],
-                          q_m=float(q[0]), x_m=[float(x[0]), float(x[-1])],
-                          stratum_counts={s: int((labels == s).sum()) for s in stratum_missing['nominal']})
-            for name, c in (('nominal', np.zeros(model.size)), ('optimized', coefficients)):
-                tables = [sources_at(model, c, band, x, q) for band in window['bands']]
-                valid = tables[0][1] & tables[1][1]
-                if window['shared_support'] == 'unmeasurable':
-                    valid[:] = False
-                for stratum in stratum_missing[name]:
-                    stratum_missing[name][stratum] += int(((labels == stratum) & ~valid).sum())
-                if not valid.any():
-                    record[name] = dict(status='unmeasurable', missing_samples=len(x))
-                    continue
-                a, ma = mesh_points(tables[0][0][valid], 'a', rows, config['camera'], truth, mesh)
-                b, mb = mesh_points(tables[1][0][valid], 'a', rows, config['camera'], truth, mesh)
-                delta = b-a
-                record[name] = dict(status='measured', missing_samples=int((~valid).sum()),
-                                    summary=residual_summary(delta, pitch))
-                samples.append((name, window['id'], window['bands'], x[valid], q[valid], delta, ma, mb, labels[valid]))
+            for (name, stratum), count in missing.items():
+                stratum_missing[name][stratum] += count
+            samples.extend(window_samples)
             per_window.append(record)
-            sampler.native.release()
         statistics = {}
         for name in ('nominal', 'optimized'):
             values = [v[5] for v in samples if v[0] == name]
@@ -425,7 +491,8 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         boundaries = {}
         arrays = {}
         for name, c in (('nominal', np.zeros(model.size)), ('optimized', coefficients)):
-            points, materials, bands = map_points(model, c, xx.ravel(), qq.ravel(), rows, config['camera'], truth, mesh)
+            points, materials, bands = map_points(model, c, xx.ravel(), qq.ravel(), rows, config['camera'], truth, mesh,
+                                                  workers)
             valid = bands >= 0
             maps[name] = dict(supported_samples=int(valid.sum()), missing_samples=int((~valid).sum()),
                               absolute_error=residual_summary(points[valid]-np.column_stack((xx.ravel(), qq.ravel()))[valid], pitch),
@@ -433,7 +500,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
             arrays[name+'_true_xq_m'] = points.reshape(xx.shape+(2,))
             arrays[name+'_band'] = bands.reshape(xx.shape)
             arrays[name+'_material'] = materials.reshape(xx.shape)
-            boundaries[name] = boundary_support(model, c, grid)
+            boundaries[name] = boundary_support(model, c, grid, workers)
         seam_gate = stratum_gate(strata, SEAM_P95_PX)
         controlled_gate = stratum_gate(strata, CONTROLLED_SEAM_P95_PX)
         perimeter_missing = sum(v['missing_pixels'] for v in boundaries['optimized'].values())
@@ -463,7 +530,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
                 'native centre-ray barycentre reference; exposure/pixel-area integration is not a point measurement',
                 'absolute error retains coordinate gauge; endpoint differences remove translation only',
                 'no truth offset, similarity or affine fit is subtracted from the seam or scale scores'],
-            performance=dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
+            performance=dict(wall_s=time.monotonic()-started, workers=workers, peak_rss_bytes=peak_rss_bytes()))
         if sha256_file(plan_path) != plan_hash:
             raise ValueError('public sampling plan changed during truth evaluation')
         arrays.update(output_x_m=xs, output_q_m=qs)
@@ -494,8 +561,11 @@ def main():
     for name in ('session','unroll','trajectory','output'):
         parser.add_argument('--'+name, required=True)
     parser.add_argument('--scene'); parser.add_argument('--raw')
+    parser.add_argument('--workers', type=int, default=8,
+                        help='evaluation processes; every score is identical for any count')
     args = parser.parse_args()
-    report = run(args.session,args.unroll,args.trajectory,args.output,args.scene,raw_root=args.raw)
+    report = run(args.session,args.unroll,args.trajectory,args.output,args.scene,raw_root=args.raw,
+                 workers=args.workers)
     print(json.dumps({k:report[k] for k in ('seam','seam_strata','mapping','boundary','gates','performance')}))
 
 

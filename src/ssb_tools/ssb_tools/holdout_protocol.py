@@ -38,8 +38,8 @@ def declare(workspace, demo, output, start, length):
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
                ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py',
                 'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
-                'evaluate_global_geometry.py')]
-    record = dict(schema='ssb.d3_holdout_protocol.v3',
+                'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py')]
+    record = dict(schema='ssb.d3_holdout_protocol.v4',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
         d2=dict(spacing_m=.2, height=512, max_width=1024, halo_m=.25, settings=asdict(MatchSettings())),
@@ -48,7 +48,7 @@ def declare(workspace, demo, output, start, length):
             original_nominal_probes_retained=True, angular_gaps_not_trimmed=True,
             outside_target_requires_observed_common_interval=True,
             exact_plan_saved_before_truth=True),
-        required_evidence=['binary_matches_source', 'stage_b_acceptance'],
+        required_evidence=['binary_matches_source', 'stage_b_acceptance', 'public_only_production_run'],
         input_hashes={str(demo/name): sha256_file(demo/name)
                       for name in ('capture.yaml', 'calibration.json', 'bundle.json')},
         production_sources={str(p): sha256_file(p) for p in sources})
@@ -80,6 +80,21 @@ def capture_checks(session, expected_commit):
                 stage_b_acceptance=bool(stage_b_ok))
 
 
+def public_run_valid(root):
+    """The scored D2/D3 products are exactly those of the audited public-only run."""
+    path = root/'public_run/report.json'
+    if not path.is_file():
+        return False
+    report = read_json(path)
+    outputs = report.get('outputs', {})
+    current = {str(p.resolve()): sha256_file(p) for name in ('matches', 'fit')
+               for p in sorted((root/name).iterdir()) if p.is_file()} if all(
+                   (root/name).is_dir() for name in ('matches', 'fit')) else {}
+    return (report.get('schema') == 'ssb.public_reconstruction.v1' and report.get('status') == 'pass' and
+            report.get('private_input_opens') == 0 and bool(current) and
+            {str(Path(k).resolve()): v for k, v in outputs.items()} == current)
+
+
 def verify(protocol_file, root, output):
     protocol_file, root, output = Path(protocol_file), Path(root), evaluation_path(output)
     if output.exists():
@@ -98,11 +113,15 @@ def verify(protocol_file, root, output):
         d2_settings_unchanged=read_json(root/'matches/report.json')['settings'] == protocol['d2']['settings'],
         d3_settings_unchanged=read_json(root/'fit/report.json')['settings'] == protocol['d3'],
         holdout_roi_correct=read_json(root/'unroll/report.json')['grid']['target_x_m'] == protocol['holdout_roi_m'],
-        public_replay_identical=read_json(root/'public_replay/report.json').get('geometry_and_residuals_identical') is True,
         input_hashes_unchanged=hashes_match(protocol['input_hashes']),
         production_sources_unchanged=hashes_match(protocol['production_sources']))
+    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v4':
+        checks['public_only_production_run'] = public_run_valid(root)
+    else:
+        checks['public_replay_identical'] = read_json(root/'public_replay/report.json').get(
+            'geometry_and_residuals_identical') is True
     checks.update(capture_checks(session, protocol['code_commit']))
-    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v3':
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v3', 'ssb.d3_holdout_protocol.v4'):
         checks['sampling_protocol_unchanged'] = protocol['sampling'] == dict(
             schema=SAMPLING_SCHEMA, spacing_q_m=.2, phase_fractions=[.25, .75], samples_across=9,
             column_guard_pixels=2, original_nominal_probes_retained=True,

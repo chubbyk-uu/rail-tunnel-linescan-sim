@@ -366,9 +366,9 @@ python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression_NEW \
   > /tmp/ssb_plugin_regression.log 2>&1
 ```
 
-默认使用 4 个 Python 工作进程，按上次报告的用例耗时分组；CPU 用例与 C++ 测试同时运行，Python CUDA 用例等待 C++ OptiX 测试退出后运行。不需要安装 pytest-xdist 等额外依赖，也不会筛掉用例或改变验收门限。当前完整回归按 colcon 计 **536 项全部通过、无跳过**（458 Python 用例、73 C++ 用例及 5 个 CTest 测试套件；独立用例共 531 项），本机约 **25 秒**；原有 388 项版本约 23 秒，普通入口当时约 56–57 秒，不能把不同用例数量直接当成速度比较。
+默认使用 4 个 Python 工作进程，按上次报告的用例耗时分组；CPU 用例与 C++ 测试同时运行，Python CUDA 用例等待 C++ OptiX 测试退出后运行。不需要安装 pytest-xdist 等额外依赖，也不会筛掉用例或改变验收门限。当前完整回归按 colcon 计 **551 项全部通过、无跳过**（473 Python 用例、73 C++ 用例及 5 个 CTest 测试套件；独立用例共 546 项），本机约 **26 秒**；原有 388 项版本约 23 秒，普通入口当时约 56–57 秒，不能把不同用例数量直接当成速度比较。
 
-脚本保存各组日志及 XML，核对用例身份、数量、重复项和退出码，再合并到 `build/ssb_tools/pytest.xml`，仍可用 `colcon test-result --all` 查看结果。默认日志目录为 `log/parallel_tests_时间_进程号/`；可用 `--output` 指定新的目录，或用 `--workers 1` 将 Python 用例改为串行排查。原始 `colcon test` 入口也保留。完整 20 米采集/展开复测及上面的 Gazebo 实际服务器回归仍单独执行，不包含在这 536 项中。
+脚本保存各组日志及 XML，核对用例身份、数量、重复项和退出码，再合并到 `build/ssb_tools/pytest.xml`，仍可用 `colcon test-result --all` 查看结果。默认日志目录为 `log/parallel_tests_时间_进程号/`；可用 `--output` 指定新的目录，或用 `--workers 1` 将 Python 用例改为串行排查。原始 `colcon test` 入口也保留。完整 20 米采集/展开复测及上面的 Gazebo 实际服务器回归仍单独执行，不包含在这 551 项中。
 
 原生 Linux 的 GPU 测试应直接加载系统运行库；现有 WSL 包装测试不能当作原生部署验收，见 [部署文档](docs/DEPLOYMENT.md)。
 

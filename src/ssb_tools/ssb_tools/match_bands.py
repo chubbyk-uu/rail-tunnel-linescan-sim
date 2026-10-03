@@ -1,10 +1,14 @@
 """D2: verified public D1 bands -> image correspondences, no pose truth."""
 import argparse
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
 import json
 import math
+import multiprocessing
+import os
 from pathlib import Path
+import resource
 import time
 import cv2
 import numpy as np
@@ -12,6 +16,7 @@ from PIL import Image, ImageDraw
 from .band_matching import MatchSettings, match_window
 from .matching_structures import STRUCTURE_MODEL, LK_STRUCTURE_RADIUS
 from .initial_unroll import load_bands, release_pages, display
+from . import public_audit
 from .public_capture import confined_file
 from .provenance import stage_record
 from .session import read_json, sha256_file
@@ -27,9 +32,10 @@ MATCH = np.dtype([('window', '<i4'), ('band_a', '<i2'), ('band_b', '<i2'),
          ('lower_column', '<f8'), ('upper_column', '<f8')]])
 
 
-def verified_bands(root, raw_root=None):
+def verified_bands(root, raw_root=None, verify_raw=True):
     """Hash-verified D1 products. v2 samples the capture's public uint8 raw blocks (hashes
-    recorded by D1; `raw_root` relocates them); legacy v1 uses its float32 cache."""
+    recorded by D1; `raw_root` relocates them); legacy v1 uses its float32 cache.
+    verify_raw=False defers each raw block's hash check to its first read."""
     root = Path(root).resolve()
     names = ['provenance.json', 'report.json', 'bands.json', 'projection.npy', 'mapping.npz']
     names.append('native_source.json' if (root/'native_source.json').exists() else 'sensor_flat.npy')
@@ -59,7 +65,7 @@ def verified_bands(root, raw_root=None):
     sampler = load_bands(root, raw_root)
     if tuple(sampler.native.shape) != (len(sampler.projection), len(sampler.offsets)):
         raise ValueError('inconsistent D1 native image dimensions')
-    if hasattr(sampler.native, 'verify_all'): sampler.native.verify_all()
+    if verify_raw and hasattr(sampler.native, 'verify_all'): sampler.native.verify_all()
     if hasattr(sampler.native, 'blocks'):
         # Raw blocks are public observations; they enter provenance by identity.
         paths += [sampler.native.raw_dir/b['file'] for b in sampler.native.blocks]
@@ -121,6 +127,48 @@ def native_sources(sampler, band, x, q, radius):
         upper_sequence=sampler.projection['sequence'][hi], angular_weight=weight,
         lower_column=np.interp(x-sampler.projection['x_axis_m'][lo], sampler.offsets, sampler.columns),
         upper_column=np.interp(x-sampler.projection['x_axis_m'][hi], sampler.offsets, sampler.columns))
+
+
+def match_one(sampler, grid, window, settings):
+    """One planned window; identical in the parent and in worker processes."""
+    t = time.monotonic(); (a, ma), (b, mb) = sample_window(sampler, grid, window)
+    sampling_s = time.monotonic()-t; t = time.monotonic()
+    diagnostic, matches = match_window(a, b, ma, mb, min(grid['dx_m'], grid['dq_m']), settings)
+    matching_s = time.monotonic()-t
+    table = pack_matches(sampler, grid, window, matches) if diagnostic['status'] == 'accepted' else None
+    sampler.native.release()
+    return diagnostic, table, sampling_s, matching_s
+
+
+_WORKER = None
+
+
+def _start_worker(root, raw_root):
+    global _WORKER
+    # Inherit the parent's public-input audit before any input is opened.
+    public_audit.install_from_environment()
+    cv2.setNumThreads(1)
+    # D1 products are hash-checked again here; raw blocks are hashed when first read.
+    _WORKER = verified_bands(root, raw_root, verify_raw=False)[0]
+
+
+def _match_chunk(task):
+    grid, settings, chunk = task
+    return [match_one(_WORKER, grid, window, settings) for window in chunk]
+
+
+def match_all(root, raw_root, sampler, grid, planned, settings, workers):
+    """Results in plan order. Windows are independent and OpenCV runs single-threaded
+    with a fixed RANSAC seed per window, so the worker count cannot change any output."""
+    workers = min(workers, len(planned))
+    if workers <= 1:
+        return [match_one(sampler, grid, window, settings) for window in planned]
+    # Contiguous chunks keep each worker on neighbouring bands and raw blocks.
+    bounds = np.linspace(0, len(planned), 4*workers+1).round().astype(int)
+    tasks = [(grid, settings, planned[a:b]) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
+    with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context('spawn'),
+                             initializer=_start_worker, initargs=(str(root), raw_root)) as pool:
+        return [result for chunk in pool.map(_match_chunk, tasks) for result in chunk]
 
 
 def pack_matches(sampler, grid, window, matches):
@@ -208,7 +256,10 @@ def write_review(sampler, grid, windows, table, output):
     (output/'review.html').write_text('\n'.join(html))
 
 
-def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSettings(), halo_m=.25, raw_root=None):
+def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSettings(), halo_m=.25, raw_root=None,
+        workers=1):
+    if type(workers) is not int or not 1 <= workers <= (os.cpu_count() or 1):
+        raise ValueError('worker count must be between 1 and the CPU count')
     started = time.monotonic(); sampler, upstream, inputs = verified_bands(root, raw_root)
     input_s = time.monotonic()-started; grid = upstream['grid']
     output = Path(output).resolve()
@@ -217,17 +268,16 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
     output.mkdir(parents=True, exist_ok=False)
     previous_threads = cv2.getNumThreads(); cv2.setNumThreads(1)
     tables = []; sampling_s = matching_s = 0.
+    planned = [window for window in windows if window['status'] == 'planned']
+    matching_start = time.monotonic()
     try:
-        for window in windows:
-            if window['status'] != 'planned': continue
-            t = time.monotonic(); (a, ma), (b, mb) = sample_window(sampler, grid, window)
-            sampling_s += time.monotonic()-t; t = time.monotonic()
-            diagnostic, matches = match_window(a, b, ma, mb, min(grid['dx_m'], grid['dq_m']), settings)
-            matching_s += time.monotonic()-t; window.update(diagnostic)
-            if window['status'] == 'accepted': tables.append(pack_matches(sampler, grid, window, matches))
-            sampler.native.release()
+        results = match_all(root, raw_root, sampler, grid, planned, settings, workers)
     finally:
         cv2.setNumThreads(previous_threads)
+    for window, (diagnostic, part, sampled, matched) in zip(planned, results):
+        window.update(diagnostic); sampling_s += sampled; matching_s += matched
+        if part is not None: tables.append(part)
+    matching_wall_s = time.monotonic()-matching_start
     table = np.concatenate(tables) if tables else np.empty(0, MATCH)
     np.save(output/'matches.npy', table)
     (output/'windows.json').write_text(json.dumps(windows, indent=2)+'\n')
@@ -255,10 +305,15 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
             'holdout residual measures internal image consistency, not absolute reconstruction accuracy',
             'scan-periodic common deformations and absolute scale remain unobservable without independent priors',
             'no global optimization, blending, IMU or noiseless-baseline robustness claim'],
-        performance=dict(input_check_s=input_s, sampling_s=sampling_s, matching_s=matching_s))
+        performance=dict(input_check_s=input_s, workers=workers, sampling_s=sampling_s, matching_s=matching_s,
+            matching_wall_s=matching_wall_s,
+            timing_note='sampling_s/matching_s sum per-window times over all workers'))
     review_start = time.monotonic(); write_review(sampler, grid, windows, table, output)
     report['performance'].update(review_s=time.monotonic()-review_start,
         wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes())
+    if workers > 1:
+        # Largest single worker process; the total adds roughly one such RSS per worker.
+        report['performance']['worker_peak_rss_bytes'] = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss*1024
     (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
     provenance = stage_record('band_matching', inputs, sorted(output.iterdir()),
         dict(spacing_m=spacing_m, height=height, max_width=max_width, settings=asdict(settings),
@@ -277,12 +332,14 @@ def main():
     parser.add_argument('--keep-long-structures', action='store_true',
                         help='explicit diagnostic ablation; include long dark bands in matching')
     parser.add_argument('--raw', help='relocated public raw directory of the source capture (hash-checked)')
+    parser.add_argument('--workers', type=int, default=8,
+                        help='window-matching processes; outputs are identical for any count')
     parser.add_argument('--halo-m', type=float, default=.25,
                         help='use already recorded native columns around ROI edges; no extra capture')
     args = parser.parse_args()
     report = run(args.unroll, args.output, args.spacing_m, args.height, args.max_width,
                  MatchSettings(max_shift_mm=args.max_shift_mm,
-                     exclude_long_structures=not args.keep_long_structures), args.halo_m, args.raw)
+                     exclude_long_structures=not args.keep_long_structures), args.halo_m, args.raw, args.workers)
     print(json.dumps({k:report[k] for k in ('status', 'windows', 'matches', 'performance')}))
     if report['status'] == 'unmeasurable': raise SystemExit(2)
 

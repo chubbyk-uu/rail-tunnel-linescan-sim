@@ -18,6 +18,21 @@ LK_LEVELS = 3
 LK_STRUCTURE_RADIUS = (LK_WINDOW//2+1)*2**LK_LEVELS+2*(2**LK_LEVELS-1)
 
 
+def column_nanmedian(values):
+    """np.nanmedian(values, axis=0), bit-identical, without its masked-array sort.
+
+    NumPy sorts masked arrays for axes shorter than 600 samples. Complete columns
+    use the ordinary partition median; columns with NaN keep the original routine.
+    """
+    full = ~np.isnan(values).any(axis=0)
+    profile = np.empty(values.shape[1], values.dtype)
+    if full.any():
+        profile[full] = np.median(np.ascontiguousarray(values[:, full].T), axis=1)
+    if not full.all():
+        profile[~full] = np.nanmedian(values[:, ~full], axis=0)
+    return profile
+
+
 def long_dark_mask(image, valid, pitch_m):
     image, valid = np.asarray(image), np.asarray(valid, bool)
     if (image.ndim != 2 or image.shape != valid.shape or image.size > 1 << 20 or
@@ -31,7 +46,7 @@ def long_dark_mask(image, valid, pitch_m):
     count = valid.sum(axis=0)
     values = np.where(valid, image, np.nan)
     values[:, count == 0] = np.median(image[valid])
-    profile = np.nanmedian(values, axis=0)
+    profile = column_nanmedian(values)
     smooth = cv2.GaussianBlur(profile.astype(np.float32)[None, :], (0, 0), 1.5)[0]
     size = int(np.ceil(STRUCTURE_MODEL['background_window_mm']/(1000*pitch_m))) | 1
     # Bound filtering work for malformed or unexpectedly fine grids.

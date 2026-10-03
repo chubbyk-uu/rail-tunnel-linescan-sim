@@ -5,7 +5,7 @@ import pytest
 import yaml
 from test_wall_coverage import nominal
 
-from ssb_tools.holdout_protocol import capture_checks
+from ssb_tools.holdout_protocol import capture_checks, public_run_valid
 from ssb_tools.session import sha256_file
 
 
@@ -84,7 +84,8 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
     source = tmp_path/'src/ssb_tools/ssb_tools'
     source.mkdir(parents=True)
     for name in ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py', 'global_geometry.py',
-                 'initial_unroll.py', 'global_resample.py', 'evaluate_global_geometry.py'):
+                 'initial_unroll.py', 'global_resample.py', 'evaluate_global_geometry.py',
+                 'public_audit.py', 'public_reconstruction.py'):
         (source/name).write_text('# fixture source\n')
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: 'frozen 0 '+('a'*64))
     monkeypatch.setattr(module, 'check_calibration', lambda *a: 'measured-rig')
@@ -92,7 +93,9 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
     if valid:
         record = module.declare(tmp_path, demo, output, start, length)
         assert record['holdout_roi_m'] == [12., 15.]
-        assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance']
+        assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance',
+                                               'public_only_production_run']
+        assert record['schema'] == 'ssb.d3_holdout_protocol.v4'
         assert record['code_commit'] == 'frozen' and output.exists()
         assert record['sampling']['schema'] == 'ssb.public_common_overlap.v2'
         assert record['sampling']['exact_plan_saved_before_truth'] is True
@@ -101,3 +104,29 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
         with pytest.raises(ValueError):
             module.declare(tmp_path, demo, output, start, length)
         assert not output.exists()
+
+
+def public_run_fixture(root):
+    for name in ('matches', 'fit'):
+        (root/name).mkdir(parents=True)
+        (root/name/'report.json').write_text(name)
+    outputs = {str(p): sha256_file(p) for name in ('matches', 'fit') for p in sorted((root/name).iterdir())}
+    (root/'public_run').mkdir()
+    report = dict(schema='ssb.public_reconstruction.v1', status='pass', private_input_opens=0, outputs=outputs)
+    (root/'public_run/report.json').write_text(json.dumps(report))
+    return report
+
+
+@pytest.mark.parametrize('change', [None, 'missing', 'replaced_output', 'extra_output', 'failed'])
+def test_scored_products_must_be_those_of_the_audited_public_run(tmp_path, change):
+    report = public_run_fixture(tmp_path)
+    if change == 'missing':
+        (tmp_path/'public_run/report.json').unlink()
+    elif change == 'replaced_output':
+        (tmp_path/'fit/report.json').write_text('rerun outside the audit')
+    elif change == 'extra_output':
+        (tmp_path/'fit/trajectory.json').write_text('{}')
+    elif change == 'failed':
+        report['status'] = 'fail'
+        (tmp_path/'public_run/report.json').write_text(json.dumps(report))
+    assert public_run_valid(tmp_path) is (change is None)
