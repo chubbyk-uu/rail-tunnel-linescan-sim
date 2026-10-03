@@ -89,3 +89,10 @@ local_data/evaluation/cleanup_20261002_public/
 检查现行演示全部资产哈希、物理装配和标定身份，20 m 原图/公开元数据，最终 CPU/CUDA 展开和 D2 公开输入及匹配结果的哈希。复核服务使用的目录保留原位；没有终止正在运行的复核服务。检查结果写入本地 `preserved_data_check.log`。
 
 后续继续手动清理；在完成 20 m 全图前保留本页的原始基线和最终展开/匹配输入。D1 v2 存储优化已完成；50 m 扩展前需按新布局检查句柄、内存、磁盘和耗时预算，不能依靠反复删除独立证据来腾空间。
+
+
+## 2026-10-03 留出区段验证与画质对照
+
+保留 `sessions/d3_holdout_12_15_20261003/` 的 3 m 原始采集、公开重建及硬链接复现，约 1.7 GiB；协议、冻结检查与两组网格评价在 `local_data/evaluation/d3_holdout_20261003/`。开发区段原图和历史 20 m 原图继续保留。新增复核页 `sessions/stage_d3_3m_review_20261003/{holdout_12_15,gain_comparison}/`；增益 2.4 仍是待用户确认的候选画质基线。
+
+只删除本轮被成功完整回归替代的 `/tmp/ssb_review_repairs_suite/` 测试工作目录（约 522 MiB），保留最终 `/tmp/ssb_review_repairs_suite_v2/`。删除前将两轮日志、XML 和摘要批量保存到私有评价目录的单个 `test_reports.tar.gz`，逐文件核对内容哈希；没有删除原图、独立验证证据或正在服务的复核页面。
