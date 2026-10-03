@@ -66,7 +66,7 @@ python3 tools/build_demo_from_sources.py --runtime wsl \
 7. 用 `prepare_contact_demo.py` 显式传入新世界、配置和规格，生成前驱、双测量轮、2 mm 竖向/水平轨道起伏、0.2 mm 车轮柔性的世界，校验物理装配。
 8. 准备并渲染独立标靶，拟合当前演示的镜头/暗场/平场标定，核对光学身份，再由 `demo_bundle` 导出全部运行依赖并改成相对引用。
 
-这些步骤的具体参数可查 [build_demo_from_sources.py](../tools/build_demo_from_sources.py)；逐模块命令见 [STAGE_B §4](STAGE_B.md#4-重新生成资产)。首次部署使用本页入口，它处理了历史裂缝目录中的原机器绝对路径，并避免演示生成器的默认旧资产输入。
+这些步骤的具体参数可查 [build_demo_from_sources.py](../tools/build_demo_from_sources.py)；逐模块命令见 [历史逐模块生成记录](history/STAGE_B_SNAPSHOT_2026-10-03.md#4-重新生成资产)。首次部署使用本页入口，它处理了历史裂缝目录中的原机器绝对路径，并避免演示生成器的默认旧资产输入。
 
 ## 3. 输出与验证边界
 

@@ -1,6 +1,127 @@
-# 环境部署补充：WSL 与原生 Linux
+# 安装部署：WSL 与原生 Linux
 
-本页补充 [README](../README.md) 中的安装步骤。两种环境共用 ROS 2 Jazzy、Gazebo Harmonic、CUDA Toolkit 12.8、OptiX SDK 9.1.0 和项目源码；图形驱动及 OptiX 运行时的处理不同。当前整套验收来自 WSL 主机，原生 Linux 下的命令路径由现有代码核对，尚未在独立原生主机做整套验收。
+本页集中记录依赖安装、构建、自检、两种环境的运行差异和排障。快速入口见 [README](../README.md)，从网站下载并生成资产见 [ASSETS](ASSETS.md)。命令默认在仓库根目录执行。
+
+## 安装部署：先选择运行环境
+
+目前完整 GUI 和 20 米性能验收在 **Windows + WSL2/WSLg + Ubuntu 24.04 + RTX 5080** 上完成。原生 Linux 使用系统 NVIDIA 驱动，下面给出独立的部署和启动路径；尚未在另一台原生 Linux 主机完成整套验收。
+
+| 依赖 | 本项目已验证版本/用途 |
+|---|---|
+| 系统 | Ubuntu 24.04，x86_64 |
+| ROS 2 | Jazzy，含 RViz 2 |
+| Gazebo | Harmonic / gz-sim 8，Ogre 2 |
+| CUDA Toolkit | 12.8；需要 `nvcc`，仅有 `nvidia-smi` 不够 |
+| OptiX SDK | 9.1.0；用于编译，运行时还需要 OptiX 驱动组件 |
+| Python | 系统 Python 3.12；NumPy、SciPy、OpenCV、Pillow、PyYAML 等 |
+| 本机 GPU | RTX 5080，16 GiB 显存；这不是声明所有其他 GPU 均已验证 |
+
+### 路线一：WSL2 / WSLg
+
+1. 在 Windows 安装支持 CUDA on WSL 的 NVIDIA 驱动，启用 WSL2 和 WSLg，使用 Ubuntu 24.04。安装流程参考 [NVIDIA CUDA on WSL 指南](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。**不要在 WSL 内安装 Linux 显卡驱动**；配置 NVIDIA Toolkit 软件源后安装 `cuda-toolkit-12-8`，不使用会附带 Linux 驱动的 `cuda` / `cuda-drivers` 元包。
+2. 项目、资产和采集文件放在 Linux 文件系统，如 `~/robot_ws/`，避免在 `/mnt/c` 下执行高频小文件读写。
+3. 安装 CUDA Toolkit 12.8 和后面的 ROS/Gazebo 公共依赖，再准备两套 WSL 专用用户态环境：
+
+```bash
+# 本项目默认查找的位置；允许在当前终端覆盖。
+export SSB_OPTIX_RUNTIME="$HOME/opt/optix-runtime-610.57.04"
+export SSB_MESA_PREFIX="$HOME/opt/agv-mesa-25.2.8/install"
+```
+
+OptiX 隔离目录需要同一版本的 `libnvoptix.so.1`、`libnvidia-rtcore.so.610.57.04`、`libnvidia-gpucomp.so.610.57.04` 和配套 `nvoptix.bin`。这是本机使用的 WSL 实验运行环境，不是安装 Linux 驱动；不要覆盖 `/usr/lib/wsl/lib`。SDK 与隔离组件的准备步骤见 [WSL OptiX 部署](DEPLOYMENT.md#wsl-optix-运行库)。
+
+私有 Mesa 为 WSLg/D3D12 下的图形修复环境。本仓库包含运行包装器，但不包含 Mesa 构建器；新机器需要另行构建或恢复这套环境，具体依赖和来源见 [WSL Mesa 部署](DEPLOYMENT.md#wsl-mesa-图形环境)。缺少它时默认 GUI 启动器会明确退出。
+
+检查 GPU 和显示接口：
+
+```bash
+nvidia-smi
+/usr/local/cuda/bin/nvcc --version
+printf 'DISPLAY=%s\nWAYLAND_DISPLAY=%s\n' "$DISPLAY" "$WAYLAND_DISPLAY"
+```
+
+**WSL 启动器**会在子进程内选择 D3D12、私有 Mesa 和 OptiX 库，不修改全局系统库。OptiX 包装器会重置继承的 `LD_LIBRARY_PATH`；需要 ROS 的命令应在包装器内部重新 `source` ROS 和工作区。
+
+### 路线二：原生 Ubuntu Linux
+
+1. 使用原生 Linux NVIDIA 驱动及其配套 OptiX 运行组件，安装 CUDA Toolkit 12.8；按 [NVIDIA Linux CUDA 安装指南](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/) 配置驱动与 Toolkit。
+2. 安装后面的公共依赖及 OptiX SDK。确认 `nvidia-smi`、`nvcc` 和系统的 `libnvoptix.so.1` 正常。
+3. 使用系统 OpenGL 驱动和正常桌面显示，不设置 WSL 的 `GALLIUM_DRIVER=d3d12`，不加载私有 WSL Mesa，也不复制上述 WSL 隔离库。
+
+**当前 `run_mission.sh`、`run_gz_gui.sh`、`run_gz.sh` 及 GPU 测试包装器默认面向 WSL。** 原生 Linux 请使用 [原生 Linux 启动步骤](DEPLOYMENT.md#原生-linux-启动)，直接运行相同的管理器、Gazebo 和 RViz；不要直接套用 WSL 启动脚本。原生路线能否正常运行以该机器的后端自检和实际采集结果为准。
+
+### 两种环境共用：ROS、依赖和源码
+
+先按 [ROS 2 Jazzy 官方安装说明](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html) 配置 ROS 软件源；需要独立安装 Gazebo 时参考 [Harmonic 官方说明](https://gazebosim.org/docs/harmonic/install_ubuntu/)。然后安装项目依赖：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  ros-jazzy-desktop ros-jazzy-ros-gz \
+  python3-colcon-common-extensions python3-rosdep \
+  build-essential cmake ninja-build pkg-config git curl libvips-tools \
+  libyaml-cpp-dev nlohmann-json3-dev libssl-dev qtbase5-dev \
+  python3-numpy python3-scipy python3-opencv python3-pil \
+  python3-yaml python3-matplotlib python3-pytest python3-psutil
+
+mkdir -p ~/robot_ws
+cd ~/robot_ws
+git clone https://github.com/chubbyk-uu/rail-tunnel-linescan-sim.git Subway_scan_bot_sim
+cd Subway_scan_bot_sim
+
+# 官方 OptiX SDK；默认目录与项目 CMake 一致。
+mkdir -p ~/opt
+git clone --branch v9.1.0 --depth 1 \
+  https://github.com/NVIDIA/optix-sdk.git ~/opt/optix-sdk-9.1.0
+
+# 首次使用 rosdep 时执行 init；已经初始化的机器跳过这一行。
+sudo rosdep init
+rosdep update
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -r -y --rosdistro jazzy
+```
+
+本仓库已公开，克隆无需 GitHub 登录；WSL 私有 Mesa 构建来源的独立仓库权限要求见部署补充。`gz.transport13`、`gz.msgs10` 来自 Jazzy 的 Gazebo vendor 环境，先加载 ROS，再检查 Python 导入；不要用其他 Python/Conda 环境替代系统 Python。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+python3 -c 'import gz.transport13, gz.msgs10, numpy, scipy, cv2, PIL, yaml; print("Python dependencies OK")'
+```
+
+## 构建与后端自检
+
+下文命令除另有说明均在仓库根目录运行。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+export COLCON_DEFAULTS_FILE="$PWD/colcon_defaults.yaml"
+colcon build > /tmp/ssb_build.log 2>&1
+source install/setup.bash
+```
+
+默认构建采用 `RelWithDebInfo` 和 `symlink-install`。若 SDK/Toolkit 位于其他目录：
+
+```bash
+colcon build --symlink-install --cmake-args \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DSSB_OPTIX_SDK=/path/to/optix-sdk-9.1.0 \
+  -DCUDAToolkit_ROOT=/path/to/cuda-12.8 > /tmp/ssb_build.log 2>&1
+```
+
+缺少 CUDA 或 OptiX 会直接使配置失败，项目不静默降级成其他成像后端。每次更新 Git 提交或源码后，采集前重新构建；采集会核对构建版本与运行源码身份，包括文档提交。
+
+```bash
+# WSL：通过隔离运行库执行实际射线后端自检。
+bash tools/with_optix_runtime.sh \
+  install/ssb_core/lib/ssb_core/ssb_selfcheck \
+  src/ssb_core/config/stage_a.yaml > /tmp/ssb_selfcheck.log 2>&1
+
+# 原生 Linux：在已加载 ROS/工作区的终端中直接执行。
+install/ssb_core/lib/ssb_core/ssb_selfcheck \
+  src/ssb_core/config/stage_a.yaml > /tmp/ssb_selfcheck.log 2>&1
+```
+
+只执行与你环境对应的一条。自检验证的是 OptiX 初始化与真实射线计算，不只是 CUDA 设备是否可见。
 
 ## WSL OptiX 运行库
 

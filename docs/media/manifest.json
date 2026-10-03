@@ -115,31 +115,249 @@
     "GUI media is not raw line-scan image quality or a performance benchmark",
     "Git contains GIF/PNG; source MP4 remains local"
   ],
+  "reconstruction_figures_history": [
+    {
+      "date": "2026-10-03",
+      "capture_commit": "c77d762",
+      "feature_review_commit": "284e265",
+      "exporter_commit": "284e265",
+      "session": "sessions/d3_noise_20m_v2_20261003",
+      "source": "sessions/d3_noise_20m_v2_20261003/feature_review_rawleft",
+      "assumed_sensor_noise": true,
+      "response_gain": 2.4,
+      "method": "first wide/thin public image candidates; 1:1 panels, titles outside image",
+      "panels": [
+        {
+          "file": "joint_comparison.png",
+          "candidate": {
+            "shape": [
+              512,
+              512
+            ],
+            "seam_column": 256,
+            "bands": [
+              10,
+              11
+            ],
+            "x_first_m": 6.298660788096433,
+            "q_first_m": 1.0907974492410852,
+            "grid_pitch_m": [
+              0.0002,
+              0.00019999953231409427
+            ],
+            "presentation_order": [
+              "raw",
+              "nominal",
+              "optimized"
+            ],
+            "raw_anchors": [
+              {
+                "band": 10,
+                "reference_x_m": 6.049768490388801,
+                "anchor_sequence": 627862,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              },
+              {
+                "band": 11,
+                "reference_x_m": 6.6497717591267085,
+                "anchor_sequence": 687122,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              }
+            ],
+            "invalid_pixels": [
+              0,
+              0,
+              0
+            ],
+            "candidate": {
+              "kind": "wide",
+              "centre_px": [
+                512,
+                37
+              ],
+              "bbox_px": [
+                0,
+                26,
+                1024,
+                40
+              ],
+              "thickness_px": 11.0,
+              "score": 24750.9375,
+              "window": {
+                "id": 1272,
+                "bands": [
+                  10,
+                  11
+                ],
+                "q_center_m": 1.1418973297473363,
+                "status": "planned",
+                "shape": [
+                  512,
+                  1024
+                ],
+                "x_first_m": 6.247460788096434,
+                "q_first_m": 1.0907974492410852
+              },
+              "x_m": 6.349860788096434,
+              "q_m": 1.0981974319367067
+            },
+            "id": 0
+          },
+          "source_pixels_identical": true,
+          "panel_shape": [
+            512,
+            512
+          ]
+        },
+        {
+          "file": "crack_comparison.png",
+          "candidate": {
+            "shape": [
+              512,
+              512
+            ],
+            "seam_column": 256,
+            "bands": [
+              29,
+              30
+            ],
+            "x_first_m": 17.573113922545243,
+            "q_first_m": -2.5245774297731125,
+            "grid_pitch_m": [
+              0.0002,
+              0.00019999953231409427
+            ],
+            "presentation_order": [
+              "raw",
+              "nominal",
+              "optimized"
+            ],
+            "raw_anchors": [
+              {
+                "band": 29,
+                "reference_x_m": 17.324224823211555,
+                "anchor_sequence": 1735935,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              },
+              {
+                "band": 30,
+                "reference_x_m": 17.924216749581376,
+                "anchor_sequence": 1795194,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              }
+            ],
+            "invalid_pixels": [
+              0,
+              0,
+              0
+            ],
+            "candidate": {
+              "kind": "thin",
+              "centre_px": [
+                512,
+                254
+              ],
+              "bbox_px": [
+                0,
+                141,
+                1024,
+                252
+              ],
+              "thickness_px": 4.0,
+              "score": 47295.99609375,
+              "window": {
+                "id": 3514,
+                "bands": [
+                  29,
+                  30
+                ],
+                "q_center_m": -2.4734775492668613,
+                "status": "planned",
+                "shape": [
+                  512,
+                  1024
+                ],
+                "x_first_m": 17.52191392254524,
+                "q_first_m": -2.5245774297731125
+              },
+              "x_m": 17.62431392254524,
+              "q_m": -2.4737775485653324
+            },
+            "id": 2
+          },
+          "source_pixels_identical": true,
+          "panel_shape": [
+            512,
+            512
+          ]
+        }
+      ],
+      "raw_band": {
+        "band": 17,
+        "original_shape": [
+          59259,
+          4096
+        ],
+        "selection": "middle sufficiently complete band",
+        "transpose": true,
+        "integer_stride": 33
+      },
+      "source_inputs": {
+        "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/report.json": "7cf57e21b3920d47b659157590fc999d73ccc2d230ddbfb57d510fc9e8e2094c",
+        "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/provenance.json": "42ff7643de7a53a01e67a338cc3b2bb4c9dabf1905f22f0e547de7f2776ca414",
+        "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/feature_0_raw.png": "00ea9c047522528dcd0e8b507a32a1948dba22609f45436ce3a781781158a2ff",
+        "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/feature_0_optimized.png": "5e7e081597ebe708de8dce0e4399a7ea4233733abd787f98e036840cbcb5065f",
+        "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/feature_2_raw.png": "b3ba5526d42e76ba9d3e6696917677a072025ddeaf563980435097b846b36e67",
+        "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/feature_2_optimized.png": "0be27706e975652918f577e8ae7c6f163090869b5e243ddede12f4e13ab7dd7f",
+        "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/raw_band.png": "7a9a7b33e873d5fc9a1f2b84d31f2b433e632580f9eaf87f67537a26f9713b90"
+      },
+      "output_hashes": {
+        "joint_comparison_20m.png": "98c4de7635048cf973524a6ed073f474e52d83eaf2bc1234c05e4b6905d09f7c",
+        "crack_comparison_20m.png": "9186fed1d4813e833afe39e7b7f1042ee422084fd251e156f627c901b139d128",
+        "raw_band_20m.png": "7a9a7b33e873d5fc9a1f2b84d31f2b433e632580f9eaf87f67537a26f9713b90"
+      },
+      "limitation": "Old capture retained: original acceptance failed with 15 missing planned samples. Left is uncorrected raw helix; right includes calibration and global reconstruction. No fusion or sharpening. Not evidence for the newer 20 m batch.",
+      "export_provenance_sha256": "1bdf0a192fe20a500e56b8c20dd35e3c9efdb7ed13ff593f35df67861e589d53",
+      "export_report_sha256": "c765b6c4cee7fd1c0645f9232e9d8daef956d9ba044fb5d68df539f4672c2307",
+      "presentation_order": [
+        "raw",
+        "optimized"
+      ]
+    }
+  ],
   "reconstruction_figures": {
-    "date": "2026-10-03",
-    "capture_commit": "c77d762",
-    "feature_review_commit": "284e265",
-    "exporter_commit": "284e265",
-    "session": "sessions/d3_noise_20m_v2_20261003",
-    "source": "sessions/d3_noise_20m_v2_20261003/feature_review_rawleft",
-    "assumed_sensor_noise": true,
+    "date": "2026-10-04",
+    "session": "sessions/audit_guard_high_20261003",
+    "capture_commit": "6795971",
+    "feature_review_commit": "3cf6094",
+    "source": "sessions/audit_guard_high_20261003/feature_review_readme_20261004",
     "response_gain": 2.4,
-    "method": "first wide/thin public image candidates; 1:1 panels, titles outside image",
-    "panels": [
-      {
-        "file": "joint_comparison.png",
-        "candidate": {
+    "assumed_sensor_noise": true,
+    "summary": {
+      "schema": "ssb.readme_summary.v1",
+      "source": "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/audit_guard_high_20261003/feature_review_readme_20261004",
+      "target_x_m": [
+        12.0,
+        15.0
+      ],
+      "overview_theta_deg": [
+        -29.991666087922777,
+        29.879158274880186
+      ],
+      "selection": "first wide/thin public-image candidates with centre inside original target; no evaluation input",
+      "candidates": [
+        {
           "shape": [
             512,
             512
           ],
           "seam_column": 256,
           "bands": [
-            10,
-            11
+            3,
+            4
           ],
-          "x_first_m": 6.298660788096433,
-          "q_first_m": 1.0907974492410852,
+          "x_first_m": 13.858117246020436,
+          "q_first_m": 1.080613467951016,
           "grid_pitch_m": [
             0.0002,
             0.00019999953231409427
@@ -151,15 +369,15 @@
           ],
           "raw_anchors": [
             {
-              "band": 10,
-              "reference_x_m": 6.049768490388801,
-              "anchor_sequence": 627862,
+              "band": 3,
+              "reference_x_m": 13.609219773546835,
+              "anchor_sequence": 212997,
               "placement": "one fixed encoder anchor per band; no within-band motion compensation"
             },
             {
-              "band": 11,
-              "reference_x_m": 6.6497717591267085,
-              "anchor_sequence": 687122,
+              "band": 4,
+              "reference_x_m": 14.20921515618295,
+              "anchor_sequence": 272256,
               "placement": "one fixed encoder anchor per band; no within-band motion compensation"
             }
           ],
@@ -172,56 +390,48 @@
             "kind": "wide",
             "centre_px": [
               512,
-              37
+              88
             ],
             "bbox_px": [
               0,
-              26,
+              74,
               1024,
-              40
+              78
             ],
-            "thickness_px": 11.0,
-            "score": 24750.9375,
+            "thickness_px": 12.0,
+            "score": 22714.0078125,
             "window": {
-              "id": 1272,
+              "id": 457,
               "bands": [
-                10,
-                11
+                3,
+                4
               ],
-              "q_center_m": 1.1418973297473363,
+              "q_center_m": 1.131713348457267,
               "status": "planned",
               "shape": [
                 512,
                 1024
               ],
-              "x_first_m": 6.247460788096434,
-              "q_first_m": 1.0907974492410852
+              "x_first_m": 13.806917246020436,
+              "q_first_m": 1.080613467951016
             },
-            "x_m": 6.349860788096434,
-            "q_m": 1.0981974319367067
+            "x_m": 13.909317246020436,
+            "q_m": 1.0982134267946564
           },
-          "id": 0
+          "id": 1
         },
-        "source_pixels_identical": true,
-        "panel_shape": [
-          512,
-          512
-        ]
-      },
-      {
-        "file": "crack_comparison.png",
-        "candidate": {
+        {
           "shape": [
             512,
             512
           ],
           "seam_column": 256,
           "bands": [
-            29,
-            30
+            1,
+            2
           ],
-          "x_first_m": 17.573113922545243,
-          "q_first_m": -2.5245774297731125,
+          "x_first_m": 12.751868488465057,
+          "q_first_m": 3.7806134679510115,
           "grid_pitch_m": [
             0.0002,
             0.00019999953231409427
@@ -233,15 +443,15 @@
           ],
           "raw_anchors": [
             {
-              "band": 29,
-              "reference_x_m": 17.324224823211555,
-              "anchor_sequence": 1735935,
+              "band": 1,
+              "reference_x_m": 12.502968505391777,
+              "anchor_sequence": 107813,
               "placement": "one fixed encoder anchor per band; no within-band motion compensation"
             },
             {
-              "band": 30,
-              "reference_x_m": 17.924216749581376,
-              "anchor_sequence": 1795194,
+              "band": 2,
+              "reference_x_m": 13.102974413458918,
+              "anchor_sequence": 167072,
               "placement": "one fixed encoder anchor per band; no within-band motion compensation"
             }
           ],
@@ -254,73 +464,151 @@
             "kind": "thin",
             "centre_px": [
               512,
-              254
+              381
             ],
             "bbox_px": [
               0,
-              141,
+              265,
               1024,
-              252
+              132
             ],
             "thickness_px": 4.0,
-            "score": 47295.99609375,
+            "score": 43683.8125,
             "window": {
-              "id": 3514,
+              "id": 233,
               "bands": [
-                29,
-                30
+                1,
+                2
               ],
-              "q_center_m": -2.4734775492668613,
+              "q_center_m": 3.8317133484572627,
               "status": "planned",
               "shape": [
                 512,
                 1024
               ],
-              "x_first_m": 17.52191392254524,
-              "q_first_m": -2.5245774297731125
+              "x_first_m": 12.700668488465057,
+              "q_first_m": 3.7806134679510115
             },
-            "x_m": 17.62431392254524,
-            "q_m": -2.4737775485653324
+            "x_m": 12.803068488465057,
+            "q_m": 3.8568132897626812
           },
           "id": 2
-        },
-        "source_pixels_identical": true,
-        "panel_shape": [
-          512,
-          512
-        ]
-      }
-    ],
-    "raw_band": {
-      "band": 17,
-      "original_shape": [
-        59259,
-        4096
+        }
       ],
-      "selection": "middle sufficiently complete band",
-      "transpose": true,
-      "integer_stride": 33
-    },
-    "source_inputs": {
-      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/report.json": "7cf57e21b3920d47b659157590fc999d73ccc2d230ddbfb57d510fc9e8e2094c",
-      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/provenance.json": "42ff7643de7a53a01e67a338cc3b2bb4c9dabf1905f22f0e547de7f2776ca414",
-      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/feature_0_raw.png": "00ea9c047522528dcd0e8b507a32a1948dba22609f45436ce3a781781158a2ff",
-      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/feature_0_optimized.png": "5e7e081597ebe708de8dce0e4399a7ea4233733abd787f98e036840cbcb5065f",
-      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/feature_2_raw.png": "b3ba5526d42e76ba9d3e6696917677a072025ddeaf563980435097b846b36e67",
-      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/feature_2_optimized.png": "0be27706e975652918f577e8ae7c6f163090869b5e243ddede12f4e13ab7dd7f",
-      "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/raw_band.png": "7a9a7b33e873d5fc9a1f2b84d31f2b433e632580f9eaf87f67537a26f9713b90"
+      "panels": [
+        {
+          "source_file": "raw_helix.png",
+          "source_box": [
+            0,
+            675,
+            469,
+            1125
+          ],
+          "destination_box": [
+            21,
+            98,
+            490,
+            548
+          ]
+        },
+        {
+          "source_file": "geometry/optimized.png",
+          "source_box": [
+            0,
+            675,
+            469,
+            1125
+          ],
+          "destination_box": [
+            557,
+            98,
+            1026,
+            548
+          ]
+        },
+        {
+          "source_file": "feature_1_raw.png",
+          "source_box": [
+            0,
+            0,
+            512,
+            192
+          ],
+          "destination_box": [
+            0,
+            604,
+            512,
+            796
+          ]
+        },
+        {
+          "source_file": "feature_1_optimized.png",
+          "source_box": [
+            0,
+            0,
+            512,
+            192
+          ],
+          "destination_box": [
+            536,
+            604,
+            1048,
+            796
+          ]
+        },
+        {
+          "source_file": "feature_2_raw.png",
+          "source_box": [
+            0,
+            285,
+            512,
+            477
+          ],
+          "destination_box": [
+            0,
+            852,
+            512,
+            1044
+          ]
+        },
+        {
+          "source_file": "feature_2_optimized.png",
+          "source_box": [
+            0,
+            285,
+            512,
+            477
+          ],
+          "destination_box": [
+            536,
+            852,
+            1048,
+            1044
+          ]
+        }
+      ],
+      "source_pixels_identical": true,
+      "raw_correction": false,
+      "within_band_travel_compensation": false,
+      "fusion": false,
+      "sharpening": false
     },
     "output_hashes": {
-      "joint_comparison_20m.png": "98c4de7635048cf973524a6ed073f474e52d83eaf2bc1234c05e4b6905d09f7c",
-      "crack_comparison_20m.png": "9186fed1d4813e833afe39e7b7f1042ee422084fd251e156f627c901b139d128",
-      "raw_band_20m.png": "7a9a7b33e873d5fc9a1f2b84d31f2b433e632580f9eaf87f67537a26f9713b90"
+      "reconstruction_comparison.png": "b89d402b111c486f26657d2e64064721dae5ab5ef5f9f5c8b4d5a4b0b42d1fbe",
+      "reconstruction_crack_raw.png": "228828e3df6f15363ee76d59f0f3835851f7c0316f88b1cc134691831032635a",
+      "reconstruction_joint_raw.png": "4ad5446bef116046d875354fa0a535621cf795090622926d5fab54481d4b8175",
+      "reconstruction_crack_optimized.png": "80b5134e6dca90572a2168a527bc4eb97552e992d6378c9cca4b41950bdeeda6",
+      "reconstruction_joint_optimized.png": "2e7ea0c441ec28e1cb04b873bf7a591291139864752a85048fe088f1f0427df3"
     },
-    "limitation": "Old capture retained: original acceptance failed with 15 missing planned samples. Left is uncorrected raw helix; right includes calibration and global reconstruction. No fusion or sharpening. Not evidence for the newer 20 m batch.",
-    "export_provenance_sha256": "1bdf0a192fe20a500e56b8c20dd35e3c9efdb7ed13ff593f35df67861e589d53",
-    "export_report_sha256": "c765b6c4cee7fd1c0645f9232e9d8daef956d9ba044fb5d68df539f4672c2307",
-    "presentation_order": [
-      "raw",
-      "optimized"
-    ]
+    "export_provenance_sha256": "facd7bb2a351f86afe542486b152ddc2d5be1d2f44133fdf1c3b1053da34aa48",
+    "export_report_sha256": "2c6920cd191958c017e20a4032b8940d23fcce8deafaf0be74294f438af85b80",
+    "export_source": {
+      "git_head": "3cf60942908cc226ae9033dcc28f6c51c9f46785",
+      "git_dirty": true,
+      "source_digest": "1585369d755506d40daa5df1c5fe79e99c1d0b6f9a3e538718f84f77e8bc6726",
+      "module": "/home/jerry/robot_ws/Subway_scan_bot_sim/src/ssb_tools/ssb_tools"
+    },
+    "exporter_sha256": "07457aad0937a16372fefc5f8b78ca2099810dda428af263b9b2d55d672f7f20",
+    "interpretation": "known high-ring 3 m recapture, not new blind validation; top sector is a display crop, not changed acceptance target"
   }
 }
