@@ -21,11 +21,11 @@
 | 原生成链及旧演示配置 | `local_data/stage_b/` 下 c034、几何、缺陷、GUI、砂浆及 unbundled 目录 | 历史评价仍记录原资产身份和路径，暂不清理 |
 | 历史画质基线复核页 | `local_data/stage_b/final_review_20261001/` | 增益调整前已确认的背景、裂缝、填缝与照明局部图 |
 | 现行增益画质确认 | `sessions/stage_d3_3m_review_20261003/gain_comparison/` | 2026-10-03 已确认响应增益 2.4；包含原图 DN 投影及采后校正对照 |
-| D3 正式 3 m 整幅对比 | `sessions/d3_holdout_rebuilt_20261003/full_mosaic/`、`local_data/evaluation/d3_global_mosaic_20261003/` | 名义/优化 uint16 全图、覆盖计数及游程，约 4.85 GiB；整幅回读、固定 CPU 核对和运行日志。没有新增原始图副本；原始留出采集继续保留 |
-| 3 m 噪声验证 | `sessions/d3_noise_assumed_20261003/`、`local_data/evaluation/d3_noise_assumed_20261003/` | 原图、独立重放、D1/D2/D3、两幅全图与全量核验；重放原图为独立校验后的硬链接 |
+| D3 正式 3 m 整幅对比 | `sessions/d3_holdout_rebuilt_20261003/full_mosaic/`、`local_data/evaluation/d3_global_mosaic_20261003/` | 名义/优化全图的 `mosaic_u16/count` 大数组已于 2026-10-03 删除（哈希留在 `full_mosaic/provenance.json`，可重新生成），保留覆盖游程、预览和报告；整幅回读、固定 CPU 核对和运行日志。没有新增原始图副本；原始留出采集继续保留 |
+| 3 m 噪声验证 | `sessions/d3_noise_assumed_20261003/`、`local_data/evaluation/d3_noise_assumed_20261003/` | 原图、独立重放、D1/D2/D3、两幅全图的核验记录（大数组已删，可按溯源重新生成）；重放原图为独立校验后的硬链接 |
 | 噪声档资产与标定 | `local_data/stage_b/noise_assumed_20261003/`、`local_data/evaluation/sensor_noise_implementation_20261003/` | 独立标定和生成参数；只读素材与默认演示硬链接，不能原位改写共享文件。495 项测试及默认关闭后的兼容性证据 |
 | 无噪声兼容重放 | `sessions/noise_off_compatibility_20261003/` | 98 个二进制文件与旧正式会话相同；重复原图校验后链接原始块，保留元数据和溯源 |
-| 新 20 m 带噪声完整输出 | `sessions/d3_noise_20m_v2_20261003/`、`local_data/evaluation/d3_noise_20m_v2_20261003/` | 原图、独立重成像、D1/D2/D3、两幅全图（约 32.3 GiB）、逐像素核验及复核页；整体接缝因末圈 15 个双圈点缺测仍失败 |
+| 新 20 m 带噪声完整输出 | `sessions/d3_noise_20m_v2_20261003/`、`local_data/evaluation/d3_noise_20m_v2_20261003/` | 原图、独立重成像、D1/D2/D3、两幅全图的报告、预览与哈希（约 32.3 GiB 大数组已删，可按溯源重新生成）、逐像素核验及复核页；整体接缝因末圈 15 个双圈点缺测仍失败 |
 | 首次 20 m 规模失败记录 | `sessions/d3_noise_20m_20261003/`、`local_data/evaluation/d3_noise_20m_20261003/` | D3 来源检查发现 39 个边缘坐标不一致；保留原图和失败链条，不称为优化验收通过；重复原图已按哈希去重 |
 | 20 m README 对比源 | `local_data/readme_export_20m_final_20261003/`、`docs/media/` | 候选来源、逐像素等同核验和导出溯源，已入 Git 的只有公开 PNG 与媒体清单 |
 | 20 m 原始采集与诊断 | `sessions/stage_c_20m_acceptance_20261002/`，不含已删除的 `wall_replay/` | 后续 D1/D2/D3、原始采集和独立评价基线 |
@@ -139,3 +139,19 @@ local_data/evaluation/cleanup_20261002_public/
 高/低占比新种子采集、开发反例与完整 20 m 复算均按上表保留，旧 20 m 4.232 px 失败记录仍在原目录；没有删除或更改其哈希。重建没有新复制完整原图，公开输入副本使用已核验内容的硬链接；轨道变体仅重新生成物理轨面，共享纹理，避免重复保存大型光学资产。
 
 两次完成的回归夹具批量清理 8 个目录、逻辑文件约 1.087 GB；先核验 `regression_logs.tar.gz` 内 31 个日志/XML/摘要，73 个 C++ 用例 XML 单独归档。最后的源资产保护回归为 536 项、无失败/跳过，报告另存 `final_regression_logs.tar.gz`；最终另清理 4 个夹具目录、约 0.544 GB，记录在 `final_fixture_cleanup.json`，合计约 1.63 GB。20 m 运行日志另存单个 `runtime_logs.tar.gz`。清理只删已结束测试的可再生成数据，不删正式原图、独立重成像或评价文件。
+
+## 2026-10-03 离线提速后清理
+
+清理记录：`local_data/evaluation/cleanup_20261003_offline/cleanup.json`。合计释放约 **72.4 GB**，磁盘可用空间从 667 GB 增加到 740 GB。
+
+- **无损去重（30.2 GB，1,801 个原图块）**：以下副本经 SHA-256 核对与原件相同后，改为指向原件的硬链接，路径和文件哈希都不变：
+  - `d3_noise_20m_support` 的重成像原图块；
+  - `d3_noise_20m_v2` 公开复现目录中的原图块；
+  - 6 组 3 m 会话的重成像原图块；
+  - `perf_ring_{high,low}` 的采集原图块（与 `ring_{high,low}_seed20261005` 的采集逐字节相同）。
+
+  独立重成像的逐字节一致性早在去重前已由各自的阶段 B 报告确认。去重后，同一会话再做重成像比对必然一致，不能再算作新的独立证据。
+- **删除可再生成的整幅数组（44.9 GB）**：删除了 `d3_noise_20m_v2`、`d3_holdout_rebuilt`、`d3_noise_assumed` 三处 `full_mosaic/{nominal,optimized}/mosaic_{u16,count}.npy`，删除前逐个核对过与溯源记录的哈希一致。覆盖游程、预览图、报告和溯源都保留；原图、D1、D3 仍在，可用 `ssb_tools.global_mosaic` 重新生成，并按记录的哈希核验。相关复核页上指向这些大数组的链接已失效。
+- **删除旧 colcon 日志（0.49 GB，349 项）**：只保留 `log/COLCON_IGNORE`。正式测试日志另有归档。
+
+**操作失误记录**：抽查去重结果时，`validate_stage_b --compare` 把重新生成的报告写回了 `sessions/ring_high_seed20261005_20261003` 和 `sessions/d3_noise_20m_support_20261003` 的 `capture/evaluation/reports/stage_b_smoke.json`，原文件被覆盖。原报告没有单独留存哈希，因此无法证明两者逐字节相同。不过，重新生成时使用的检验代码（`validate_stage_b`、`validate_stage_a`、`ref_geometry`、`session`）自这两次采集以来没有改动，输入文件内容也相同；24 项检查名称和结果与 `local_data/evaluation/*/stage_b.log` 中的原始运行日志逐项一致，全部通过。以后抽查请先把会话复制到临时目录，或改为只读检查。
