@@ -238,6 +238,7 @@ def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_
     checked = validate(d1, fit, output, tmp_path/'validation')
     assert checked['full_pixel_consistency'] and checked['total_pixels'] == count.size
     assert checked['coverage_gate'] == report['coverage_gate']['status']
+    assert checked['status'] == ('fail' if saturated else 'pass')
     assert checked['cpu_reference']['maximum_code_error'] <= 1
     with (output/'optimized/mosaic_u16.npy').open('r+b') as file:
         file.seek(-2, 2); file.write(b'xx')

@@ -85,7 +85,8 @@ def validate(unroll, trajectory, mosaic, output):
                 probes.append(dict(q_bin=q, x_bin=x, count=int(n[0, 0]), code_error=error))
         finally:
             values._mmap.close(); count._mmap.close()
-        result = dict(schema='ssb.global_mosaic_validation.v1', status='pass',
+        result = dict(schema='ssb.global_mosaic_validation.v1',
+            status='pass' if not histogram.get(0, 0) else 'fail',
             full_pixel_consistency=True, total_pixels=nq*nx, missing_pixels=histogram.get(0, 0),
             coverage_gate='pass' if not histogram.get(0, 0) else 'fail',
             cpu_reference=dict(seed=20261003, probes=probes, maximum_code_error=maximum,

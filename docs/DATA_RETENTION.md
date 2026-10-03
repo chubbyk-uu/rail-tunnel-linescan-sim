@@ -11,6 +11,7 @@
 | 原生成链及旧演示配置 | `local_data/stage_b/` 下 c034、几何、缺陷、GUI、砂浆及 unbundled 目录 | 历史评价仍记录原资产身份和路径，暂不清理 |
 | 历史画质基线复核页 | `local_data/stage_b/final_review_20261001/` | 增益调整前已确认的背景、裂缝、填缝与照明局部图 |
 | 现行增益画质确认 | `sessions/stage_d3_3m_review_20261003/gain_comparison/` | 2026-10-03 已确认响应增益 2.4；包含原图 DN 投影及采后校正对照 |
+| D3 正式 3 m 整幅对比 | `sessions/d3_holdout_rebuilt_20261003/full_mosaic/`、`local_data/evaluation/d3_global_mosaic_20261003/` | 名义/优化 uint16 全图、覆盖计数及游程，约 4.85 GiB；整幅回读、固定 CPU 核对和运行日志。没有新增原始图副本；原始留出采集继续保留 |
 | 20 m 原始采集与诊断 | `sessions/stage_c_20m_acceptance_20261002/`，不含已删除的 `wall_replay/` | 后续 D1/D2/D3、原始采集和独立评价基线 |
 | 20 m 任务私有输入 | `local_data/mission_runs/20261002_113730_eae97f12/` | 生成和独立评价；不是重建输入 |
 | v1 CPU 展开（瘦身） | `sessions/stage_d1_3m_final_20261002/` | 报告、溯源、预览及 8765 复核页；大数组已删，v2 等价记录见 STAGE_D |
