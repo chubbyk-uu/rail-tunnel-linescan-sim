@@ -83,7 +83,7 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
     (demo/'bundle.json').write_text('{}')
     source = tmp_path/'src/ssb_tools/ssb_tools'
     source.mkdir(parents=True)
-    for name in ('match_bands.py', 'band_matching.py', 'optimize_bands.py', 'global_geometry.py',
+    for name in ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py', 'global_geometry.py',
                  'initial_unroll.py', 'global_resample.py', 'evaluate_global_geometry.py'):
         (source/name).write_text('# fixture source\n')
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: 'frozen 0 '+('a'*64))

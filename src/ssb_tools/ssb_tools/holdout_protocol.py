@@ -36,7 +36,7 @@ def declare(workspace, demo, output, start, length):
     check_calibration(demo/'capture.yaml', demo/'calibration.json')
     settings = GeometrySettings(attitude_spacing_m=.02, observed_knots=True)
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
-               ('match_bands.py', 'band_matching.py', 'optimize_bands.py',
+               ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py',
                 'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
                 'evaluate_global_geometry.py')]
     record = dict(schema='ssb.d3_holdout_protocol.v3',

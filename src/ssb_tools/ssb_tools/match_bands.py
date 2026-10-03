@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 from .band_matching import MatchSettings, match_window
+from .matching_structures import STRUCTURE_MODEL, LK_STRUCTURE_RADIUS
 from .initial_unroll import load_bands, release_pages, display
 from .public_capture import confined_file
 from .provenance import stage_record
@@ -236,6 +237,8 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
     report = dict(schema='ssb.band_matches.v1', stage='D2',
         status=('unmeasurable' if not accepted else 'partial' if len(components) > 1 else 'complete'),
         upstream_grid=grid, settings=asdict(settings), optical_signature=upstream['optical_signature'],
+        structure_model=dict(**STRUCTURE_MODEL, lk_radius_px=LK_STRUCTURE_RADIUS,
+            scope='image-derived matching exclusion only; raw/geometry/evaluation masks unchanged'),
         source_observation_hashes=upstream['source_observation_hashes'],
         matching_halo_m=halo_m,
         matching_x_domain_m=[grid['target_x_m'][0]-halo_m, grid['target_x_m'][1]+halo_m],
@@ -271,12 +274,15 @@ def main():
     parser.add_argument('--spacing-m', type=float, default=.4)
     parser.add_argument('--height', type=int, default=512); parser.add_argument('--max-width', type=int, default=1024)
     parser.add_argument('--max-shift-mm', type=float, default=40.)
+    parser.add_argument('--keep-long-structures', action='store_true',
+                        help='explicit diagnostic ablation; include long dark bands in matching')
     parser.add_argument('--raw', help='relocated public raw directory of the source capture (hash-checked)')
     parser.add_argument('--halo-m', type=float, default=.25,
                         help='use already recorded native columns around ROI edges; no extra capture')
     args = parser.parse_args()
     report = run(args.unroll, args.output, args.spacing_m, args.height, args.max_width,
-                 MatchSettings(max_shift_mm=args.max_shift_mm), args.halo_m, args.raw)
+                 MatchSettings(max_shift_mm=args.max_shift_mm,
+                     exclude_long_structures=not args.keep_long_structures), args.halo_m, args.raw)
     print(json.dumps({k:report[k] for k in ('status', 'windows', 'matches', 'performance')}))
     if report['status'] == 'unmeasurable': raise SystemExit(2)
 

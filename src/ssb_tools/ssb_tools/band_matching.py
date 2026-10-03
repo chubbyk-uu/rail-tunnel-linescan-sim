@@ -6,6 +6,8 @@ Rejected/weak windows contribute no constraints to a future global optimizer.
 from dataclasses import dataclass
 import cv2
 import numpy as np
+from .matching_structures import (long_dark_mask, masked_coarse_shift, unsafe_structure_footprint,
+                                  safe_structure_points, LK_WINDOW, LK_LEVELS, LK_STRUCTURE_RADIUS)
 
 
 @dataclass(frozen=True)
@@ -22,12 +24,13 @@ class MatchSettings:
     ransac_px: float = .8
     max_jacobian_change: float = .03
     max_holdout_p95_px: float = 1.
+    exclude_long_structures: bool = True
 
     def __post_init__(self):
         values = [self.max_shift_mm, self.min_texture_dn, self.min_coarse_ncc,
                   self.min_peak_gap, self.max_fb_px, self.min_patch_ncc,
                   self.ransac_px, self.max_jacobian_change, self.max_holdout_p95_px]
-        if (not np.isfinite(values).all() or self.max_shift_mm <= 0 or self.min_texture_dn < 0 or
+        if (type(self.exclude_long_structures) is not bool or not np.isfinite(values).all() or self.max_shift_mm <= 0 or self.min_texture_dn < 0 or
             not -1 <= self.min_coarse_ncc <= 1 or not 0 < self.min_peak_gap <= 2 or
             not -1 <= self.min_patch_ncc <= 1 or min(self.max_fb_px, self.ransac_px, self.max_holdout_p95_px) <= 0 or
             not 0 < self.max_jacobian_change <= .1 or
@@ -110,12 +113,27 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
     if min(valid_a.mean(), valid_b.mean()) < .8: return rejected('insufficient valid image support')
     if min(np.std(a[valid_a]), np.std(b[valid_b])) < settings.min_texture_dn:
         return rejected('weak texture')
+    joint_a, joint_b = np.zeros(a.shape, bool), np.zeros(b.shape, bool)
+    structure_reports = []
+    if settings.exclude_long_structures:
+        joint_a, report_a = long_dark_mask(a, valid_a, pitch_m)
+        joint_b, report_b = long_dark_mask(b, valid_b, pitch_m)
+        structure_reports = [report_a, report_b]
+    structured = joint_a.any() or joint_b.any()
+    valid_a, valid_b = valid_a & ~joint_a, valid_b & ~joint_b
+    if (not valid_a.any() or not valid_b.any() or
+            min(np.std(a[valid_a]), np.std(b[valid_b])) < settings.min_texture_dn):
+        return rejected('weak nonstructure background', structure_masks=structure_reports)
     image_a, image_b = matching_image(a, valid_a), matching_image(b, valid_b)
     max_shift = settings.max_shift_mm/(1000*pitch_m)
-    shift, diagnostic = coarse_shift(image_a, image_b, valid_a, valid_b, max_shift, settings)
+    shift, diagnostic = (masked_coarse_shift if structured else coarse_shift)(
+        image_a, image_b, valid_a, valid_b, max_shift, settings)
+    diagnostic.update(structure_masks=structure_reports, structure_lk_radius_px=LK_STRUCTURE_RADIUS)
     if shift is None: return rejected(**diagnostic)
     feature_mask = cv2.erode(valid_a.astype(np.uint8), np.ones((25, 25), np.uint8))
     feature_mask[:16] = 0; feature_mask[-16:] = 0; feature_mask[:, :16] = 0; feature_mask[:, -16:] = 0
+    if structured:
+        feature_mask[unsafe_structure_footprint(joint_a)] = 0
     points = cv2.goodFeaturesToTrack(image_a, settings.max_features, .025, 16,
                                     mask=feature_mask, blockSize=7)
     diagnostic['corners'] = 0 if points is None else len(points)
@@ -123,18 +141,20 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
     initial = (points+shift.astype(np.float32)).astype(np.float32)
     criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 40, .001)
     following, forward_ok, _ = cv2.calcOpticalFlowPyrLK(image_a, image_b, points, initial,
-        winSize=(21, 21), maxLevel=3, criteria=criteria, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
+        winSize=(LK_WINDOW, LK_WINDOW), maxLevel=LK_LEVELS, criteria=criteria, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
     usable = forward_ok[:, 0].astype(bool) & np.isfinite(following[:, 0]).all(axis=1)
     points, following = points[usable], following[usable]
     diagnostic['forward_tracks'] = len(points)
     if len(points) < settings.min_matches: return rejected('too few forward tracks', **diagnostic)
     reverse, reverse_ok, _ = cv2.calcOpticalFlowPyrLK(image_b, image_a, following, points.copy(),
-        winSize=(21, 21), maxLevel=3, criteria=criteria, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
+        winSize=(LK_WINDOW, LK_WINDOW), maxLevel=LK_LEVELS, criteria=criteria, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
     pa, pb = points[:, 0].astype(float), following[:, 0].astype(float)
     fb = np.linalg.norm(reverse[:, 0]-pa, axis=1)
     usable = reverse_ok[:, 0].astype(bool)
     usable &= np.isfinite(pb).all(axis=1) & (fb <= settings.max_fb_px)
     usable &= np.max(abs(pb-pa), axis=1) <= max_shift
+    if structured:
+        usable &= safe_structure_points(unsafe_structure_footprint(joint_b), pb)
     pa, pb, fb = pa[usable], pb[usable], fb[usable]
     diagnostic['bidirectional_tracks'] = len(pa)
     ncc = patch_ncc(a, b, valid_a, valid_b, pa, pb)
