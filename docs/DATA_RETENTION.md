@@ -6,6 +6,11 @@
 
 | 数据 | 位置 | 用途 |
 |---|---|---|
+| 双圈共同域协议新采 | `sessions/d3_common_target_3m_20261003/`、`local_data/evaluation/d3_common_target_3m_20261003/` | `81fe051` 冻结复采，公共输入复现、采集验收与协议检查通过；已规划接缝通过，目标外及不可规划位置单列。保留原图和独立重成像 |
+| 共同域 v1 失败反例 | `sessions/d3_common_domain_3m_20261003/`、`local_data/evaluation/d3_common_domain_3m_20261003/` | 目标末端 9 点缺测的旧规则失败及公开支撑诊断；不能用新协议覆盖旧报告 |
+| 新巡航余量 20 m 反例 | `sessions/d3_noise_20m_support_20261003/`、`local_data/evaluation/d3_noise_20m_support_20261003/` | 已规划共同域无缺测，但窗口间 P95 4.232 px 仍失败；原协议与补充 v2 评价分别保留，新批次尚未生成优化整幅输出 |
+| README 未补偿螺旋对比 | `sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/`、`local_data/readme_export_rawleft_20m_20261003/` | 旧采集原图和重建不变，`284e265` 生成原始左图、优化右图，逐像素与哈希核验通过；当前 8769 特征复核页 |
+| 双圈支撑回归证据 | `local_data/evaluation/double_support_fix_20261003/` | 日志归档、完整 XML、真实空隙/旧实现变异检查、导出像素校验及清理清单 |
 | 默认完整演示及标定 | `local_data/stage_b/contact_demo/` | Gazebo/RViz 默认入口；当前采集 250°、输出 240°、增益 2.4，带 2 mm 档轨道起伏。旧光学场景及 `*_baseline_240_20261003` 配置/标定保留，新旧会话不能混用标定 |
 | 三种公开素材原图 | `local_data/stage_b/sources/` | 从网站原图重新生成资产 |
 | 原生成链及旧演示配置 | `local_data/stage_b/` 下 c034、几何、缺陷、GUI、砂浆及 unbundled 目录 | 历史评价仍记录原资产身份和路径，暂不清理 |
@@ -117,3 +122,9 @@ local_data/evaluation/cleanup_20261002_public/
 两个 20 m 批次均独立重成像并通过原图/表文件比较，之后才按实际 SHA-256 和尺寸共享不可变原图块。两个重成像各 495 块、第二批采集与第一批相同的 494 块改为硬链接，共释放 **23.18 GiB**（24,894,095,360 字节）。不删除失败批次、原始曝光、元数据、独立评价或重建输入，不把第二批不同的一个块强行当成相同；内容与所有路径/哈希记录保留。明细见两份 `replay_deduplication.json`。
 
 删除三个已结束回归目录中的 12 个临时夹具目录，以及两份被正式导出替代的临时 README 图片目录。日志、XML、摘要仍保留，三个测试归档逐文件核验通过；正式 501 项测试报告及 README 导出溯源不删。清单 `local_data/evaluation/d3_noise_20m_v2_20261003/cleanup.json`。
+
+## 2026-10-03 双圈支撑与展示修复
+
+旧 20 m 失败数据与全分辨率图保留；README 和 8769 的主要对比左图更新为未补偿螺旋的原始条带，名义展开作为中间状态。新巡航余量 20 m 批次的真实窗口间精度失败、共同域 v1 的 3 m 边界失败、冻结后 v2 的 3 m 复核分别归档，不因新规则而改写历史报告。评价真值与密钥不加入 Git 或复核网页。
+
+两份完成的测试套件清理了 8 个临时夹具目录，逻辑文件约 1.085 GB；没有删除采集会话、原图或独立评价。删除前逐文件核验日志压缩包，最终测试 XML 另行归档。`final_test_counts.json` 区分 441 个 Python、73 个 C++ 独立用例与 5 个 CTest 套件，colcon 总计 519、独立用例 514，全通过无跳过。清单见 `fixture_cleanup.json`。清理在 Linux 文件系统内一次批量完成，没有生成逐图块小文件或对正式原图重复拷贝。
