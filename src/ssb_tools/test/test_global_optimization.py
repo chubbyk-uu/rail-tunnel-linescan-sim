@@ -285,3 +285,20 @@ def test_corrected_inverse_and_sampling_use_the_original_native_pixels_once():
     expected, mask, _ = sampler.sample(0, qs, xs)
     np.testing.assert_array_equal(valid, mask)
     np.testing.assert_allclose(zero, expected, atol=1e-4, rtol=0)
+
+
+def test_obviously_wrong_inlier_matches_are_not_absorbed_as_motion():
+    model, table, grid = synthetic_matches()
+    corrupted = table.copy()
+    train = np.flatnonzero((corrupted['inlier'] > 0) & (corrupted['holdout'] == 0))
+    outliers = train[::17]
+    # A consistent native-source identity does not make a correspondence physically right.
+    corrupted['x_b_m'][outliers] += .003
+    for band in (1, 2):
+        selected = outliers[corrupted['band_b'][outliers] == band]
+        sources = native_sources(model.sampler, band, corrupted['x_b_m'][selected],
+                                 corrupted['q_b_m'][selected], model.radius)
+        for key, value in sources.items(): corrupted['b_'+key][selected] = value
+    _, scores, _, _, _, after, _ = fit(model, corrupted, grid)
+    assert scores['heldout_after']['norm_px']['p95'] < .15
+    assert np.median(np.linalg.norm(after[outliers], axis=1)/grid['dx_m']) > 10

@@ -97,7 +97,18 @@ def window_weights(table, grid, settings):
         design = np.column_stack((np.ones(len(a)), spatial))
         if np.linalg.matrix_rank(design) < 3:
             raise ValueError('degenerate spatial support in match window')
-        residual = delta-design @ np.linalg.lstsq(design, delta, rcond=None)[0]
+        local = np.linalg.lstsq(design, delta, rcond=None)[0]
+        # An accidentally retained correspondence must not inflate the noise
+        # estimate through a high-leverage ordinary affine least-squares fit.
+        for _ in range(8):
+            residual = delta-design @ local
+            centre = np.median(residual, axis=0)
+            scale = np.maximum(settings.noise_floor_px,
+                1.4826*np.median(abs(residual-centre), axis=0))
+            z = np.linalg.norm((residual-centre)/scale, axis=1)
+            robust = np.sqrt(np.minimum(1., 2.5/np.maximum(z, 1e-12)))
+            local = np.linalg.lstsq(design*robust[:, None], delta*robust[:, None], rcond=None)[0]
+        residual = delta-design @ local
         sigma = np.maximum(settings.noise_floor_px,
             1.4826*np.median(abs(residual-np.median(residual, axis=0)), axis=0))
         multiplier = np.sqrt(min(settings.effective_points_per_window, len(selected))/len(selected))/sigma
