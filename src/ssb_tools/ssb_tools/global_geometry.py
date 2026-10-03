@@ -3,8 +3,10 @@
 The fitted attitudes are regularized image-derived corrections, not measured poses.
 No renderer, scene, reference geometry or evaluation module is imported here.
 """
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import math
+import os
 
 import numpy as np
 from scipy.interpolate import BSpline
@@ -83,6 +85,22 @@ def curvature_stencil(knots, index, reference_spacing):
                                          2/(right*(left+right))])
 
 
+# Fixed chunks keep temporaries in cache; their order (not the thread count)
+# defines every floating-point reduction, so results do not depend on threads.
+CHUNK_RAYS = 1 << 16
+THREADS = min(8, os.cpu_count() or 1)
+
+
+def in_chunks(function, count, factor=1.):
+    """[function(start, stop)] over fixed consecutive ranges of CHUNK_RAYS*factor, in order."""
+    size = max(1, int(CHUNK_RAYS*factor))
+    ranges = [(start, min(start+size, count)) for start in range(0, count, size)] or [(0, 0)]
+    if len(ranges) == 1 or THREADS == 1:
+        return [function(*r) for r in ranges]
+    with ThreadPoolExecutor(min(THREADS, len(ranges))) as pool:
+        return list(pool.map(lambda r: function(*r), ranges))
+
+
 def cylinder_points(axis, theta, tangent, correction, radius, height):
     """Exact Ry(pitch) Rx(roll) rays, including rotation of the upright support.
 
@@ -115,6 +133,58 @@ def cylinder_points(axis, theta, tangent, correction, radius, height):
         raise ValueError('corrected ray does not intersect the nominal cylinder')
     length = (-bb+np.sqrt(discriminant))/(2*aa)
     return np.column_stack((ox+length*vx, radius*np.arctan2(oy+length*vy, oz+length*vz)))
+
+
+def cylinder_derivatives(axis, theta, tangent, correction, radius, height):
+    """Exact derivatives of cylinder_points with respect to each correction field.
+
+    Returns (n, fields, 2): d(x, q)/d(dx, dq, roll, pitch[, lateral], [vertical]).
+    The hit length follows from the implicit cylinder equation, so no finite step.
+    """
+    correction = np.asarray(correction)
+    if correction.ndim != 2 or correction.shape[1] not in (4, 5, 6) or not np.isfinite(correction).all():
+        raise ValueError('finite four-, five- or six-component ray correction required')
+    dx, dq, roll, pitch = correction[:, :4].T
+    lateral = correction[:, 4] if correction.shape[1] == 6 else 0.
+    vertical = correction[:, -1] if correction.shape[1] > 4 else 0.
+    theta = np.asarray(theta)+dq/radius
+    tangent = np.asarray(tangent)
+    ca, sa = np.cos(roll), np.sin(roll)
+    cb, sb = np.cos(pitch), np.sin(pitch)
+    sy, sz = np.sin(theta), np.cos(theta)
+    ry, rz = ca*sy-sa*sz, sa*sy+ca*sz
+    vx = cb*tangent+sb*rz
+    vy = ry
+    vz = -sb*tangent+cb*rz
+    oy = lateral-height*sa
+    oz = vertical+height*(cb*ca-1)
+    aa = vy*vy+vz*vz
+    bb = 2*(oy*vy+oz*vz)
+    cc = oy*oy+oz*oz-radius*radius
+    discriminant = bb*bb-4*aa*cc
+    if np.any(discriminant <= 0) or np.any(aa <= 0):
+        raise ValueError('corrected ray does not intersect the nominal cylinder')
+    length = (-bb+np.sqrt(discriminant))/(2*aa)
+    py, pz = oy+length*vy, oz+length*vz
+    slope = py*vy+pz*vz  # = sqrt(discriminant)/2 > 0 on the exit root
+    radial = py*py+pz*pz
+    zero, one = np.zeros_like(length), np.ones_like(length)
+    # (d origin x, y, z, d direction x, y, z) for each field.
+    fields = [(one, zero, zero, zero, zero, zero),
+              (zero, zero, zero, -sb*ry/radius, rz/radius, -cb*ry/radius),
+              (-height*sb*sa, -height*ca, -height*cb*sa, sb*ry, -rz, cb*ry),
+              (height*cb*ca, zero, -height*sb*ca, vz, zero, -vx)]
+    if correction.shape[1] == 6:
+        fields.append((zero, one, zero, zero, zero, zero))
+    if correction.shape[1] > 4:
+        fields.append((zero, zero, one, zero, zero, zero))
+    result = np.empty((len(length), len(fields), 2))
+    for k, (dox, doy, doz, dvx, dvy, dvz) in enumerate(fields):
+        dl = -(py*(doy+length*dvy)+pz*(doz+length*dvz))/slope
+        dpy, dpz = doy+dl*vy+length*dvy, doz+dl*vz+length*dvz
+        result[:, k, 0] = dox+dl*vx+length*dvx
+        result[:, k, 1] = radius*(pz*dpy-py*dpz)/radial
+    return result
 
 
 class Trajectory:
@@ -242,20 +312,29 @@ class RaySet:
             shape=(len(self.weights), len(self.axis)))
 
     def hits(self, coefficients):
-        points = self.model.points(self.axis, self.theta, self.tangent, coefficients, self.bases)
-        return np.sum(points.reshape(-1, 4, 2)*self.weights[..., None], axis=1)
-
-    def jacobian(self, coefficients):
-        """Sparse derivative: numerical local ray derivatives, exact spline basis."""
         model = self.model
         local = model.parameters(coefficients, self.bases)
+        # Elementwise per ray: chunking leaves every hit bit-identical.
+        points = np.concatenate(in_chunks(lambda a, b: cylinder_points(
+            self.axis[a:b], self.theta[a:b], self.tangent[a:b], local[a:b], model.radius, model.height),
+            len(self.axis)))
+        return np.sum(points.reshape(-1, 4, 2)*self.weights[..., None], axis=1)
+
+    def derivatives(self, coefficients):
+        """Analytic d(x, q)/d(local correction field) of every native centre ray."""
+        model = self.model
+        local = model.parameters(coefficients, self.bases)
+        return np.concatenate(in_chunks(lambda a, b: cylinder_derivatives(
+            self.axis[a:b], self.theta[a:b], self.tangent[a:b], local[a:b], model.radius, model.height),
+            len(self.axis)))
+
+    def jacobian(self, coefficients):
+        """Sparse derivative: analytic local ray derivatives, exact spline basis."""
+        model = self.model
         matrices = [[], []]
-        step = 1e-7
+        derivatives = self.derivatives(coefficients)
         for field, basis in enumerate(self.bases):
-            plus, minus = local.copy(), local.copy()
-            plus[:, field] += step; minus[:, field] -= step
-            derivative = (cylinder_points(self.axis, self.theta, self.tangent, plus, model.radius, model.height)-
-                          cylinder_points(self.axis, self.theta, self.tangent, minus, model.radius, model.height))/(2*step)
+            derivative = derivatives[:, field]
             for direction in range(2):
                 weighted = diags(derivative[:, direction]*self.weights.ravel()*model.scale) @ basis
                 # Sum each consecutive group of four native centre rays.

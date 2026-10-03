@@ -388,3 +388,37 @@ def test_bound_active_set_can_release_a_coordinate_back_into_the_interior():
                                 np.array([1.,-1.]),np.ones(2))
     np.testing.assert_allclose(result,[.2,-.1],atol=1e-6)
     assert evidence['active_bounds']==0
+
+
+def test_fixed_jacobian_equals_independent_sparse_construction():
+    from scipy.sparse import diags, vstack
+    from ssb_tools.optimize_bands import FixedJacobian, regularizer, window_weights
+    for translations in (False, True, 'heave'):
+        model, table, grid = synthetic_matches(translations)
+        train, weights, _ = window_weights(table, grid, model.settings)
+        training = table[train]
+        a, b = model.native_side(training, 'a'), model.native_side(training, 'b')
+        pitch = np.array([grid['dx_m'], grid['dq_m']]); prior = regularizer(model)
+        c = np.linspace(-.2, .3, model.size)
+        current = weights[train]*np.linspace(.5, 1.5, len(training))[:, None]
+        ja, jb = a.jacobian(c), b.jacobian(c)
+        rows = vstack([diags(current[:, k]/pitch[k]) @ (jb[k]-ja[k]) for k in range(2)], format='csr')
+        order = np.column_stack((np.arange(len(training)), np.arange(len(training))+len(training))).ravel()
+        expected = vstack((rows[order], prior), format='csr')
+        actual = FixedJacobian(a, b, prior)(c, current, pitch)
+        actual.check_format(full_check=True)
+        assert actual.shape == expected.shape
+        assert abs(actual-expected).max() <= 1e-13*abs(expected).max()
+
+
+def test_trajectory_fit_does_not_depend_on_thread_count(monkeypatch):
+    import ssb_tools.global_geometry as geometry
+    model, table, grid = synthetic_matches(True)
+    monkeypatch.setattr(geometry, 'CHUNK_RAYS', 64)  # many chunks even for this fixture
+    results = []
+    for threads in (1, 4):
+        monkeypatch.setattr(geometry, 'THREADS', threads)
+        c, scores, *_ = fit(model, table, grid)
+        results.append((c, scores))
+    np.testing.assert_array_equal(results[0][0], results[1][0])
+    assert results[0][1] == results[1][1]

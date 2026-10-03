@@ -9,7 +9,8 @@ import numpy as np
 from scipy.sparse import csr_matrix, diags, vstack
 from scipy.sparse.linalg import spsolve
 
-from .global_geometry import GeometrySettings, Trajectory, curvature_stencil
+from .global_geometry import (GeometrySettings, Trajectory, curvature_stencil, cylinder_derivatives,
+                              in_chunks)
 from .quality_targets import SEAM_P95_PX
 from .match_bands import MATCH, verified_bands, graph_components
 from .provenance import stage_record
@@ -132,6 +133,93 @@ def observability(a, b, coefficients, weights, pitch):
                 interpretation='training-only Jacobian; null/weak modes are anchored by explicit nominal priors')
 
 
+class FixedJacobian:
+    """Weighted B-A data rows (axial/circumferential interleaved) above the priors.
+
+    The sparsity follows only from the fixed exposure positions and knots, so the
+    column pattern is built once; each Gauss-Newton step only fills values from
+    analytic ray derivatives, in fixed blocks of matches computed in parallel.
+    Rays sharing one exposure share their spline row.
+    """
+    def __init__(self, a, b, prior):
+        model = a.model; n = len(a.weights)
+        self.model, self.n, self.sides, self.blocks, keys = model, n, (a, b), [], []
+        for side, (sign, rays) in enumerate(((-1., a), (1., b))):
+            for k, basis in enumerate(rays.bases):
+                basis = csr_matrix(basis)
+                if basis.shape[0] != 4*n or np.any(np.diff(basis.indptr) != 4):
+                    raise ValueError('cubic spline rows with four basis entries required')
+                columns = basis.indices.reshape(n, 4, 4)
+                values = basis.data.reshape(n, 4, 4)
+                pairs = all(np.array_equal(columns[:, i], columns[:, j]) and np.array_equal(values[:, i], values[:, j])
+                            for i, j in ((0, 1), (2, 3)))
+                groups = [[0, 1], [2, 3]] if pairs else [[0], [1], [2], [3]]
+                first = [g[0] for g in groups]
+                self.blocks.append([sign, side, k, groups, values[:, first]*model.scale])
+                keys.append((np.arange(n)[:, None, None]*model.size+model.starts[k]+columns[:, first]).ravel())
+        sizes = [len(k) for k in keys]
+        keys, inverse = np.unique(np.concatenate(keys), return_inverse=True)
+        for block, part in zip(self.blocks, np.split(inverse, np.cumsum(sizes)[:-1])):
+            block.append(part.reshape(n, -1))
+        self.nnz = len(keys)
+        rows, columns = keys//model.size, keys % model.size
+        counts = np.bincount(rows, minlength=n)
+        self.starts = np.r_[0, np.cumsum(counts)]
+        # Each match row appears twice (axial, circumferential) with the same columns.
+        within = np.arange(self.nnz)-np.repeat(self.starts[:-1], counts)
+        self.positions = [2*np.repeat(self.starts[:-1], counts)+d*np.repeat(counts, counts)+within for d in range(2)]
+        prior = csr_matrix(prior)
+        indices = np.empty(2*self.nnz, np.int64)
+        for d in range(2):
+            indices[self.positions[d]] = columns
+        self.indices = np.r_[indices, prior.indices]
+        rows_ptr = np.empty(2*n, np.int64)
+        rows_ptr[0::2], rows_ptr[1::2] = 2*self.starts[:-1], 2*self.starts[:-1]+counts
+        self.indptr = np.r_[rows_ptr, 2*self.nnz+prior.indptr]
+        self.prior = prior.data
+        self.shape = (2*n+prior.shape[0], model.size)
+
+    def __call__(self, coefficients, current, pitch):
+        model = self.model
+        local = [model.parameters(coefficients, rays.bases) for rays in self.sides]
+        data = np.empty(2*self.nnz)
+
+        def fill(first, last):
+            derivatives = []
+            for rays, parameters in zip(self.sides, local):
+                a, b = 4*first, 4*last
+                d = cylinder_derivatives(rays.axis[a:b], rays.theta[a:b], rays.tangent[a:b], parameters[a:b],
+                                         model.radius, model.height)
+                derivatives.append(d.reshape(last-first, 4, -1, 2)*rays.weights[first:last, :, None, None])
+            lo, hi = self.starts[first], self.starts[last]
+            scale = current[first:last]/pitch
+            values = np.zeros((2, hi-lo))
+            for sign, side, k, groups, basis, inverse in self.blocks:
+                field = derivatives[side][:, :, k]
+                grouped = np.stack([field[:, g].sum(axis=1) for g in groups], axis=1)*(sign*scale)[:, None, :]
+                positions = inverse[first:last].ravel()-lo
+                for d in range(2):
+                    values[d] += np.bincount(positions, (grouped[..., d, None]*basis[first:last]).ravel(),
+                                             minlength=hi-lo)
+            for d in range(2):
+                data[self.positions[d][lo:hi]] = values[d]
+
+        in_chunks(fill, self.n, .25)  # four native rays per match
+        return csr_matrix((np.r_[data, self.prior], self.indices, self.indptr), shape=self.shape)
+
+
+def normal_equations(matrix, residual):
+    """J^T J and J^T r summed over fixed row chunks in order (thread-count independent)."""
+    def part(first, last):
+        block = matrix[first:last]
+        return block.T @ block, block.T @ residual[first:last]
+    parts = in_chunks(part, matrix.shape[0], 2.)
+    normal, gradient = parts[0]
+    for product, vector in parts[1:]:
+        normal = normal+product; gradient = gradient+vector
+    return normal.tocsc(), np.asarray(gradient).ravel()
+
+
 def regularizer(model):
     """Explicit nominal priors, smoothness, and a mean dx/dq coordinate gauge."""
     settings = model.settings
@@ -180,9 +268,7 @@ def damped_solve(fun, jac, initial, bounds):
     residual = fun(c); evaluations += 1
     cost = float(residual @ residual)/2
     for iteration in range(50):
-        matrix = jac(c)
-        gradient = np.asarray(matrix.T @ residual).ravel()
-        normal = (matrix.T @ matrix).tocsc()
+        normal, gradient = normal_equations(jac(c), residual)
         diagonal = np.maximum(normal.diagonal(), 1e-8)
         active = ((c <= -bounds+1e-8) & (gradient > 0)) | ((c >= bounds-1e-8) & (gradient < 0))
         projected_gradient = np.where(active, 0., gradient)
@@ -195,9 +281,11 @@ def damped_solve(fun, jac, initial, bounds):
         if active.any():
             free = np.flatnonzero(~active)
             step = np.zeros_like(c)
-            step[free] = spsolve(normal[free][:, free]+diags(damping*diagonal[free]), -gradient[free])
+            step[free] = spsolve(normal[free][:, free]+diags(damping*diagonal[free]), -gradient[free],
+                                 permc_spec='MMD_AT_PLUS_A')
         else:
-            step = spsolve(normal+diags(damping*diagonal), -gradient)
+            # Symmetric minimum-degree ordering suits the positive-definite normal system.
+            step = spsolve(normal+diags(damping*diagonal), -gradient, permc_spec='MMD_AT_PLUS_A')
         if not np.isfinite(step).all():
             raise ValueError('nonfinite damped trajectory step')
         accepted = False
@@ -235,6 +323,12 @@ def fit(model, table, grid):
     pitch = np.array([grid['dx_m'], grid['dq_m']])
     base = weights[train]; current = base.copy()
     prior = regularizer(model)
+    assembly = FixedJacobian(a, b, prior)
+    # Training rows of each window, in table order (one pass, not one scan per window).
+    order = np.argsort(training['window'], kind='stable')
+    split = np.flatnonzero(np.diff(training['window'][order]))+1
+    by_window = dict(zip(training['window'][order][np.r_[0, split]].tolist(), np.split(order, split)))
+    members = [by_window[item['window']] for item in descriptions]
     coefficients = np.zeros(model.size)
     history = []
     for iteration in range(model.settings.max_irls):
@@ -243,20 +337,14 @@ def fit(model, table, grid):
             return np.r_[(d*current).ravel(), prior @ c]
 
         def jac(c):
-            ja, jb = a.jacobian(c), b.jacobian(c)
-            directions = [diags(current[:, k]/pitch[k]) @ (jb[k]-ja[k]) for k in range(2)]
-            # Interleave axial/circumferential rows to agree with fun().
-            stacked = vstack(directions, format='csr')
-            order = np.column_stack((np.arange(len(training)), np.arange(len(training))+len(training))).ravel()
-            return vstack((stacked[order], prior), format='csr')
+            return assembly(c, current, pitch)
 
         bounds = np.concatenate([np.full(size, 10. if k in (2, 3) else
             model.settings.translation_bound_mm if k > 3 else 30.) for k, size in enumerate(model.sizes)])
         coefficients, solver = damped_solve(fun, jac, coefficients, bounds)
         delta = (b.hits(coefficients)-a.hits(coefficients))/pitch
         robust = np.ones(len(training))
-        for item in descriptions:
-            ids = training['window'] == item['window']
+        for item, ids in zip(descriptions, members):
             z = np.linalg.norm(delta[ids]/item['sigma_px'], axis=1)
             # Both individual outliers and coherently wrong windows lose influence.
             point = 1/np.sqrt(1+(z/3)**2)
@@ -308,9 +396,13 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                  inlier=table['inlier'], holdout=table['holdout'], window=table['window'])
         per_window = []
         source_windows = {w['id']: w for w in windows if w['status'] == 'accepted'}
+        heldout = np.flatnonzero(table['inlier'].astype(bool) & table['holdout'].astype(bool))
+        order = heldout[np.argsort(table['window'][heldout], kind='stable')]
+        split = np.flatnonzero(np.diff(table['window'][order]))+1
+        by_window = dict(zip(table['window'][order][np.r_[0, split]].tolist(), np.split(order, split))) if len(order) else {}
         for item in noise:
-            selected = (table['window'] == item['window']) & table['inlier'].astype(bool) & table['holdout'].astype(bool)
-            if not selected.any():
+            selected = by_window.get(item['window'], np.empty(0, int))
+            if not len(selected):
                 raise ValueError('accepted window has no held-out inlier support')
             extent = source_windows[item['window']]
             source_window = {k: extent[k] for k in ('bands', 'shape', 'x_first_m', 'q_first_m')}
