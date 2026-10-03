@@ -600,15 +600,17 @@
       "reconstruction_crack_optimized.png": "80b5134e6dca90572a2168a527bc4eb97552e992d6378c9cca4b41950bdeeda6",
       "reconstruction_joint_optimized.png": "2e7ea0c441ec28e1cb04b873bf7a591291139864752a85048fe088f1f0427df3"
     },
-    "export_provenance_sha256": "facd7bb2a351f86afe542486b152ddc2d5be1d2f44133fdf1c3b1053da34aa48",
+    "export_provenance_sha256": "9456790b0428848b777acfd1879b14f92d1ed1508f069257df1bf876108f84ed",
     "export_report_sha256": "2c6920cd191958c017e20a4032b8940d23fcce8deafaf0be74294f438af85b80",
     "export_source": {
-      "git_head": "3cf60942908cc226ae9033dcc28f6c51c9f46785",
-      "git_dirty": true,
-      "source_digest": "1585369d755506d40daa5df1c5fe79e99c1d0b6f9a3e538718f84f77e8bc6726",
+      "git_head": "ceb68119c16de348fda1632f46315bd9b52e2dea",
+      "git_dirty": false,
+      "source_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "module": "/home/jerry/robot_ws/Subway_scan_bot_sim/src/ssb_tools/ssb_tools"
     },
     "exporter_sha256": "07457aad0937a16372fefc5f8b78ca2099810dda428af263b9b2d55d672f7f20",
-    "interpretation": "known high-ring 3 m recapture, not new blind validation; top sector is a display crop, not changed acceptance target"
+    "interpretation": "known high-ring 3 m recapture, not new blind validation; top sector is a display crop, not changed acceptance target",
+    "exporter_commit": "ceb68119c16de348fda1632f46315bd9b52e2dea",
+    "export_directory": "local_data/readme_export_final_20261004"
   }
 }

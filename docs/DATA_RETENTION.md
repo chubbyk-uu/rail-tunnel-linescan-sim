@@ -6,7 +6,7 @@
 
 | 数据 | 位置 | 用途 |
 |---|---|---|
-| 当前 README 对比源 | `sessions/audit_guard_high_20261003/feature_review_readme_20261004/`、`local_data/readme_export_20261004/` | 最新验收会话的公开图像复核与 1048×1092 组合图；只读原始输入，不生成整幅大数组；图片/哈希说明在 docs/media |
+| 当前 README 对比源 | `sessions/audit_guard_high_20261003/feature_review_readme_20261004/`、`local_data/readme_export_final_20261004/` | 最新验收会话的公开图像复核与 1048×1092 组合图；只读原始输入，不生成整幅大数组；图片/哈希说明在 docs/media |
 | 审计与报告保护后复采 | `sessions/audit_guard_high_20261003/`、同名 `local_data/evaluation/`；`local_data/evaluation/audit_guards_tests_20261003/` | 冻结 `6795971`，已知高环缝区段；阶段 B 24 项、协议 v5 的 14 项及实际审计通过。独立重成像原图本轮未去重；保留报告哈希、5,787 个逐点比较及 581 项回归日志归档 |
 | 离线提速后冻结复核 | `sessions/perf_ring_{high,low}_20261003/`、`local_data/evaluation/perf_tier2_20261003/` | `d60e15d` 上用同一轨道种子与区段重采；协议 v4、公开运行审计和独立评分均通过，与原冻结结果的接缝分数一致到小数点后 6 位；每组约 3.8 GB |
 | 环缝高/低占比新轨道留出 | `sessions/ring_{high,low}_seed20261005_20261003/`、同名 `local_data/evaluation/` 目录 | 冻结 `b206f6d`、未用于调参的轨道种子；保留原图、独立重成像、D1/D2/D3、阶段 B 与协议核验、公开输入复现 |
@@ -59,3 +59,6 @@ D1 v2 不保留原始列浮点缓存，因此其后续匹配仍依赖 `native_so
 硬链接按目录相加会重复计空间；完成独立渲染核验后才可去重，链接副本重新比对不能当作新独立验证。两份旧报告（ring_high_seed20261005、d3_noise_20m_support 的 stage_b_smoke.json）曾被覆盖，原字节身份没有恢复；现行验收器拒绝覆盖，复查使用只读模式。
 
 部分旧全图大数组和三处历史反例的原图/大表已删除，报告与预览不能称可运行的完整会话。请按表和快照判断保留范围，不按旧文中的路径推断文件仍存在。
+
+
+2026-10-04 文档整理只清理本轮已完成测试的 4 个临时夹具目录和初次展示导出草稿；最终公开图像复核、干净提交导出、原始采集与独立重成像全部保留。测试/XML/构建及媒体核对记录先集中打包、校验后清理，清单见 `local_data/evaluation/readme_restructure_20261004/summary.json`，没有修改历史验收报告。

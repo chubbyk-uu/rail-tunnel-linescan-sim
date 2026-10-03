@@ -63,3 +63,5 @@ python3 -m ssb_tools.validate_stage_b SESSION --compare REIMAGE \
 - 随后只读验收通过，首次报告及哈希记录保持原样；本轮独立重成像未去重。
 
 20 m 原 4.232 px 的失败结果与旧批次的缺测/图像记录保留。部分历史大数组已清理，只能按保留原图和溯源重建；具体范围见 [DATA_RETENTION](DATA_RETENTION.md)。展示图、图像一致性、完整覆盖及接缝几何分别报告，不以局部好看豁免失败。
+
+2026-10-04 文档与展示工具整理后再次完整构建、复测 581 项，失败/跳过为零，30.48 s；没有新采集或改变上述几何结论。日志及媒体核对归档见 `local_data/evaluation/readme_restructure_20261004/`。

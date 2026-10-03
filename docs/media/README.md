@@ -85,4 +85,4 @@ python3 tools/export_readme_summary.py --features sessions/FEATURES_NEW \
   --output local_data/EXPORT_NEW
 ```
 
-本机生成物为 `feature_review_readme_20261004` 和 `local_data/readme_export_20261004`。复核生成代码为 `3cf6094`，展示导出时有文档及新增导出器的工作树改动，未改动采集、匹配或优化算法；真实状态保存在导出溯源，不能把图片导出当成重新冻结采集。
+本机生成物为 `feature_review_readme_20261004` 和 `local_data/readme_export_final_20261004`。复核生成代码为 `3cf6094`，展示导出在干净提交 `ceb6811` 上重新执行，与初次导出像素完全相同。未改动采集、匹配或优化算法；不能把图片导出当成重新冻结采集。
