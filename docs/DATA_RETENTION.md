@@ -6,7 +6,7 @@
 
 | 数据 | 位置 | 用途 |
 |---|---|---|
-| 默认完整演示及标定 | `local_data/stage_b/contact_demo/` | Gazebo/RViz 默认入口，独立运行引用 |
+| 默认完整演示及标定 | `local_data/stage_b/contact_demo/` | Gazebo/RViz 默认入口；当前采集 250°、输出 240°、增益 2.4，带 2 mm 档轨道起伏。旧光学场景及 `*_baseline_240_20261003` 配置/标定保留，新旧会话不能混用标定 |
 | 三种公开素材原图 | `local_data/stage_b/sources/` | 从网站原图重新生成资产 |
 | 原生成链及旧演示配置 | `local_data/stage_b/` 下 c034、几何、缺陷、GUI、砂浆及 unbundled 目录 | 历史评价仍记录原资产身份和路径，暂不清理 |
 | 画质基线复核页 | `local_data/stage_b/final_review_20261001/` | 已确认的背景、裂缝、填缝与照明局部图 |
@@ -18,7 +18,10 @@
 | D2 偏置来源对照 | `sessions/bias_study_20261003/`、`local_data/bias_study_20261003/` | 平法线/仅反照率变体原始采集、v2 展开与匹配、带符号网格评价（约 18 GiB）；平法线 v2 展开为 D3 实现检查基线；原光照重放仅保留逐字节一致记录 |
 | D1 v2 验收 | `sessions/stage_d1_3m_v2_20261003/` | v2 展开（25 MB）、D2、CUDA/CPU 公开复现及 D2 公开复现；`public_cuda` 内原图为硬链接 |
 | 20 m D1/D2 v2 | `sessions/stage_d_20m_v2_20261003/` | 完整 20 m 展开（137 MB）、D2 对应点及带符号网格评价；D3 的 20 m 输入 |
-| 3 m D3 诊断与对比 | `sessions/stage_d3_3m_review_20261003/`、`sessions/stage_d3_3m_20261003/` | `robust/` 为当前冻结优化、无融合复核及公开复现；`features_final/` 为原始斜条带、板缝/裂缝局部复核（约 5 MiB）；`features/` 是首版单圈展示，其他子目录为首轮小型诊断。未通过最终精度验收，不替代原始采集或 D1/D2；公开复现原图为硬链接 |
+| 3 m D3 历史诊断与对比 | `sessions/stage_d3_3m_review_20261003/`、`sessions/stage_d3_3m_20261003/` | `robust/`、`features_final/` 与 `frozen_v2_*` 是历史对照；公开链接仍保留。被替代的 `frozen_material_review`、`frozen_flat_review`、`frozen_material_features` 已归档清理，不替代最新采集 |
+| D3 平轨与前轮冻结复核 | `sessions/stage_d3_3m_frozen_20261003/`、`local_data/evaluation/stage_d3_frozen_20261003/` | 保留辅助平轨反例及带起伏历史结果，记录光度偏差可能使真实几何略变差；不作为主要交付场景 |
+| 最新带起伏 3 m 复核 | `sessions/d3_guard_acceptance_20261003/`、`local_data/evaluation/guard_fix_20261003/acceptance/` | 完整原图、公开观测、生成端真值、D1/D2/D3、全原图饱和检查和公开搬迁复现；后续优化全分辨率输出的主要输入。复现原图为硬链接 |
+| 最新板缝/裂缝复核页 | `sessions/stage_d3_3m_review_20261003/guarded_final/` | 当前 8767 复核页，原始螺旋条带、名义展开与优化硬接缝；位置只从公开图像选择 |
 | D3 测试与输入边界证据 | `local_data/evaluation/stage_d3_3m_20261003/` | 冻结代码、406 项回归、假匹配回归与公开搬迁完全一致记录；仅独立证据，重建不读取 |
 | D3 原始条带及特征复核证据 | `local_data/evaluation/stage_d3_features_20261003/` | `final_report.json` 为当前页面的生产输入审计、代码身份与产物哈希；原始位姿和缺陷真值未用于位置选择。只保留正式页面，三个 `feature_probe*` 临时生成目录已清理 |
 | 早期采集基线 | `sessions/gz_a/`、`sessions/default_acceptance/` 及其 dynamics | 阶段 A/B 基线，不保留重复的重放原图 |
@@ -30,6 +33,24 @@
 D1 v2 不保留原始列浮点缓存，因此其后续匹配仍依赖 `native_source.json` 所列的原图块。迁移 D1 时需同时保留这些块，并通过 D2 的 `--raw` 指定迁移后的原图目录；不能因展开产物已生成就删除原始采集。
 
 ## 2026-10-03 删除
+
+角向保护与饱和修复后，新增清理 **13 个目录**，释放约 **3.17 GiB**：
+
+- 被冻结后新重采替代的 `sessions/d3_guard_gain_probe_20261003/` 开发会话及 `local_data/stage_b/d3_guard_gain_dev_20261003/` 开发演示/标定工作目录。
+- 三份已由 `frozen_v2_*` 和最新 `guarded_final/` 替代的重复页面。
+- 未采用的横移/升沉、仅升沉、部分节点布局试验；保留仍被历史复现引用的 `matches02` 及现行输入，不清理整棵残差研究目录。
+- 三个已结束的旧测试工作目录 `/tmp/ssb_d3_{evaluation_suite,step2_suite,step2_final_suite}`；最新 444 项测试日志 `/tmp/ssb_guard_full_suite/` 保留。
+
+删除前将 255 个必要报告、配置、测试日志/XML 和标定靶图片存成单个约 18.2 MiB 的压缩包，并逐条核对包内 SHA-256；不复制出大量小文件。原图、大数组和大块逐行诊断未收入此开发归档，需要时应重新生成，不能将旧路径当成仍可运行的会话。清单与归档：
+
+```text
+local_data/evaluation/cleanup_guard_20261003/
+  cleanup.json                         删除目录、尺寸、归档哈希与保留范围
+  reports_configs_calibration.tar.gz   单个开发/旧测试证据归档
+  preserved_check.json                 默认演示全部哈希与保留目录检查
+```
+
+原 20 m 采集、已确认画质、材质源图、旧冻结对照和最新带起伏原图/产物未删除。清理后默认演示所有运行文件的哈希重新核对通过。默认包中 `capture_update.calibration_source` 是被归档的开发来源标签；运行只读取默认目录内已复制的新标定，不依赖已删除开发目录。
 
 D1 改为 v2（按需读原图）后，删除 4 份 v1 展开中可重新生成的大数组，共 21 个文件、约 **47.6 GiB**：`sensor_flat.npy`、`sensor_valid_bits.npy`、`mosaic.npy`、`coverage.npy`、`source_band.npy`，以及 D2 公开证明目录中 `public_d1/sensor_flat.npy` 这个硬链接。涉及 `stage_d1_3m_final_20261002`、`stage_d1_3m_cuda_final_20261002`、`bias_study_20261003/{flatnormal,albedo}_d1`。
 
