@@ -44,10 +44,13 @@ def prepare(demo, output, seed):
     config['truth']['track_irregularity']['seed'] = seed
     spec = yaml.safe_load((demo/'spec.yaml').read_text())
     output.mkdir(parents=True)
-    mutable = {'capture.yaml', 'world/world.sdf', 'world/physical_manifest.json', 'preparation.json'}
+    mutable = {'capture.yaml', 'world/world.sdf', 'world/physical_manifest.json',
+               'preparation.json', 'generation_provenance.json'}
     identities = {}
     for name, source, digest in sources:
-        if name in mutable:
+        # A variant can itself be a source bundle. Regeneration writes these
+        # files in place, so inheriting their hard links would corrupt the source.
+        if name in mutable or name.startswith('world/track/'):
             continue
         target = output/name
         target.parent.mkdir(parents=True, exist_ok=True)
