@@ -9,7 +9,7 @@ import numpy as np
 from scipy.sparse import csr_matrix, diags, vstack
 from scipy.sparse.linalg import spsolve
 
-from .global_geometry import GeometrySettings, Trajectory
+from .global_geometry import GeometrySettings, Trajectory, curvature_stencil
 from .match_bands import MATCH, verified_bands, graph_components
 from .provenance import stage_record
 from .public_capture import confined_file
@@ -136,6 +136,10 @@ def regularizer(model):
     settings = model.settings
     prior = [settings.position_prior_mm]*2+[settings.attitude_prior_mrad]*2
     curvature = [settings.position_curvature_mm]*2+[settings.attitude_curvature_mrad]*2
+    if settings.fit_translation or settings.fit_heave:
+        extra = len(model.fields)-4
+        prior += [settings.translation_prior_mm]*extra
+        curvature += [settings.translation_curvature_mm]*extra
     rows = []; cols = []; values = []; row = 0
     for k, size in enumerate(model.sizes):
         start = int(model.starts[k])
@@ -144,7 +148,10 @@ def regularizer(model):
             row += 1
         for i in range(size-2):
             rows.extend([row]*3); cols.extend([start+i, start+i+1, start+i+2])
-            values.extend([1/curvature[k], -2/curvature[k], 1/curvature[k]])
+            stencil = (curvature_stencil(model.knots[k], i,
+                settings.position_spacing_m if k < 2 else settings.attitude_spacing_m)
+                if settings.observed_knots else np.array([1., -2., 1.]))
+            values.extend(stencil/curvature[k])
             row += 1
         if k < 2:
             rows.extend([row]*size); cols.extend(range(start, start+size))
@@ -176,12 +183,20 @@ def damped_solve(fun, jac, initial, bounds):
         gradient = np.asarray(matrix.T @ residual).ravel()
         normal = (matrix.T @ matrix).tocsc()
         diagonal = np.maximum(normal.diagonal(), 1e-8)
-        optimality = float(np.max(abs(gradient)/np.sqrt(diagonal)))
+        active = ((c <= -bounds+1e-8) & (gradient > 0)) | ((c >= bounds-1e-8) & (gradient < 0))
+        projected_gradient = np.where(active, 0., gradient)
+        optimality = float(np.max(abs(projected_gradient)/np.sqrt(diagonal)))
         trace.append(dict(step=iteration, cost=cost, optimality=optimality, damping=damping,
                           active_bounds=int(np.count_nonzero(abs(c) >= bounds-1e-5))))
         if optimality < 1e-5:
-            return c, dict(iterations=iteration, evaluations=evaluations, cost=cost, optimality=optimality)
-        step = spsolve(normal+diags(damping*diagonal), -gradient)
+            return c, dict(iterations=iteration, evaluations=evaluations, cost=cost, optimality=optimality,
+                           active_bounds=int(active.sum()))
+        if active.any():
+            free = np.flatnonzero(~active)
+            step = np.zeros_like(c)
+            step[free] = spsolve(normal[free][:, free]+diags(damping*diagonal[free]), -gradient[free])
+        else:
+            step = spsolve(normal+diags(damping*diagonal), -gradient)
         if not np.isfinite(step).all():
             raise ValueError('nonfinite damped trajectory step')
         accepted = False
@@ -194,7 +209,8 @@ def damped_solve(fun, jac, initial, bounds):
                 c, residual, cost = trial, r, value
                 damping = max(damping/3, 1e-10); accepted = True
                 if change < 1e-5 or improvement < 1e-8*max(1., cost):
-                    return c, dict(iterations=iteration+1, evaluations=evaluations, cost=cost, optimality=optimality)
+                    return c, dict(iterations=iteration+1, evaluations=evaluations, cost=cost, optimality=optimality,
+                                   active_bounds=int(np.count_nonzero(abs(c) >= bounds-1e-8)))
                 break
         if not accepted:
             damping *= 10
@@ -233,7 +249,8 @@ def fit(model, table, grid):
             order = np.column_stack((np.arange(len(training)), np.arange(len(training))+len(training))).ravel()
             return vstack((stacked[order], prior), format='csr')
 
-        bounds = np.concatenate([np.full(size, 10. if k in (2, 3) else 30.) for k, size in enumerate(model.sizes)])
+        bounds = np.concatenate([np.full(size, 10. if k in (2, 3) else
+            model.settings.translation_bound_mm if k > 3 else 30.) for k, size in enumerate(model.sizes)])
         coefficients, solver = damped_solve(fun, jac, coefficients, bounds)
         delta = (b.hits(coefficients)-a.hits(coefficients))/pitch
         robust = np.ones(len(training))
@@ -300,7 +317,9 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                 [upstream['grid']['dx_m'], upstream['grid']['dq_m']]), heldout_after=residual_summary(after[selected],
                 [upstream['grid']['dx_m'], upstream['grid']['dq_m']])))
         (output/'windows.json').write_text(json.dumps(per_window, indent=2)+'\n')
-        report = dict(schema='ssb.global_optimization.v1', stage='D3', status='complete',
+        extended = settings.fit_translation or settings.fit_heave
+        report = dict(schema='ssb.global_optimization.v2' if extended else 'ssb.global_optimization.v1',
+            stage='D3', status='complete',
             optical_signature=upstream['optical_signature'], source_observation_hashes=upstream['source_observation_hashes'],
             grid=upstream['grid'], bands=len(sampler.segments), coefficients=model.size, settings=asdict(settings),
             image_consistency=scores, solver=history, observability=evidence,
@@ -312,7 +331,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                 'no IMU; fitted attitudes and positions are prior-dependent image corrections, not measured body poses',
                 'absolute scale, common deformation and photometric matching bias are not recovered from truth',
                 'cubic trajectory cannot recover unobserved bottom-sector or high-frequency motion',
-                'yaw, lateral motion, heave, mounting errors and wheel scale are not independently fitted in this first model',
+                ('yaw, mounting errors and wheel scale are not independently fitted; absolute translation modes remain prior-dependent'
+                 if extended else 'yaw, lateral motion, heave, mounting errors and wheel scale are not independently fitted in this first model'),
                 'no seam blending and no noisy-image robustness acceptance yet'],
             performance=dict(input_check_s=check_s, wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
@@ -331,9 +351,14 @@ def main():
     parser.add_argument('--observable', required=True); parser.add_argument('--output', required=True)
     parser.add_argument('--raw', help='relocated public raw directory')
     parser.add_argument('--attitude-spacing-m', type=float, default=.05)
+    parser.add_argument('--observed-knots', action='store_true', help='fine pose knots only in recorded exposure spans')
+    translation = parser.add_mutually_exclusive_group()
+    translation.add_argument('--fit-translation', action='store_true', help='image-derived continuous lateral/heave corrections; no pose truth')
+    translation.add_argument('--fit-heave', action='store_true', help='image-derived continuous vertical correction only; no pose truth')
     args = parser.parse_args()
     report = run(args.unroll, args.matches, args.observable, args.output,
-                 GeometrySettings(attitude_spacing_m=args.attitude_spacing_m), args.raw)
+                 GeometrySettings(attitude_spacing_m=args.attitude_spacing_m, fit_translation=args.fit_translation,
+                                  fit_heave=args.fit_heave, observed_knots=args.observed_knots), args.raw)
     print(json.dumps({k: report[k] for k in ('status', 'coefficients', 'image_consistency', 'performance')}))
 
 

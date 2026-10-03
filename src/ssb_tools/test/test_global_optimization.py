@@ -18,7 +18,7 @@ def independent_hits(axis, theta, tangent, corrections, radius, height):
     result = []
     for x, angle, u, correction in zip(axis, theta, tangent, corrections):
         dx, dq, roll, pitch = correction[:4]
-        dy, dz = correction[4:] if len(correction) > 4 else (0., 0.)
+        dy, dz = correction[4:] if len(correction) == 6 else (0., correction[4]) if len(correction) == 5 else (0., 0.)
         a, b = roll, pitch
         rx = np.array([[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]])
         ry = np.array([[math.cos(b), 0, math.sin(b)], [0, 1, 0], [-math.sin(b), 0, math.cos(b)]])
@@ -34,7 +34,7 @@ def independent_hits(axis, theta, tangent, corrections, radius, height):
     return np.asarray(result)
 
 
-def synthetic_matches():
+def synthetic_matches(translations=False):
     phase = np.linspace(-1., 1., 401)
     offsets = np.linspace(-.22, .22, 512)
     projection = np.zeros(3*len(phase), PROJECTION)
@@ -47,14 +47,20 @@ def synthetic_matches():
         projection['x_axis_m'][ids] = .4+.25*band+.04*phase
     sampler = BandSampler(projection, np.zeros((len(projection), len(offsets)), np.float32),
                           offsets, offsets, np.ones(len(offsets), bool), .0051)
-    model = Trajectory(sampler, 1., .7, GeometrySettings(attitude_spacing_m=.1))
+    model = Trajectory(sampler, 1., .7, GeometrySettings(attitude_spacing_m=.1,
+        fit_translation=translations is True,fit_heave=translations=='heave'))
 
     def truth_at(axis):
         # Nonzero coupled position, phase, roll and pitch; no production function creates truth.
         s = np.asarray(axis)-.65
-        return np.column_stack((.0003*s, -.0002*s,
+        values = np.column_stack((.0003*s, -.0002*s,
                                 .0006+.0005*s+.0004*s*s,
                                 -.0005+.001*s-.0006*s*s))
+        if translations is True:
+            values = np.column_stack((values, .0004+.0006*s, .001+.0007*s-.0003*s*s))
+        elif translations=='heave':
+            values = np.column_stack((values,.001+.0007*s-.0003*s*s))
+        return values
 
     def measured_point(band, x, q):
         lo, hi, weight, supported = sampler.row_sources(band, np.array([q]))
@@ -102,12 +108,15 @@ def test_exact_support_rotation_and_cylinder_hit_against_independent_matrix_refe
                                expected, atol=2e-14, rtol=0)
 
 
-def test_sparse_native_jacobian_includes_angular_weights_and_upright_motion():
-    model, table, _ = synthetic_matches()
+@pytest.mark.parametrize('translations', [False, True, 'heave'])
+def test_sparse_native_jacobian_includes_angular_weights_and_upright_motion(translations):
+    model, table, _ = synthetic_matches(translations)
     rays = model.native_side(table[:12], 'a')
     c = np.linspace(-.2, .3, model.size)
     analytic = rays.jacobian(c)
-    for column in (0, model.starts[1]+1, model.starts[2]+3, model.starts[3]+5):
+    columns = [0, model.starts[1]+1, model.starts[2]+3, model.starts[3]+5]
+    columns += [model.starts[field]+3 for field in range(4,len(model.fields))]
+    for column in columns:
         plus, minus = c.copy(), c.copy()
         plus[column] += 1e-4; minus[column] -= 1e-4
         reference = (rays.hits(plus)-rays.hits(minus))/(2e-4)
@@ -116,8 +125,9 @@ def test_sparse_native_jacobian_includes_angular_weights_and_upright_motion():
                                        atol=2e-10, rtol=1e-5)
 
 
-def test_global_fit_recovers_independent_coupled_scene_and_does_not_train_on_holdout():
-    model, table, grid = synthetic_matches()
+@pytest.mark.parametrize('translations', [False, True, 'heave'])
+def test_global_fit_recovers_independent_coupled_scene_and_does_not_train_on_holdout(translations):
+    model, table, grid = synthetic_matches(translations)
     c, scores, _, _, _, _, evidence = fit(model, table, grid)
     assert scores['heldout_before']['norm_px']['p95'] > .5
     assert scores['heldout_after']['norm_px']['p95'] < .03
@@ -203,7 +213,11 @@ def test_d2_hash_chain_and_d1_identity_are_checked(tmp_path, kind):
     with pytest.raises(ValueError, match=message): verified_matches(d2, d1, upstream, sampler)
 
 
-def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_chain(tmp_path):
+@pytest.mark.parametrize('settings', [GeometrySettings(attitude_spacing_m=.1),
+    GeometrySettings(attitude_spacing_m=.1, observed_knots=True),
+    GeometrySettings(attitude_spacing_m=.1, fit_translation=True),
+    GeometrySettings(attitude_spacing_m=.1, fit_heave=True)])
+def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_chain(tmp_path, settings):
     from test_match_bands import bands_fixture
     from ssb_tools.match_bands import run as match
     from ssb_tools.band_matching import MatchSettings
@@ -216,7 +230,7 @@ def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_cha
     (d1/'provenance.json').write_text(json.dumps(stage_record('initial_unroll', [observable], files, {})))
     match(d1, d2, spacing_m=.04, height=128, max_width=256, settings=MatchSettings(max_shift_mm=4.))
     before = {str(p): sha256_file(p) for folder in (d1, d2) for p in folder.iterdir()}
-    report = run(d1, d2, observable, output, GeometrySettings(attitude_spacing_m=.1))
+    report = run(d1, d2, observable, output, settings)
     assert report['status'] == 'complete' and report['bands'] == 2
     assert report['image_consistency']['heldout_after']['norm_px']['p95'] < .5
     assert not (tmp_path/'evaluation').exists()
@@ -245,6 +259,8 @@ def test_damped_normal_solver_honors_bounds_and_recovers_known_quadratic():
     bounded, _ = damped_solve(lambda x: matrix @ x-target, lambda x: matrix,
                               np.zeros(2), np.array([.3, 1.]))
     assert abs(bounded[0]-.3) < 1e-8 and abs(bounded[1]) <= 1
+    # Independent KKT solution: x0=.3 is active; optimize the remaining coordinate.
+    np.testing.assert_allclose(bounded,[.3,-1/15],atol=1e-6)
 
 
 def test_pointwise_sampling_matches_band_sampler_and_preserves_invalid_footprints():
@@ -287,8 +303,9 @@ def test_corrected_inverse_and_sampling_use_the_original_native_pixels_once():
     np.testing.assert_allclose(zero, expected, atol=1e-4, rtol=0)
 
 
-def test_obviously_wrong_inlier_matches_are_not_absorbed_as_motion():
-    model, table, grid = synthetic_matches()
+@pytest.mark.parametrize('translations', [False, True, 'heave'])
+def test_obviously_wrong_inlier_matches_are_not_absorbed_as_motion(translations):
+    model, table, grid = synthetic_matches(translations)
     corrupted = table.copy()
     train = np.flatnonzero((corrupted['inlier'] > 0) & (corrupted['holdout'] == 0))
     outliers = train[::17]
@@ -302,3 +319,35 @@ def test_obviously_wrong_inlier_matches_are_not_absorbed_as_motion():
     _, scores, _, _, _, after, _ = fit(model, corrupted, grid)
     assert scores['heldout_after']['norm_px']['p95'] < .15
     assert np.median(np.linalg.norm(after[outliers], axis=1)/grid['dx_m']) > 10
+
+
+def test_observed_knots_save_resources_without_claiming_bottom_gap_measurements():
+    from ssb_tools.global_geometry import observed_spline_knots, spline_knots, curvature_stencil
+    from types import SimpleNamespace
+    phase=np.linspace(0,.4,101)
+    p=np.zeros(34*len(phase),PROJECTION)
+    bounds=[]
+    for band in range(34):
+        a,b=band*len(phase),(band+1)*len(phase)
+        p['x_axis_m'][a:b]=band*.6+phase
+        bounds.append((a,b))
+    sampler=SimpleNamespace(projection=p,bounds=bounds)
+    upper=float(p['x_axis_m'].max())
+    knots=observed_spline_knots(sampler,0.,upper,.02)
+    uniform=spline_knots(0.,upper,.02)
+    assert len(knots)<.75*len(uniform)
+    assert 2*(len(knots)-4)+2*(len(spline_knots(0.,upper,.6))-4)<2048
+    for band in range(33):
+        assert not np.any((knots>band*.6+.4+1e-10)&(knots<(band+1)*.6-1e-10))
+    # A linear physical trajectory has zero curvature even beside long gaps.
+    greville=np.array([knots[i+1:i+4].mean() for i in range(len(knots)-4)])
+    for i in range(len(greville)-2):
+        np.testing.assert_allclose(curvature_stencil(knots,i,.02) @ (3*greville[i:i+3]+2),0.,atol=1e-11)
+
+
+def test_bound_active_set_can_release_a_coordinate_back_into_the_interior():
+    from scipy.sparse import eye
+    result,evidence=damped_solve(lambda x:x-np.array([.2,-.1]),lambda x:eye(2,format='csr'),
+                                np.array([1.,-1.]),np.ones(2))
+    np.testing.assert_allclose(result,[.2,-.1],atol=1e-6)
+    assert evidence['active_bounds']==0

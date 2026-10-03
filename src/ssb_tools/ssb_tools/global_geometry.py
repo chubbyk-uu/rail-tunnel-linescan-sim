@@ -22,12 +22,18 @@ class GeometrySettings:
     noise_floor_px: float = .05
     effective_points_per_window: float = 16.
     max_irls: int = 5
+    fit_translation: bool = False
+    fit_heave: bool = False
+    translation_prior_mm: float = 2.
+    translation_curvature_mm: float = .5
+    translation_bound_mm: float = 5.
+    observed_knots: bool = False
 
     def validate(self):
-        numbers = [v for k, v in vars(self).items() if k != 'max_irls']
+        numbers = [v for k, v in vars(self).items() if k not in ('max_irls', 'fit_translation', 'fit_heave', 'observed_knots')]
         if not all(math.isfinite(v) and v > 0 for v in numbers):
             raise ValueError('positive finite optimization settings required')
-        if not .025 <= self.attitude_spacing_m <= .6:
+        if not .01 <= self.attitude_spacing_m <= .6:
             raise ValueError('attitude node spacing outside supported range')
         if not .3 <= self.position_spacing_m <= 2.:
             raise ValueError('position node spacing outside supported range')
@@ -35,6 +41,14 @@ class GeometrySettings:
             raise ValueError('IRLS iteration budget outside supported range')
         if self.effective_points_per_window > 32:
             raise ValueError('window information budget exceeds 32')
+        if not isinstance(self.fit_translation, bool) or not isinstance(self.fit_heave, bool):
+            raise ValueError('translation model switches must be Boolean')
+        if self.fit_translation and self.fit_heave:
+            raise ValueError('choose heave-only or lateral/heave, not both')
+        if self.translation_bound_mm > 30 or self.translation_prior_mm > self.translation_bound_mm:
+            raise ValueError('dynamic translation prior/bounds exceed the supported small-motion model')
+        if not isinstance(self.observed_knots, bool):
+            raise ValueError('observed_knots must be Boolean')
 
 
 def spline_knots(lower, upper, spacing):
@@ -44,19 +58,44 @@ def spline_knots(lower, upper, spacing):
     return np.r_[np.repeat(lower, 4), breaks[1:-1], np.repeat(upper, 4)]
 
 
+def observed_spline_knots(sampler, lower, upper, spacing):
+    """Fine knots on encoder exposure spans, coarse cubic continuation across gaps."""
+    intervals = sorted((float(sampler.projection['x_axis_m'][a:b].min()),
+                        float(sampler.projection['x_axis_m'][a:b].max())) for a, b in sampler.bounds)
+    merged = []
+    for lo, hi in intervals:
+        if merged and lo <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    breaks = np.unique(np.concatenate([np.array([lower, upper])]+[
+        np.linspace(lo, hi, max(1, math.ceil((hi-lo)/spacing))+1) for lo, hi in merged]))
+    return np.r_[np.repeat(lower, 4), breaks[(breaks > lower) & (breaks < upper)], np.repeat(upper, 4)]
+
+
+def curvature_stencil(knots, index, reference_spacing):
+    """Second derivative on Greville progress, scaled to a declared reference step."""
+    g = np.array([np.mean(knots[k+1:k+4]) for k in range(index, index+3)])
+    left, right = np.diff(g)
+    if left <= 0 or right <= 0:
+        raise ValueError('positive Greville spacing required')
+    return reference_spacing**2*np.array([2/(left*(left+right)), -2/(left*right),
+                                         2/(right*(left+right))])
+
+
 def cylinder_points(axis, theta, tangent, correction, radius, height):
     """Exact Ry(pitch) Rx(roll) rays, including rotation of the upright support.
 
     correction columns: carriage dx [m], scan phase dq [m], roll/pitch [rad],
-    and optional carriage lateral/vertical displacement [m].
+    optional heave [m] (five fields), or lateral/heave [m] (six fields).
     The cylinder axis is the nominal origin in y,z. No actual tunnel mesh is read.
     """
     correction = np.asarray(correction)
-    if correction.ndim != 2 or correction.shape[1] not in (4, 6) or not np.isfinite(correction).all():
-        raise ValueError('finite four- or six-component ray correction required')
+    if correction.ndim != 2 or correction.shape[1] not in (4, 5, 6) or not np.isfinite(correction).all():
+        raise ValueError('finite four-, five- or six-component ray correction required')
     dx, dq, roll, pitch = correction[:, :4].T
-    lateral = correction[:, 4] if correction.shape[1] > 4 else 0.
-    vertical = correction[:, 5] if correction.shape[1] > 5 else 0.
+    lateral = correction[:, 4] if correction.shape[1] == 6 else 0.
+    vertical = correction[:, -1] if correction.shape[1] > 4 else 0.
     theta = np.asarray(theta)+dq/radius
     ca, sa = np.cos(roll), np.sin(roll)
     cb, sb = np.cos(pitch), np.sin(pitch)
@@ -90,8 +129,20 @@ class Trajectory:
         self.domain = [float(axis.min()), float(axis.max())]
         if knots is None:
             position = spline_knots(*self.domain, settings.position_spacing_m)
-            attitude = spline_knots(*self.domain, settings.attitude_spacing_m)
+            attitude = (observed_spline_knots(sampler, *self.domain, settings.attitude_spacing_m)
+                        if settings.observed_knots else spline_knots(*self.domain, settings.attitude_spacing_m))
             knots = [position, position, attitude, attitude]
+            if settings.fit_translation:
+                knots += [attitude, attitude]
+            elif settings.fit_heave:
+                knots += [attitude]
+        self.fields = ['carriage_dx_m', 'scan_phase_dq_m', 'roll_rad', 'pitch_rad']
+        if settings.fit_translation:
+            self.fields += ['carriage_lateral_m', 'carriage_vertical_m']
+        elif settings.fit_heave:
+            self.fields += ['carriage_vertical_m']
+        if len(knots) != len(self.fields):
+            raise ValueError('trajectory fields differ from configured rigid-body model')
         self.knots = [np.asarray(k, float) for k in knots]
         self.sizes = [len(k)-4 for k in self.knots]
         self.starts = np.r_[0, np.cumsum(self.sizes)]
@@ -161,11 +212,14 @@ class Trajectory:
         return result.reshape(x.shape+(2,)), supported.reshape(x.shape)
 
     def serialize(self, coefficients):
-        return dict(schema='ssb.global_trajectory.v1', radius_m=self.radius, support_height_m=self.height,
+        extended = self.settings.fit_translation or self.settings.fit_heave
+        return dict(schema='ssb.global_trajectory.v2' if extended else 'ssb.global_trajectory.v1',
+                    radius_m=self.radius, support_height_m=self.height,
                     progress_domain_m=self.domain, degree=3, knots=[k.tolist() for k in self.knots],
                     coefficients=(np.asarray(coefficients)*self.scale).tolist(),
-                    fields=['carriage_dx_m', 'scan_phase_dq_m', 'roll_rad', 'pitch_rad'],
-                    sizes=self.sizes, model='Ry(pitch) Rx(roll), upright support and nominal cylinder')
+                    fields=self.fields, sizes=self.sizes,
+                    model=('Ry(pitch) Rx(roll), upright support, '+('lateral/heave' if self.settings.fit_translation else 'heave')+' and nominal cylinder'
+                           if extended else 'Ry(pitch) Rx(roll), upright support and nominal cylinder'))
 
 
 class RaySet:
