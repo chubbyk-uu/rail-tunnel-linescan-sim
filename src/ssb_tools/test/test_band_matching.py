@@ -94,6 +94,25 @@ def test_invalid_window_settings_are_rejected():
     with pytest.raises(ValueError): MatchSettings(max_shift_mm=float('nan'))
 
 
+def test_holdout_residual_failure_is_distinguished_from_insufficient_points():
+    a = texture(shape=(512, 768))
+    affine = np.array([[1., 0., 11.3], [0., 1., -7.6]])
+    b = cv2.warpAffine(a, affine, (a.shape[1], a.shape[0]), flags=cv2.INTER_LINEAR)*1.08+3
+    valid = np.ones(a.shape, bool)
+    valid_b = cv2.warpAffine(valid.astype(np.uint8), affine, (a.shape[1], a.shape[0]),
+                            flags=cv2.INTER_NEAREST).astype(bool)
+    report, matches = match_window(a, b, valid, valid_b, .0002,
+                                  MatchSettings(max_holdout_p95_px=1e-5))
+    assert report['status'] == 'unmeasurable'
+    assert report['reason'] == 'independent holdout or inlier support failed'
+    assert len(matches['points_a']) == 0
+    assert report['heldout'] >= 5 and report['inliers'] >= 24
+    assert report['support_checks']['holdout_count']
+    assert report['support_checks']['inlier_count']
+    assert not report['support_checks']['holdout_p95']
+    assert len(report['spatial_covariance_eigenvalues']) == 2
+
+
 @pytest.mark.parametrize('shift', [(.25, 0.), (.5, 0.), (0., .5), (12.25, -3.5), (50.5, 7.25)])
 def test_mean_translation_is_unbiased_for_known_subpixel_shifts(shift):
     # Band-limited spline shift of the same content: any residual mean offset is

@@ -118,6 +118,7 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
     feature_mask[:16] = 0; feature_mask[-16:] = 0; feature_mask[:, :16] = 0; feature_mask[:, -16:] = 0
     points = cv2.goodFeaturesToTrack(image_a, settings.max_features, .025, 16,
                                     mask=feature_mask, blockSize=7)
+    diagnostic['corners'] = 0 if points is None else len(points)
     if points is None or len(points) < settings.min_matches: return rejected('too few corners', **diagnostic)
     initial = (points+shift.astype(np.float32)).astype(np.float32)
     criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 40, .001)
@@ -125,6 +126,7 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
         winSize=(21, 21), maxLevel=3, criteria=criteria, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
     usable = forward_ok[:, 0].astype(bool) & np.isfinite(following[:, 0]).all(axis=1)
     points, following = points[usable], following[usable]
+    diagnostic['forward_tracks'] = len(points)
     if len(points) < settings.min_matches: return rejected('too few forward tracks', **diagnostic)
     reverse, reverse_ok, _ = cv2.calcOpticalFlowPyrLK(image_b, image_a, following, points.copy(),
         winSize=(21, 21), maxLevel=3, criteria=criteria, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
@@ -134,13 +136,16 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
     usable &= np.isfinite(pb).all(axis=1) & (fb <= settings.max_fb_px)
     usable &= np.max(abs(pb-pa), axis=1) <= max_shift
     pa, pb, fb = pa[usable], pb[usable], fb[usable]
+    diagnostic['bidirectional_tracks'] = len(pa)
     ncc = patch_ncc(a, b, valid_a, valid_b, pa, pb)
     good = ncc >= settings.min_patch_ncc
     pa, pb, fb, ncc = pa[good], pb[good], fb[good], ncc[good]
+    diagnostic['photometric_matches'] = len(pa)
     if len(pa) < settings.min_matches:
         return rejected('too few bidirectional photometric matches', candidates=len(pa), **diagnostic)
     normalized = (pa-pa.mean(axis=0))/np.array([a.shape[1], a.shape[0]])
     covariance = np.linalg.eigvalsh(normalized.T@normalized/len(pa))
+    diagnostic['spatial_covariance_eigenvalues'] = covariance.tolist()
     if covariance[0] < .002 or covariance[0]/covariance[1] < .04:
         return rejected('matches do not constrain a two-dimensional affine model', **diagnostic)
     holdout = np.arange(len(pa)) % 5 == 0
@@ -154,8 +159,14 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
     residual = np.linalg.norm(pa@affine[:, :2].T+affine[:, 2]-pb, axis=1)
     inlier = residual <= settings.ransac_px
     held = residual[holdout]
-    if (np.count_nonzero(inlier) < settings.min_matches or len(held) < 5 or
-        np.mean(inlier[holdout]) < .8 or np.percentile(held, 95) > settings.max_holdout_p95_px):
+    diagnostic.update(candidates=len(pa), inliers=int(inlier.sum()), heldout=len(held),
+        holdout_inlier_fraction=float(inlier[holdout].mean()),
+        holdout_p95_px=float(np.percentile(held, 95)), jacobian_change=float(change))
+    support_checks = dict(inlier_count=int(inlier.sum()) >= settings.min_matches,
+        holdout_count=len(held) >= 5, holdout_inlier_fraction=float(inlier[holdout].mean()) >= .8,
+        holdout_p95=diagnostic['holdout_p95_px'] <= settings.max_holdout_p95_px)
+    diagnostic['support_checks'] = support_checks
+    if not all(support_checks.values()):
         return rejected('independent holdout or inlier support failed', **diagnostic)
     centre = np.array([(a.shape[1]-1)/2, (a.shape[0]-1)/2])
     centre_shift = affine[:, :2]@centre+affine[:, 2]-centre
