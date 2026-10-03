@@ -97,3 +97,10 @@ local_data/evaluation/cleanup_20261002_public/
 保留 `sessions/d3_holdout_12_15_20261003/` 的 3 m 原始采集、公开重建及硬链接复现，约 1.7 GiB；协议、冻结检查与两组网格评价在 `local_data/evaluation/d3_holdout_20261003/`。开发区段原图和历史 20 m 原图继续保留。新增复核页 `sessions/stage_d3_3m_review_20261003/{holdout_12_15,gain_comparison}/`；2026-10-03 用户已确认增益 2.4 为新画质基线。独立确认记录保存在 `local_data/evaluation/d3_holdout_20261003/visual_acceptance.json`；不改写确认之前的生成报告或其哈希链。
 
 只删除本轮被成功完整回归替代的 `/tmp/ssb_review_repairs_suite/` 测试工作目录（约 522 MiB），保留最终 `/tmp/ssb_review_repairs_suite_v2/`。删除前将两轮日志、XML 和摘要批量保存到私有评价目录的单个 `test_reports.tar.gz`，逐文件核对内容哈希；没有删除原图、独立验证证据或正在服务的复核页面。
+
+
+## 2026-10-03 留出采集构建溯源修复
+
+现行正式 3 m 证据为 `sessions/d3_holdout_rebuilt_20261003/`，配套协议与评分在 `local_data/evaluation/d3_holdout_rebuilt_20261003/`。旧 `d3_holdout_12_15_20261003` 保留为历史原图/数值结果与新增门限的反向验证，不把其二进制身份 false 改为 true。
+
+新旧两次采集各自完成独立重成像；验收后仅对重复原图作哈希核对和硬链接去重，174 块释放约 2.71 GiB，内容/路径/元数据/独立重成像报告均保留。明细为 `replay_deduplication.json`。删除被最终回归替代的 `/tmp/ssb_holdout_provenance_suite/`，最终 470 项测试目录保留；两轮日志/XML/摘要已核验并批量归档为单个 `test_reports.tar.gz`。
