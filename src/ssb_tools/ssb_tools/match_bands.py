@@ -127,8 +127,18 @@ def pack_matches(sampler, grid, window, matches):
         points = matches['points_'+side]
         x = window['x_first_m']+points[:, 0]*grid['dx_m']
         q = window['q_first_m']+points[:, 1]*grid['dq_m']
-        table['x_'+side+'_m'], table['q_'+side+'_m'] = x, q
         sources = native_sources(sampler, band, x, q, grid['radius_m'])
+        # At a recorded band's edge, D1 can use the nearest row within its
+        # half-row footprint. Both source rows are then identical: the ray
+        # belongs to that row centre, not the requested grid angle. Preserve
+        # the original coordinates for genuinely interpolated samples.
+        snapped = sources['lower_sequence'] == sources['upper_sequence']
+        if np.any(snapped):
+            q = q.copy()
+            ids = np.searchsorted(sampler.projection['sequence'], sources['lower_sequence'][snapped])
+            rows = sampler.projection[ids]
+            q[snapped] = grid['radius_m']*(rows['theta_rad']-2*math.pi*rows['segment'])
+        table['x_'+side+'_m'], table['q_'+side+'_m'] = x, q
         for name, values in sources.items(): table[side+'_'+name] = values
     for name, key in [('ncc', 'ncc'), ('fb_px', 'fb_error'), ('residual_px', 'residual'),
                       ('holdout', 'holdout'), ('inlier', 'inlier')]: table[name] = matches[key]
@@ -235,7 +245,7 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
             nominal_displacement_p95_px=float(np.percentile(np.hypot(table['x_b_m']-table['x_a_m'],
                 table['q_b_m']-table['q_a_m'])/grid['requested_pitch_m'], 95)) if len(table) else None),
         connected_components=components,
-        coordinate_convention='A nominal (x,q) -> B nominal (x,q); q=radius*theta; native sources use measured D1 geometry',
+        coordinate_convention='A nominal (x,q) -> B nominal (x,q); q=radius*theta; native sources use measured D1 geometry; nearest-row edge samples use the recorded row centre',
         limitations=['local affine is a consistency test, not recovered body roll/pitch',
             'holdout residual measures internal image consistency, not absolute reconstruction accuracy',
             'scan-periodic common deformations and absolute scale remain unobservable without independent priors',

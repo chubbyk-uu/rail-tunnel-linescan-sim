@@ -4,11 +4,48 @@ import cv2
 import numpy as np
 import pytest
 from ssb_tools.band_matching import MatchSettings
-from ssb_tools.initial_unroll import PROJECTION
-from ssb_tools.match_bands import run, verified_bands, plan_windows
+from ssb_tools.initial_unroll import BandSampler, PROJECTION
+from ssb_tools.match_bands import run, verified_bands, plan_windows, pack_matches
+from ssb_tools.global_geometry import Trajectory
 from ssb_tools.provenance import stage_record
 from ssb_tools.session import sha256_file
 from test_band_matching import texture
+
+
+@pytest.mark.parametrize('edge', ['lower', 'upper', 'interior'])
+def test_packed_match_uses_actual_row_centre_when_sampling_edge_footprint(edge):
+    radius = 2.75
+    phase = np.linspace(-.1, .1, 401)
+    offsets = np.linspace(-.22, .22, 512)
+    projection = np.zeros(2*len(phase), PROJECTION)
+    for band in range(2):
+        ids = slice(band*len(phase), (band+1)*len(phase))
+        projection['sequence'][ids] = 100+3*np.arange(ids.start, ids.stop)
+        projection['segment'][ids] = band
+        projection['lattice_row'][ids] = np.arange(len(phase))+band*10000
+        projection['theta_rad'][ids] = phase+2*math.pi*band
+        projection['x_axis_m'][ids] = 18.6+.1*band+.05*phase
+    sampler = BandSampler(projection, np.zeros((len(projection), 512), np.float32),
+                          offsets, offsets, np.ones(512, bool), .00051)
+    requested_angle = dict(lower=-.1002, upper=.1002, interior=.0123)[edge]
+    requested_q = radius*requested_angle
+    grid = dict(radius_m=radius, dx_m=.0002, dq_m=.0002)
+    window = dict(id=0, bands=[0, 1], x_first_m=18.75, q_first_m=requested_q)
+    matches = dict(points_a=np.zeros((1, 2)), points_b=np.zeros((1, 2)),
+        ncc=np.ones(1), fb_error=np.zeros(1), residual=np.zeros(1),
+        inlier=np.ones(1, np.uint8), holdout=np.ones(1, np.uint8))
+    table = pack_matches(sampler, grid, window, matches)
+    model = Trajectory(sampler, radius, 1.7)
+    for side in ('a', 'b'):
+        expected_q = requested_q if edge == 'interior' else radius*phase[0 if edge == 'lower' else -1]
+        np.testing.assert_allclose(table['q_'+side+'_m'], expected_q, atol=1e-14, rtol=0)
+        rays = model.native_side(table, side)
+        np.testing.assert_allclose(rays.hits(np.zeros(model.size)),
+            np.column_stack((table['x_'+side+'_m'], table['q_'+side+'_m'])), atol=1e-14, rtol=0)
+    if edge != 'interior':
+        # Supported footprint remains valid, but cannot invent an interpolated row.
+        assert table['a_lower_sequence'][0] == table['a_upper_sequence'][0]
+        assert table['a_angular_weight'][0] == 0
 
 
 def bands_fixture(root):
