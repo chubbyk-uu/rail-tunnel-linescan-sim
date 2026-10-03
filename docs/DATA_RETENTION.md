@@ -6,6 +6,7 @@
 
 | 数据 | 位置 | 用途 |
 |---|---|---|
+| 审计与报告保护后复采 | `sessions/audit_guard_high_20261003/`、同名 `local_data/evaluation/`；`local_data/evaluation/audit_guards_tests_20261003/` | 冻结 `6795971`，已知高环缝区段；阶段 B 24 项、协议 v5 的 14 项及实际审计通过。独立重成像原图本轮未去重；保留报告哈希、5,787 个逐点比较及 581 项回归日志归档 |
 | 离线提速后冻结复核 | `sessions/perf_ring_{high,low}_20261003/`、`local_data/evaluation/perf_tier2_20261003/` | `d60e15d` 上用同一轨道种子与区段重采；协议 v4、公开运行审计和独立评分均通过，与原冻结结果的接缝分数一致到小数点后 6 位；每组约 3.8 GB |
 | 环缝高/低占比新轨道留出 | `sessions/ring_{high,low}_seed20261005_20261003/`、同名 `local_data/evaluation/` 目录 | 冻结 `b206f6d`、未用于调参的轨道种子；保留原图、独立重成像、D1/D2/D3、阶段 B 与协议核验、公开输入复现 |
 | 环缝修复完整 20 m 复算 | `sessions/ring_phase_20m_corrected_20261003/`、`local_data/evaluation/ring_phase_20261003/corrected_20m_*` | 使用第二批原图/D1，窗口间 P95 0.691 px；新匹配、轨迹、公开复现和真实网格评分，不是新 20 m 采集；没有新整幅图 |
@@ -154,7 +155,7 @@ local_data/evaluation/cleanup_20261002_public/
 - **删除可再生成的整幅数组（44.9 GB）**：删除了 `d3_noise_20m_v2`、`d3_holdout_rebuilt`、`d3_noise_assumed` 三处 `full_mosaic/{nominal,optimized}/mosaic_{u16,count}.npy`，删除前逐个核对过与溯源记录的哈希一致。覆盖游程、预览图、报告和溯源都保留；原图、D1、D3 仍在，可用 `ssb_tools.global_mosaic` 重新生成，并按记录的哈希核验。相关复核页上指向这些大数组的链接已失效。
 - **删除旧 colcon 日志（0.49 GB，349 项）**：只保留 `log/COLCON_IGNORE`。正式测试日志另有归档。
 
-**操作失误记录**：抽查去重结果时，`validate_stage_b --compare` 把重新生成的报告写回了 `sessions/ring_high_seed20261005_20261003` 和 `sessions/d3_noise_20m_support_20261003` 的 `capture/evaluation/reports/stage_b_smoke.json`，原文件被覆盖。原报告没有单独留存哈希，因此无法证明两者逐字节相同。不过，重新生成时使用的检验代码（`validate_stage_b`、`validate_stage_a`、`ref_geometry`、`session`）自这两次采集以来没有改动，输入文件内容也相同；24 项检查名称和结果与 `local_data/evaluation/*/stage_b.log` 中的原始运行日志逐项一致，全部通过。以后抽查请先把会话复制到临时目录，或改为只读检查。
+**操作失误记录**：抽查去重结果时，`validate_stage_b --compare` 把重新生成的报告写回了 `sessions/ring_high_seed20261005_20261003` 和 `sessions/d3_noise_20m_support_20261003` 的 `capture/evaluation/reports/stage_b_smoke.json`，原文件被覆盖。原报告没有单独留存哈希，因此无法证明两者逐字节相同。不过，重新生成时使用的检验代码（`validate_stage_b`、`validate_stage_a`、`ref_geometry`、`session`）自这两次采集以来没有改动，输入文件内容也相同；24 项检查名称和结果与 `local_data/evaluation/*/stage_b.log` 中的原始运行日志逐项一致，全部通过。此历史缺口保留。现行验收器拒绝覆盖报告及哈希记录；以后抽查用 `--read-only`，另存用新的 `--output` 路径，不复制整套原图，也不补造旧报告的哈希身份。
 
 ## 2026-10-03 历史反例清理
 
@@ -163,3 +164,10 @@ local_data/evaluation/cleanup_20261002_public/
 - 删除范围：`sessions/d3_noise_20m_20261003/`、`sessions/bias_study_20261003/albedo/`、`sessions/d3_common_domain_3m_20261003/` 中大于 1 MB 的 `.u8/.bin/.npy/.npz/.csv`，即原图块、重成像、生成端位姿和命中、D1/D2 大数组。报告、溯源、JSON 摘要、日志和预览图都保留。
 - 逻辑大小 33.0 GB，实际释放 **13.1 GB**。`d3_noise_20m_20261003` 的 8.3 GB 原图与 `d3_noise_20m_v2_20261003`（同一次采集）共用硬链接，删除这些路径不释放空间；v2 的 495 个原图块在清理后已重新核验哈希。
 - 这三处结果以后只能查阅，不能再复现。
+
+
+## 2026-10-03 审计与报告保护后的临时数据清理
+
+只清理本轮已结束的 4 个并行测试夹具目录和 `/tmp/ssb_audit_public_probe_20261003` 开发公开输入副本，共 5 个目录、逻辑文件约 2.19 GB；其中约 0.58 GB 为未共享文件，原图硬链接路径删除不重复释放原件空间。先将 23 份测试日志/XML/摘要集中打包并逐条核验归档哈希，开发探针报告另存单个归档。记录在 `local_data/evaluation/audit_guards_tests_20261003/{cleanup.json,summary.json,regression_logs.tar.gz,development_probe_records.tar.gz}`。
+
+新的 `audit_guard_high_20261003` 采集与独立重成像、公开产品和网格评价全部保留，本轮未对独立重成像原图去重。实际只读复查已通过，首次报告和哈希记录未变化；逐点等同检查与证据摘要保存在同目录的 `independent_review.json`。没有删除正式原图或修改两份旧报告的缺口记录。

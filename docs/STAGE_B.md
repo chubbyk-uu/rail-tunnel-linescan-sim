@@ -186,11 +186,22 @@ python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression_NEW
 bash tools/with_optix_runtime.sh install/ssb_core/lib/ssb_core/ssb_probe --config CONFIG --x 4 --theta 0.2
 ```
 
-`validate_stage_b_smoke` 独立检查以下各项，报告写到 `evaluation/reports/stage_b_smoke.json`：
+`validate_stage_b_smoke` 独立检查以下各项，首次报告写到 `evaluation/reports/stage_b_smoke.json`，同时保存 `stage_b_smoke.identity.json`（报告及两份会话摘要的 SHA-256）：
 
 - 源码与二进制身份、全部资产哈希、编码器与门控时序、有效区无缺行。
 - CPU 三角形交点：用 double 源网格独立计算。
 - GPU/CPU 纹理预算、重放逐字节一致。
+
+已有报告或哈希记录会被拒绝覆盖。复查不修改历史证据：
+
+```bash
+ros2 run ssb_tools validate_stage_b_smoke SESSION --compare REIMAGE --read-only
+# 需要另存本次检查时，指定新的 evaluation 报告路径；同样不会覆盖。
+ros2 run ssb_tools validate_stage_b_smoke SESSION --compare REIMAGE \
+  --output SESSION/evaluation/reports/recheck_NEW.json
+```
+
+新冻结协议 v5 核验首次报告哈希；旧报告没有该记录时不能补写后声称历史字节身份已恢复。重成像原图必须实际独立渲染，核验后才能去重；已链接副本的比较不是新的独立证据。
 
 它不是光度、镜头分辨率或外观验收。采集的 `evaluation/` 目录归档场景、背景和缺陷真值，后续拼接不得读取。
 

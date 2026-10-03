@@ -1,8 +1,10 @@
 # 地铁隧道轨道巡检机器人仿真
 
-本项目复现轨道巡检机器人搭载旋转线阵相机的连续螺旋采集：车辆沿钢轨前进，相机与 COB 光源共同旋转，编码器按角度触发每一行，在上方 240° 范围内采集隧道内壁。Gazebo 负责轮轨接触和运动，OptiX 负责高速线阵成像，ROS 2 / RViz 提供任务控制与状态显示。后续通过图像展开、特征匹配和全局拼接优化，复原隧道内壁全图。
+本项目复现轨道巡检机器人搭载旋转线阵相机的连续螺旋采集：车辆沿钢轨前进，相机与 COB 光源共同旋转，编码器按角度触发每一行，在上方 240° 范围内采集隧道内壁。Gazebo 负责轮轨接触和运动，OptiX 负责高速线阵成像，ROS 2 / RViz 提供任务控制与状态显示。采后通过图像展开、特征匹配和全局拼接优化，复原隧道内壁全图。
 
-**当前进度（2026-10-03）：** 已完成带起伏轨道的采集、采后光学校正、CUDA 展开、特征匹配和连续轨迹优化。环缝高占比工况已修复：同一 20 米原图重新匹配优化，窗口内/窗口间接缝 P95 为 **0.689/0.691 px**，通过现行 **P95≤1 px** 目标，已规划点无缺测；原 4.232 px 失败报告保留。冻结后采用未用于调参的轨道种子，环缝高/低占比两组新 3 米采集也通过，窗口间 P95 分别为 0.905/0.586 px。新结果已验证接缝和四边支撑，尚未生成新的优化整幅图；旧 20 米全图与失败记录另行保留。凹槽局部仍有多像素视差，P95 通过不代表逐点达标。下一步加入编码器估计里程停车、轮径及扫描轴安装误差；最多扩展到 **50 米**。详见 [环缝稳健性证据与限制](docs/STAGE_D.md#环缝相位稳健性优先于轮径与安装误差2026-10-03)。
+**当前进度（2026-10-03）：** 已完成带起伏轨道的采集、采后光学校正、CUDA 展开、特征匹配和连续轨迹优化。环缝高占比工况已修复：同一 20 米原图重新匹配优化，窗口内/窗口间接缝 P95 为 **0.689/0.691 px**，通过现行 **P95≤1 px** 目标，已规划点无缺测；原 4.232 px 失败报告保留。冻结后采用未用于调参的轨道种子，环缝高/低占比两组新 3 米采集也通过，窗口间 P95 分别为 0.905/0.586 px。新结果已验证接缝和四边支撑，尚未生成新的优化整幅图；旧 20 米全图与失败记录另行保留。凹槽局部仍有多像素视差，P95 通过不代表逐点达标。下一步加入编码器估计里程停车、轮径及扫描轴安装误差；最多扩展到 **50 米**。
+
+公开输入审计与验收报告保护已加强；同一高环缝 3 米区段重新构建、采集、独立重成像后，通过阶段 B 24 项和新协议 14 项，评分与此前逐点一致。这是已知场景的复现验证。详见 [环缝稳健性证据与限制](docs/STAGE_D.md#环缝相位稳健性优先于轮径与安装误差2026-10-03)。
 
 ## 运行效果
 
@@ -265,20 +267,23 @@ ros2 run ssb_tools initial_unroll \
   --output sessions/d1_3m_NEW > /tmp/ssb_d1.log 2>&1
 
 ros2 run ssb_tools match_bands \
-  --unroll sessions/d1_3m_NEW \
+  --unroll sessions/d1_3m_NEW --spacing-m 0.2 \
   --output sessions/d2_3m_NEW > /tmp/ssb_d2.log 2>&1
 
 python3 -m http.server 8765 --bind 127.0.0.1 --directory sessions/d1_3m_NEW
 ```
 
+D2 与独立接缝评价的命令行默认进程数为 `min(8, 当前可用 CPU 数)`，优先读取进程 CPU affinity，适用于限制了核心数的 WSL 和原生 Linux。可用 `--workers 1` 或其他不超过可用核心数的正整数手动设置；不会按宿主机总核数强行开 8 个进程。D3 的分块计算线程采用同一默认预算，固定分块与合并顺序不变。测试入口的默认 4 个工作进程是另一套测试调度。
+
 浏览器打开 `http://localhost:8765/review.html` 查看初始展开。要查看匹配诊断，可将服务器目录换成 `sessions/d2_3m_NEW`。D2 的局部对齐图用于诊断对应点，尚不是全局优化后的成果。
 
-第一版 D3 可进一步用图像对应点拟合连续轨迹，并从原始列生成无融合对比图：
+D3 可进一步用图像对应点拟合连续轨迹，并从原始列生成无融合对比图：
 
 ```bash
 ros2 run ssb_tools optimize_bands \
   --unroll sessions/d1_3m_NEW --matches sessions/d2_3m_NEW \
   --observable SESSION/config/observable_config.json \
+  --attitude-spacing-m 0.02 --observed-knots \
   --output sessions/d3_3m_NEW > /tmp/ssb_d3.log 2>&1
 
 ros2 run ssb_tools review_global_bands \
@@ -336,6 +341,29 @@ D1 默认使用 CUDA；可显式选择 `--backend cpu`，不会在 CUDA 失败�
 
 可选的传感器噪声档位及独立标定生成方法见 [传感器噪声](docs/SENSOR_NOISE.md)。默认演示仍关闭噪声，保持已确认的画质基线；噪声参数为仿真假设，不能当作 DALSA 实测规格。
 
+### 冻结采集与证据核验
+
+需要正式冻结采集及证据核验时，使用以下完整入口（WSL）。目录必须是新的，开始前提交源码改动；脚本会完整构建，再声明协议、采集、独立重成像、验收、展开、公开输入匹配优化和隔离评价。默认使用现有演示；验证噪声或不同轨道种子时，应显式指定对应资产包，不能把默认演示视为带噪声场景。
+
+```bash
+bash tools/run_d3_holdout.sh sessions/FROZEN_NEW local_data/evaluation/FROZEN_NEW \
+  12 3 local_data/stage_b/contact_demo > /tmp/ssb_frozen_NEW.log 2>&1
+# 可选：同一入口的 D2 与独立评价改用 4 个进程。
+# SSB_OFFLINE_WORKERS=4 bash tools/run_d3_holdout.sh ...
+```
+
+新协议 v5 核验 14 项，包含构建身份、阶段 B 报告哈希和正式 D2/D3 产物的公开输入审计。审计先解析实际路径，再按公开输入白名单检查，收集主进程及数据工作进程的读取/违规计数；即使代码捕获了违规异常也不能通过。它覆盖 Python 文件读取，不是操作系统级沙箱。旧协议 v4 保留原来的较弱审计含义，不按新标准重新命名。
+
+采集验收报告禁止覆盖。首次验收写入 `evaluation/reports/stage_b_smoke.json` 及哈希记录 `stage_b_smoke.identity.json`；复查请用只读模式，或指定新的评价报告文件：
+
+```bash
+python3 -m ssb_tools.validate_stage_b SESSION --compare REIMAGE --read-only
+python3 -m ssb_tools.validate_stage_b SESSION --compare REIMAGE \
+  --output SESSION/evaluation/reports/recheck_NEW.json
+```
+
+独立重成像必须先实际渲染并核验，再考虑硬链接去重；比较已共用原图的硬链接副本不构成新的独立验证。更多证据及历史缺口见 [阶段 D](docs/STAGE_D.md#公开输入与报告保护复核2026-10-03) 和 [数据保留](docs/DATA_RETENTION.md)。
+
 ## 性能与资源
 
 以下为保留验收记录，不代表每台机器都能达到同样性能，也不是本次 GIF 录制的性能测试：
@@ -366,9 +394,9 @@ python3 tools/test_gazebo_plugins.py --output /tmp/ssb_plugin_regression_NEW \
   > /tmp/ssb_plugin_regression.log 2>&1
 ```
 
-默认使用 4 个 Python 工作进程，按上次报告的用例耗时分组；CPU 用例与 C++ 测试同时运行，Python CUDA 用例等待 C++ OptiX 测试退出后运行。不需要安装 pytest-xdist 等额外依赖，也不会筛掉用例或改变验收门限。当前完整回归按 colcon 计 **553 项全部通过、无跳过**（475 Python 用例、73 C++ 用例及 5 个 CTest 测试套件；独立用例共 548 项），本机约 **26 秒**；原有 388 项版本约 23 秒，普通入口当时约 56–57 秒，不能把不同用例数量直接当成速度比较。
+默认使用 4 个 Python 工作进程，按上次报告的用例耗时分组；CPU 用例与 C++ 测试同时运行，Python CUDA 用例等待 C++ OptiX 测试退出后运行。不需要安装 pytest-xdist 等额外依赖，也不会筛掉用例或改变验收门限。当前完整回归按 colcon 计 **581 项全部通过、无跳过**（503 Python 用例、73 C++ 用例及 5 个 CTest 测试套件；独立用例共 576 项），本机约 **26 秒**；原有 388 项版本约 23 秒，普通入口当时约 56–57 秒，不能把不同用例数量直接当成速度比较。
 
-脚本保存各组日志及 XML，核对用例身份、数量、重复项和退出码，再合并到 `build/ssb_tools/pytest.xml`，仍可用 `colcon test-result --all` 查看结果。默认日志目录为 `log/parallel_tests_时间_进程号/`；可用 `--output` 指定新的目录，或用 `--workers 1` 将 Python 用例改为串行排查。原始 `colcon test` 入口也保留。完整 20 米采集/展开复测及上面的 Gazebo 实际服务器回归仍单独执行，不包含在这 553 项中。
+脚本保存各组日志及 XML，核对用例身份、数量、重复项和退出码，再合并到 `build/ssb_tools/pytest.xml`，仍可用 `colcon test-result --all` 查看结果。默认日志目录为 `log/parallel_tests_时间_进程号/`；可用 `--output` 指定新的目录，或用 `--workers 1` 将 Python 用例改为串行排查。原始 `colcon test` 入口也保留。完整 20 米采集/展开复测及上面的 Gazebo 实际服务器回归仍单独执行，不包含在这 581 项中。
 
 原生 Linux 的 GPU 测试应直接加载系统运行库；现有 WSL 包装测试不能当作原生部署验收，见 [部署文档](docs/DEPLOYMENT.md)。
 

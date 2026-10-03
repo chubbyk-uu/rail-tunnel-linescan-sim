@@ -71,6 +71,10 @@ python3 tools/with_mesa_runtime.py /usr/bin/true
 
 它检查私有库和驱动目录是否存在，不等于图形渲染验收。然后用 README 的联合任务确认 Gazebo / RViz 可见，日志中无渲染错误。`--system` 是这个包装器的显式选项，但现有联合启动器仍选择 D3D12；不能据此把联合启动器当作原生 Linux 启动器。
 
+## 两种环境的离线 CPU 预算
+
+D2 匹配和独立接缝评价默认 `min(8, 当前进程可用 CPU 数)`，优先读取 CPU affinity，系统不支持时回退到 `os.cpu_count()`。因此 WSL 只分配 4 核或 Linux 进程限制为 4 核时默认使用 4 个，不会照宿主机总核数启动。可用 `--workers N` 设置不超过可用核心数的正整数；`run_d3_holdout.sh` 接受 `SSB_OFFLINE_WORKERS=N` 同时设置 D2 与评价。D3 分块线程采用相同默认预算，未将上述 D2/评价参数解释成 D3 线程设置。完整测试入口仍默认 4 个 Python 工作进程。
+
 ## 原生 Linux 启动
 
 先完成 README 的公共依赖、构建、[素材下载及资产生成](ASSETS.md)与**原生后端自检**。系统 NVIDIA 驱动必须能够提供 CUDA、OpenGL 和 OptiX，使用本机驱动配套的运行库，不加载 WSL 隔离组件。
