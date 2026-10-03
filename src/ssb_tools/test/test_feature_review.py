@@ -1,9 +1,24 @@
 import numpy as np
 import pytest
 
-from ssb_tools.feature_review import line_candidates, raw_overview
+from ssb_tools.feature_review import line_candidates, raw_overview, search_spacing, overview_stride
+from ssb_tools.match_bands import WINDOW_BUDGET
 from ssb_tools.initial_unroll import BandSampler, PROJECTION
 from ssb_tools.native_rows import MemoryRows
+
+
+@pytest.mark.parametrize('nx,bands', [(15000, 8), (100000, 35), (250000, 85)])
+def test_review_budget_scales_without_changing_pixel_or_matching_resolution(nx, bands):
+    import math
+    grid = dict(theta_rad=[-2*np.pi/3, 2*np.pi/3], radius_m=2.75, dq_m=.0002)
+    spacing = search_spacing(grid, bands-1)
+    count = math.ceil((np.diff(grid['theta_rad'])[0]*grid['radius_m']-511*grid['dq_m'])/spacing)
+    assert spacing >= .09 and count*(bands-1) <= WINDOW_BUDGET
+    stride = overview_stride([57596, nx])
+    assert math.ceil(57596/stride)*math.ceil(nx/stride) <= 1 << 20
+    assert math.ceil(57596/stride)*4096 <= 8 << 20
+    if nx == 15000:
+        assert spacing == .09 and stride == 32  # Existing 3 m review is unchanged.
 
 
 def helix_fixture():

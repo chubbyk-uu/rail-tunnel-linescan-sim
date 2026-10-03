@@ -14,7 +14,7 @@ from PIL import Image
 from .band_matching import MatchSettings
 from .global_resample import load_global, run as geometry_review, sample_corrected
 from .initial_unroll import display, grid_axes
-from .match_bands import plan_windows, verified_bands
+from .match_bands import WINDOW_BUDGET, plan_windows, verified_bands
 from .optimize_bands import public_robot
 from .provenance import stage_record
 from .session import read_json
@@ -109,9 +109,31 @@ def line_candidates(image, valid):
     return sorted(candidates, key=lambda item: -item['score'])
 
 
+def search_spacing(grid, adjacent_pairs):
+    """Coarsen image-only feature selection, never production D2 matching."""
+    spacing = .09
+    if adjacent_pairs:
+        per_pair = WINDOW_BUDGET//adjacent_pairs
+        if per_pair < 1:
+            raise ValueError('too many bands for bounded feature selection')
+        span = np.diff(grid['theta_rad'])[0]*grid['radius_m']-511*grid['dq_m']
+        spacing = max(spacing, float(np.nextafter(span/per_pair, np.inf)))
+    return spacing
+
+
+def overview_stride(shape):
+    """Keep both display extent and the existing raw megapixel budget."""
+    nq, nx = shape
+    stride = max(1, math.ceil(max(shape)/1800), math.ceil(math.sqrt(nq*nx/(1 << 20))))
+    while math.ceil(nq/stride)*math.ceil(nx/stride) > 1 << 20:
+        stride += 1
+    return stride
+
+
 def find_features(sampler, grid, raster):
     settings = MatchSettings(max_shift_mm=1.)
-    windows = plan_windows(sampler, grid, .09, 512, 1024, settings)
+    spacing = search_spacing(grid, max(0, len(sampler.segments)-1))
+    windows = plan_windows(sampler, grid, spacing, 512, 1024, settings)
     candidates = []
     tested = 0
     for window in windows:
@@ -139,7 +161,7 @@ def find_features(sampler, grid, raster):
     if not selected:
         raise ValueError('no supported elongated image structures found')
     return selected, dict(tested_windows=tested, candidate_count=len(candidates),
-                          spacing_m=.09, search_shape=[512, 1024],
+                          spacing_m=spacing, search_shape=[512, 1024],
                           wide_structure_min_thickness_px=10, backend=raster.describe())
 
 
@@ -202,7 +224,7 @@ def run(unroll, trajectory, observable, output, raw_root=None):
         output.mkdir(parents=True, exist_ok=False)
         grid = upstream['grid']
         angles, xs = grid_axes(grid)
-        stride = max(1, math.ceil(max(grid['shape'])/1800))
+        stride = overview_stride(grid['shape'])
         raw, valid, references = raw_overview(sampler, angles[::stride], xs[::stride], nominal_offsets)
         Image.fromarray(raw).save(output/'raw_helix.png')
         # Display a complete original band horizontally: exposure sequence along

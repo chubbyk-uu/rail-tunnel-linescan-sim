@@ -16,6 +16,8 @@ from .provenance import stage_record
 from .session import read_json, sha256_file
 from .stage_b_scene import peak_rss_bytes
 
+WINDOW_BUDGET = 4096
+
 MATCH = np.dtype([('window', '<i4'), ('band_a', '<i2'), ('band_b', '<i2'),
     ('x_a_m', '<f8'), ('q_a_m', '<f8'), ('x_b_m', '<f8'), ('q_b_m', '<f8'),
     ('ncc', '<f4'), ('fb_px', '<f4'), ('residual_px', '<f4'), ('inlier', 'u1'), ('holdout', 'u1')]+
@@ -71,8 +73,8 @@ def plan_windows(sampler, grid, spacing_m, height, max_width, settings, halo_m=.
     half = (height-1)*dq/2
     lower, upper = np.asarray(grid['theta_rad'])*radius
     count = max(0, math.ceil((upper-lower-2*half)/spacing_m))
-    if count*max(0, len(sampler.segments)-1) > 4096:
-        raise ValueError('matching plan exceeds 4096-window resource budget')
+    if count*max(0, len(sampler.segments)-1) > WINDOW_BUDGET:
+        raise ValueError(f'matching plan exceeds {WINDOW_BUDGET}-window resource budget')
     usable = sampler.output_offsets[sampler.geometry_valid]
     windows = []
     for band in range(len(sampler.segments)-1):
