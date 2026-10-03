@@ -1,5 +1,6 @@
 """Public-image-only review of raw helix, nominal unroll and optimized seams."""
 import argparse
+from contextlib import contextmanager
 import html
 import json
 import math
@@ -170,13 +171,22 @@ def feature_crop(sampler, model, coefficients, grid, item):
                        invalid_pixels=[int(np.count_nonzero(~np.isfinite(p))) for p in pairs])
 
 
+@contextmanager
+def feature_raster(sampler):
+    """Keep CUDA ownership scoped to search, including exceptional exits."""
+    raster = CudaRaster(sampler)
+    try:
+        yield raster
+    finally:
+        raster.close()
+
+
 def run(unroll, trajectory, observable, output, raw_root=None):
     started = time.monotonic()
     output = Path(output).resolve()
     if any(output.is_relative_to(Path(p).resolve()) for p in (unroll, trajectory)):
         raise ValueError('review output must be separate from inputs')
     sampler, upstream, inputs = verified_bands(unroll, raw_root)
-    raster = None
     try:
         model, coefficients, optimized, trajectory_inputs = load_global(trajectory, sampler, upstream, unroll)
         height, observable = public_robot(observable, upstream['source_observation_hashes'].get(
@@ -206,10 +216,8 @@ def run(unroll, trajectory, observable, output, raw_root=None):
         row_ids = np.arange(first, end, raw_stride)
         raw_band = sampler.native.raw(row_ids)[:, ::raw_stride].T
         Image.fromarray(raw_band).save(output/'raw_band.png')
-        raster = CudaRaster(sampler)
-        features, search = find_features(sampler, grid, raster)
-        raster.close()
-        raster = None
+        with feature_raster(sampler) as raster:
+            features, search = find_features(sampler, grid, raster)
         crops = []
         for identifier, item in enumerate(features):
             pairs, record = feature_crop(sampler, model, coefficients, grid, item)
@@ -265,8 +273,6 @@ def run(unroll, trajectory, observable, output, raw_root=None):
             dict(raw_correction=False, source_selection='public image only', fusion=False)), indent=2)+'\n')
         return report
     finally:
-        if raster is not None:
-            raster.close()
         if hasattr(sampler.native, 'close'):
             sampler.native.close()
 

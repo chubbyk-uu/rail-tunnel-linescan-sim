@@ -91,3 +91,19 @@ print('80 blocks read in both directions with RLIMIT_NOFILE=64')
     result = subprocess.run([sys.executable, '-c', script, str(tmp_path)],
                             text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_public_results_own_memory_after_eviction_and_close(tmp_path):
+    blocks, pixels, flat = raw_fixture(tmp_path, count=3)
+    native = NativeRows(tmp_path, blocks, np.arange(3), 2, flat, max_open_blocks=1)
+    raw = native.raw([0])
+    corrected = native.rows([0])
+    gathered = native.gather([0], np.array([[0, 1]]))
+    borrowed = native.maps[0]
+    for array in (raw, corrected, gathered):
+        assert array.flags.owndata and not np.shares_memory(array, borrowed)
+    native.raw([1, 2])  # evicts block 0 and then block 1
+    assert borrowed._mmap.closed
+    native.close()
+    for array in (raw, corrected, gathered):
+        np.testing.assert_array_equal(array, pixels[[0]])

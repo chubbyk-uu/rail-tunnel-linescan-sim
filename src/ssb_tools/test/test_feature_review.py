@@ -88,3 +88,27 @@ def test_structure_ending_exactly_at_seam_search_boundary_is_not_indexed_outside
     # The feature ends just before the admissible centre region. Clamping the
     # centre to column 256 would index one column beyond this component.
     assert line_candidates(image, np.ones(image.shape, bool)) == []
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_feature_search_closes_cuda_on_success_and_exception(monkeypatch, fail):
+    import ssb_tools.feature_review as module
+    closed = []
+    class Raster:
+        def __init__(self, sampler):
+            self.sampler = sampler
+        def close(self):
+            closed.append(self)
+    monkeypatch.setattr(module, 'CudaRaster', Raster)
+    sampler = object()
+    def search():
+        with module.feature_raster(sampler) as raster:
+            assert raster.sampler is sampler
+            if fail:
+                raise RuntimeError('injected feature search failure')
+    if fail:
+        with pytest.raises(RuntimeError, match='injected'):
+            search()
+    else:
+        search()
+    assert len(closed) == 1

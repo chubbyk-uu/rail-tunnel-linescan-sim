@@ -51,7 +51,11 @@ class FloatRows:
 
 
 class NativeRows:
-    """Projection rows backed by hash-verified uint8 raw blocks of one capture."""
+    """Projection rows backed by hash-verified uint8 raw blocks of one capture.
+
+    Public raw/rows/gather results own their storage. Never return a slice of a
+    cached mmap: eviction and close invalidate such views without a Python error.
+    """
     def __init__(self, raw_dir, blocks, sequences, width, flat, verified=(), max_open_blocks=128):
         if not isinstance(max_open_blocks, int) or max_open_blocks < 1:
             raise ValueError('positive raw mapping cache capacity required')
@@ -93,6 +97,7 @@ class NativeRows:
         return path
 
     def _block(self, index):
+        """Borrow a mapping internally; no view may escape or survive another lookup."""
         if index not in self.maps:
             path = self._verify_block(index)
             if len(self.maps) >= self.max_open_blocks:
@@ -108,12 +113,14 @@ class NativeRows:
         for index in range(len(self.blocks)): self._verify_block(index)
 
     def raw(self, ids):
-        """uint8 native rows for projection row ids, in the order given."""
+        """Owned uint8 rows, safe after later reads, cache eviction and close."""
         ids = np.asarray(ids, np.int64)
         out = np.empty((len(ids), self.width), np.uint8)
         blocks = self.block_of[ids]
         for index in np.unique(blocks):
             selected = np.flatnonzero(blocks == index)
+            # Advanced indexing copies; out is independently allocated as well.
+            # Keep this copy inside the lookup's lifetime, before any eviction.
             out[selected] = self._block(int(index))[self.local[ids[selected]]]
         return out
 

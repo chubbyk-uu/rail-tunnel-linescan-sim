@@ -80,3 +80,17 @@ def test_cuda_rejects_nonmonotonic_geometry_and_excessive_tile():
         accelerator.close()
     sampler.offsets[3] = sampler.offsets[1]
     with pytest.raises(ValueError, match='mapping'): CudaRaster(sampler)
+
+
+def test_feature_search_failure_releases_real_cuda_context():
+    from ssb_tools.feature_review import feature_raster
+    sampler = analytic_sampler(raw=True)
+    with pytest.raises(RuntimeError, match='tile dimensions'):
+        with feature_raster(sampler) as raster:
+            assert raster.handle
+            raster.tile(np.array([0.]), np.zeros((1 << 20)+1))
+    assert raster.handle is None
+    # A fresh context can run after the exception; no silent CPU fallback.
+    with feature_raster(sampler) as next_raster:
+        next_raster.tile(np.array([0.]), np.array([.5]))
+    assert next_raster.handle is None
