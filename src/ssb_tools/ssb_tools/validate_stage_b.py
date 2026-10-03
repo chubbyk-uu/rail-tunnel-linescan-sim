@@ -143,9 +143,45 @@ def cpu_geometry(session,scene,scene_path,ray_count=64):
                  rays=ray_count,max_error_m=worst,threshold_m=5e-6,misses=misses,all_archived_hits_finite=finite)
 
 
+def identity_path(report):
+    return report.with_suffix('.identity.json')
+
+
+def report_destination(session_root, output=None, read_only=False):
+    if read_only:
+        return None
+    report = Path(output) if output else Path(session_root)/'evaluation/reports/stage_b_smoke.json'
+    for path in (report, identity_path(report)):
+        if path.exists() or path.is_symlink():
+            raise FileExistsError(f'preserve existing evidence: {path}; use --read-only or a fresh --output')
+    if 'evaluation' not in report.resolve().parts:
+        raise ValueError('validation reports belong in evaluation/')
+    return report
+
+
+def write_report(result, report, session_root, compare=None):
+    # Check both files before writing; exclusive creation also prevents replacement
+    # if another validator races this one. Only two small files per validation.
+    report_destination(session_root, report)
+    evidence = dict(session_json_sha256=sha256_file(Path(session_root)/'session.json'),
+                    compare_session_json_sha256=sha256_file(Path(compare)/'session.json') if compare else None)
+    result['evidence'] = evidence
+    report.parent.mkdir(parents=True, exist_ok=True)
+    with report.open('x') as stream:
+        stream.write(json.dumps(result, indent=2)+'\n')
+    identity = dict(schema='ssb.stage_b_identity.v1', report_sha256=sha256_file(report), **evidence)
+    with identity_path(report).open('x') as stream:
+        stream.write(json.dumps(identity, indent=2)+'\n')
+
+
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('session');p.add_argument('--compare')
-    args=p.parse_args(argv);session=Session(args.session);checks=[]
+    mode=p.add_mutually_exclusive_group()
+    mode.add_argument('--output', help='fresh report path inside evaluation/')
+    mode.add_argument('--read-only', action='store_true', help='print checks without writing evidence')
+    args=p.parse_args(argv)
+    report=report_destination(args.session, args.output, args.read_only)
+    session=Session(args.session);checks=[]
     try:
         checks.append(check('session_complete',PASS if session.summary.get('status')=='complete' else FAIL))
         count,bad=verify_hashes(session);checks.append(check('stored_hashes_verify',PASS if count and not bad else FAIL,files=count,errors=bad))
@@ -190,8 +226,8 @@ def main(argv=None):
     except Exception as error:
         checks.append(check('validation_error',FAIL,error=str(error)))
     result=dict(schema='ssb.stage_b_smoke_report.v1',scope=__doc__,overall=PASS if all(c['state']==PASS for c in checks) else FAIL,checks=checks)
-    report=session.root/'evaluation/reports/stage_b_smoke.json';report.parent.mkdir(exist_ok=True)
-    report.write_text(json.dumps(result,indent=2)+'\n')
+    if report is not None:
+        write_report(result, report, session.root, args.compare)
     for c in checks: print(c['name'],c['state'])
     print('overall:',result['overall']);return 0 if result['overall']==PASS else 1
 

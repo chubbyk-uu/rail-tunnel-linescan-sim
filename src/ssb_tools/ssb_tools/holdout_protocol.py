@@ -39,7 +39,8 @@ def declare(workspace, demo, output, start, length):
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
                ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py',
                 'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
-                'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py')]
+                'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py',
+                'validate_stage_b.py', 'validate_stage_a.py', 'ref_geometry.py', 'session.py')]
     record = dict(schema='ssb.d3_holdout_protocol.v5',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
@@ -49,7 +50,7 @@ def declare(workspace, demo, output, start, length):
             original_nominal_probes_retained=True, angular_gaps_not_trimmed=True,
             outside_target_requires_observed_common_interval=True,
             exact_plan_saved_before_truth=True),
-        required_evidence=['binary_matches_source', 'stage_b_acceptance', 'public_only_production_run'],
+        required_evidence=['binary_matches_source', 'stage_b_acceptance', 'stage_b_report_hash_valid', 'public_only_production_run'],
         input_hashes={str(demo/name): sha256_file(demo/name)
                       for name in ('capture.yaml', 'calibration.json', 'bundle.json')},
         production_sources={str(p): sha256_file(p) for p in sources})
@@ -58,7 +59,7 @@ def declare(workspace, demo, output, start, length):
     return record
 
 
-def capture_checks(session, expected_commit):
+def capture_checks(session, expected_commit, require_report_identity=False):
     path = session.root/'config/provenance.json'
     provenance = read_json(path)
     identity_ok = session.summary.get('files', {}).get('config/provenance.json') == sha256_file(path)
@@ -77,8 +78,21 @@ def capture_checks(session, expected_commit):
     stage_b_ok = (report.get('schema') == 'ssb.stage_b_smoke_report.v1' and
                   report.get('overall') == 'pass' and required.issubset(names) and
                   len(names) == len(set(names)) and all(c.get('state') == 'pass' for c in checks))
-    return dict(capture_provenance_hash_valid=identity_ok, binary_matches_source=matches,
-                stage_b_acceptance=bool(stage_b_ok))
+    result = dict(capture_provenance_hash_valid=identity_ok, binary_matches_source=matches,
+                  stage_b_acceptance=bool(stage_b_ok))
+    if require_report_identity:
+        from .validate_stage_b import identity_path
+        identity_file = identity_path(report_path)
+        identity = read_json(identity_file) if identity_file.is_file() else {}
+        result['stage_b_report_hash_valid'] = bool(
+            report_path.is_file() and identity.get('schema') == 'ssb.stage_b_identity.v1' and
+            identity.get('report_sha256') == sha256_file(report_path) and
+            identity.get('session_json_sha256') == sha256_file(session.root/'session.json') and
+            report.get('evidence') == {key: identity.get(key) for key in
+                ('session_json_sha256', 'compare_session_json_sha256')} and
+            isinstance(identity.get('compare_session_json_sha256'), str) and
+            len(identity['compare_session_json_sha256']) == 64)
+    return result
 
 
 def public_run_valid(root, strong=True):
@@ -129,7 +143,8 @@ def verify(protocol_file, root, output):
     else:
         checks['public_replay_identical'] = read_json(root/'public_replay/report.json').get(
             'geometry_and_residuals_identical') is True
-    checks.update(capture_checks(session, protocol['code_commit']))
+    checks.update(capture_checks(session, protocol['code_commit'],
+        require_report_identity=protocol.get('schema') == 'ssb.d3_holdout_protocol.v5'))
     if protocol.get('schema') in ('ssb.d3_holdout_protocol.v3', 'ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5'):
         checks['sampling_protocol_unchanged'] = protocol['sampling'] == dict(
             schema=SAMPLING_SCHEMA, spacing_q_m=.2, phase_fractions=[.25, .75], samples_across=9,
@@ -141,6 +156,12 @@ def verify(protocol_file, root, output):
         checks=checks, protocol_sha256=sha256_file(protocol_file),
         capture_build=provenance.get('build'), capture_source_at_run=source,
         interpretation='unchanged C++ code is explanatory evidence, not an exemption from build identity')
+    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v5':
+        from .validate_stage_b import identity_path
+        report_file = session.root/'evaluation/reports/stage_b_smoke.json'
+        identity_file = identity_path(report_file)
+        report['stage_b_evidence'] = {str(p): sha256_file(p) if p.is_file() else None
+                                       for p in (report_file, identity_file)}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2)+'\n')
     return report
