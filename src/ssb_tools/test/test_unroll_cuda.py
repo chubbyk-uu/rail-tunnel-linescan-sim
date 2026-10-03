@@ -157,6 +157,43 @@ def test_global_cuda_zero_correction_matches_d1_and_preserves_shifted_band_candi
         corrected.close()
 
 
+@pytest.mark.parametrize('coupled', [False, True])
+def test_cuda_inverse_preserves_finite_nearest_row_footprints_and_real_gaps(coupled):
+    from ssb_tools.global_geometry import Trajectory
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    from ssb_tools.global_resample import corrected_tile
+    from ssb_tools.initial_unroll import BandSampler, PROJECTION
+    from ssb_tools.native_rows import MemoryRows
+    p = np.zeros(3, PROJECTION)
+    p['sequence'] = p['lattice_row'] = np.arange(3)
+    p['theta_rad'] = [-.011, 0., .011]
+    p['x_axis_m'] = [.4, .401, .402]
+    offsets = np.linspace(-.1, .1, 33)
+    pixels = np.broadcast_to(np.arange(33, dtype=np.uint8)+80, (3, 33)).copy()
+    flat = dict(offset=np.zeros(33), gain=np.ones(33), valid=np.ones(33, bool))
+    sampler = BandSampler(p, MemoryRows(pixels, flat), offsets, offsets, np.ones(33, bool), .01)
+    model = Trajectory(sampler, 1., .7)
+    c = np.zeros(model.size)
+    if coupled:
+        for k, correction in enumerate([.3, -.4, .6, -.5]):
+            c[model.starts[k]:model.starts[k+1]] = correction
+    # Nearest-row interiors, outer footprint, and an actual unsupported gap.
+    qs, xs = np.array([-.013, -.0055, -.002, .002]), np.array([.395, .405, .415])
+    if coupled:
+        from test_global_optimization import independent_hits
+        qs[1] = independent_hits(np.array([.4]), np.array([-.0055]), np.array([.005]),
+                                 np.array([[.0003, -.0004, .0006, -.0005]]), 1., .7)[0, 1]
+    expected, counts = corrected_tile(model, c, qs, xs)
+    assert counts[0].all() and counts[2:].all() and not counts[1].any()
+    raster = GlobalCudaRaster(model, c)
+    try:
+        actual, number, _ = raster.tile(qs, xs)
+        np.testing.assert_array_equal(number, counts)
+        np.testing.assert_allclose(actual, expected, atol=3e-5, rtol=0, equal_nan=True)
+    finally:
+        raster.close()
+
+
 def test_global_cuda_row_vectors_match_independent_matrix_ray_equations():
     from test_global_optimization import independent_hits
     from ssb_tools.global_geometry import Trajectory, GeometrySettings

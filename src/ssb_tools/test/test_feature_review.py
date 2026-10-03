@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from ssb_tools.feature_review import line_candidates, raw_overview, search_spacing, overview_stride
+from ssb_tools.feature_review import line_candidates, raw_overview, raw_band_crop, search_spacing, overview_stride
 from ssb_tools.match_bands import WINDOW_BUDGET
 from ssb_tools.initial_unroll import BandSampler, PROJECTION
 from ssb_tools.native_rows import MemoryRows
@@ -55,6 +55,19 @@ def test_raw_helix_preserves_actual_pixels_and_nominal_unroll_removes_slant():
     nominal, supported, _ = sampler.sample(0, angles, np.linspace(.04, .06, 21))
     assert supported.all()
     np.testing.assert_array_equal(np.argmin(nominal, axis=1), np.full(81, 10))
+
+
+def test_local_raw_crop_uses_one_anchor_without_flat_or_row_motion_compensation():
+    sampler = helix_fixture()
+    def forbidden(*args):
+        raise AssertionError('raw comparison must not apply optical correction')
+    sampler.native.gather = forbidden
+    raw, record = raw_band_crop(sampler, 0, sampler.phases[0], sampler.offsets+.04,
+                               sampler.offsets, 0.)
+    np.testing.assert_array_equal(raw, sampler.native.raw_rows)
+    np.testing.assert_array_equal(np.argmin(raw, axis=1), 150-np.arange(81))
+    assert record['anchor_sequence'] == 40
+    assert record['reference_x_m'] == pytest.approx(.04)
 
 
 def test_raw_preview_keeps_unsupported_angles_masked_and_enforces_budget():

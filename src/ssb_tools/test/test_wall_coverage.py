@@ -97,6 +97,18 @@ def test_wall_plan_ignores_private_truth_and_rejects_bad_margins(nominal):
     with pytest.raises(ValueError, match='narrow'): wall_plan(config, 3., 3., calibration)
 
 
+@pytest.mark.parametrize('start,length', [(0., 1.), (3., 3.), (0., 20.)])
+def test_every_target_intersecting_nominal_exposure_is_outside_the_ramps(nominal, start, length):
+    config, calibration = nominal
+    _, task = wall_plan(config, start, length, calibration)
+    left, right = task['nominal_usable_span_m']
+    head_mount = config['calibration']['head_mount_x_m']
+    first_intersection = start-right-head_mount
+    last_intersection = start+length-left-head_mount
+    assert task['start_m']+task['ramp_margin_m'] < first_intersection
+    assert task['end_m']-task['ramp_margin_m'] > last_intersection
+
+
 def test_bad_column_is_not_silently_bridged(nominal):
     config, calibration = nominal
     calibration['flat']['valid'][2000] = False

@@ -200,13 +200,22 @@ class Trajectory:
         return RaySet(self, axis, theta, tangent, weights)
 
     def forward(self, band, x, q, coefficients):
-        """Map nominal band coordinates to corrected cylinder coordinates."""
+        """Map coordinates within recorded pixel footprints, not only row centres.
+
+        Between contiguous rows the centre-ray interpolation stays unchanged.
+        A nearest-row sample has a finite angular footprint: evaluate that
+        direction at the recorded pose, while radiometry still uses that row.
+        Snapping its geometry to the centre makes the map piecewise constant
+        and prevents even a zero-correction inverse from being an identity.
+        row_sources still rejects uncovered gaps and missing observations.
+        """
         x, q = np.broadcast_arrays(x, q)
         lo, hi, w, supported = self.sampler.row_sources(band, q.ravel()/self.radius)
         result = np.zeros((x.size, 2))
         for ids, weight in ((lo, 1-w), (hi, w)):
             p = self.sampler.projection[ids]
             axis = p['x_axis_m']; theta = p['theta_rad']-2*math.pi*p['segment']
+            theta = np.where(lo == hi, q.ravel()/self.radius, theta)
             tangent = (x.ravel()-axis)/self.radius
             result += weight[:, None]*self.points(axis, theta, tangent, coefficients)
         return result.reshape(x.shape+(2,)), supported.reshape(x.shape)

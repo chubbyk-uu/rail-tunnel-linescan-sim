@@ -104,9 +104,10 @@ def plan(config, start, distance):
 def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     """Plan a wall target using nominal pitch, calibrated usable FOV and ramp margins.
 
-    While cruising, any scan phase appears within one nominal pitch. Leading and trailing
-    cruise endpoints therefore need pitch-minus-FOV margins. Ramp travel and a fixed guard
-    are additional buffers; the target is never shrunk after seeing a recorded trajectory.
+    Cover the target at every scan phase, and keep any exposure whose calibrated
+    FOV intersects it outside the ramps. Pixel coverage alone permits the last
+    overlapping band to decelerate while still seeing the target; the resulting
+    unequal encoder-row spacing weakens double-band seam support.
     """
     from .wall_coverage import calibrated_spans, calibrated_row_footprint
     start, length = start_values(dict(start_m=start, distance_m=length))
@@ -130,8 +131,8 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     # At most one second ramps, so this upper bound also works for short/faster tasks.
     ramp_margin = speed/2
     mount = config['calibration']['head_mount_x_m']
-    vehicle_start = start-pitch-left-mount-ramp_margin-guard
-    vehicle_end = start+length+pitch-right-mount+ramp_margin+guard
+    vehicle_start = min(start-pitch-left, start-right)-mount-ramp_margin-guard
+    vehicle_end = max(start+length+pitch-right, start+length-left)-mount+ramp_margin+guard
     c, task = _travel_plan(config, vehicle_start, vehicle_end-vehicle_start, inspection_domain=False)
     gate = config['gate']
     # The requested wall stays fixed in tunnel coordinates even when the head
@@ -148,6 +149,7 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     task.update(mode='wall', target_x_m=[start, start+length], target_length_m=length,
                 capture_gate_deg=[gate['start_deg'], gate['end_deg']], output_arc_deg=arc,
                 nominal_usable_span_m=[left, right], ramp_margin_m=ramp_margin, guard_m=guard,
+                ramp_policy='all nominal target-intersecting calibrated exposures inside cruise',
                 nominal_row_step_m=row_step*config['calibration']['radius_m'],
                 minimum_row_footprint_m=footprint*config['calibration']['radius_m'],
                 coverage_note='Nominal full-angle target; acceptance uses recorded encoders and measured calibration. '

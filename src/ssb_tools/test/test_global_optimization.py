@@ -303,6 +303,43 @@ def test_corrected_inverse_and_sampling_use_the_original_native_pixels_once():
     np.testing.assert_allclose(zero, expected, atol=1e-4, rtol=0)
 
 
+@pytest.mark.parametrize('location', ['wide_gap', 'missing_row', 'band_edge'])
+def test_finite_nearest_row_footprint_has_invertible_geometry_without_inventing_rows(location):
+    from ssb_tools.global_resample import inverse_points, native_points
+    p = np.zeros(3, PROJECTION)
+    p['sequence'] = [0, 1, 2]
+    p['lattice_row'] = [0, 2, 3] if location == 'missing_row' else [0, 1, 2]
+    p['theta_rad'] = [-.011, 0., .011]
+    p['x_axis_m'] = [.4, .401, .402]
+    offsets = np.linspace(-.1, .1, 33)
+    sampler = BandSampler(p, np.full((3, 33), 100., np.float32), offsets,
+                          offsets, np.ones(33, bool), .01)
+    model = Trajectory(sampler, 1., .7)
+    c = np.zeros(model.size)
+    for k, correction in enumerate([.3, -.4, .6, -.5]):
+        c[model.starts[k]:model.starts[k+1]] = correction
+    # Independent matrix reference uses the measured pose of the nearest row,
+    # and a direction inside its footprint, not a fabricated exposure centre.
+    query = -.013 if location == 'band_edge' else -.002
+    row = 0 if location == 'band_edge' else 1
+    expected = independent_hits(np.array([p['x_axis_m'][row]]), np.array([query]),
+        np.array([.405-p['x_axis_m'][row]]),
+        np.array([[.0003, -.0004, .0006, -.0005]]), 1., .7)
+    actual, supported = model.forward(0, np.array([.405]), np.array([query]), c)
+    assert supported.all()
+    np.testing.assert_allclose(actual, expected, atol=2e-14, rtol=0)
+    x, q, ok = inverse_points(model, c, 0, expected[:, 0], expected[:, 1])
+    assert ok.all()
+    np.testing.assert_allclose([x[0], q[0]], [.405, query], atol=1e-8, rtol=0)
+    _, valid, _, sources = native_points(sampler, 0, x, q, 1.)
+    assert valid.all()
+    assert sources['lower_sequence'][0] == sources['upper_sequence'][0] == row
+    # The centre of a real gap remains uncovered; inversion cannot fill it.
+    _, _, gap_ok = inverse_points(model, np.zeros(model.size), 0,
+                                   np.array([.405]), np.array([-.0055]))
+    assert not gap_ok.any()
+
+
 @pytest.mark.parametrize('translations', [False, True, 'heave'])
 def test_obviously_wrong_inlier_matches_are_not_absorbed_as_motion(translations):
     model, table, grid = synthetic_matches(translations)

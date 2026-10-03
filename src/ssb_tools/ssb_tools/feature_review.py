@@ -165,7 +165,29 @@ def find_features(sampler, grid, raster):
                           wide_structure_min_thickness_px=10, backend=raster.describe())
 
 
-def feature_crop(sampler, model, coefficients, grid, item):
+def raw_band_crop(sampler, band, angles, xs, nominal_offsets, anchor_angle):
+    """Original pixels with ONE encoder placement per band for the entire crop.
+
+    The anchor only centres the same feature in a local comparison. It cannot
+    straighten the helix: every row uses the identical sensor-column lookup.
+    No flat correction, calibrated distortion map or estimated trajectory.
+    """
+    lo, hi, weight, supported = sampler.row_sources(band, np.asarray(angles))
+    rows = np.where(weight <= .5, lo, hi)
+    a, b, w, _ = sampler.row_sources(band, np.array([anchor_angle]))
+    anchor = a[0] if w[0] <= .5 else b[0]
+    reference = float(sampler.projection['x_axis_m'][anchor])
+    delta = np.asarray(xs)-reference
+    columns = np.rint(np.interp(delta, nominal_offsets, sampler.columns)).astype(int)
+    inside = (delta >= nominal_offsets[0]) & (delta <= nominal_offsets[-1])
+    values = sampler.native.raw(rows)[:, columns].astype(np.float32)
+    values[~(supported[:, None] & inside[None, :])] = np.nan
+    return values, dict(reference_x_m=reference,
+                        anchor_sequence=int(sampler.projection['sequence'][anchor]),
+                        placement='one fixed encoder anchor per band; no within-band motion compensation')
+
+
+def feature_crop(sampler, model, coefficients, grid, item, nominal_offsets):
     window = item['window']
     height, width = window['shape']
     # Stay within the searched native overlap. Centre the hard splice on the feature.
@@ -174,7 +196,15 @@ def feature_crop(sampler, model, coefficients, grid, item):
     begin = int(np.clip(cx-half, 0, width-2*half))
     xs = window['x_first_m']+np.arange(begin, begin+2*half)*grid['dx_m']
     qs = window['q_first_m']+np.arange(height)*grid['dq_m']
-    pairs = []
+    raw = np.full((height, len(xs)), np.nan, np.float32)
+    anchors = []
+    for band, columns in zip(window['bands'], (slice(0, half), slice(half, None))):
+        values, anchor = raw_band_crop(sampler, band, qs/model.radius, xs[columns],
+                                      nominal_offsets, qs[len(qs)//2]/model.radius)
+        raw[:, columns] = values
+        anchors.append(dict(band=band, **anchor))
+        sampler.native.release()
+    pairs = [raw]
     for corrected in (False, True):
         image = np.full((height, len(xs)), np.nan, np.float32)
         for start in range(0, height, 16):
@@ -190,6 +220,7 @@ def feature_crop(sampler, model, coefficients, grid, item):
     return pairs, dict(shape=[height, len(xs)], seam_column=half,
                        bands=window['bands'], x_first_m=float(xs[0]), q_first_m=float(qs[0]),
                        grid_pitch_m=[grid['dx_m'], grid['dq_m']],
+                       presentation_order=['raw', 'nominal', 'optimized'], raw_anchors=anchors,
                        invalid_pixels=[int(np.count_nonzero(~np.isfinite(p))) for p in pairs])
 
 
@@ -242,9 +273,9 @@ def run(unroll, trajectory, observable, output, raw_root=None):
             features, search = find_features(sampler, grid, raster)
         crops = []
         for identifier, item in enumerate(features):
-            pairs, record = feature_crop(sampler, model, coefficients, grid, item)
+            pairs, record = feature_crop(sampler, model, coefficients, grid, item, nominal_offsets)
             record.update(candidate=item, id=identifier)
-            for name, pixels in zip(('nominal', 'optimized'), pairs):
+            for name, pixels in zip(('raw', 'nominal', 'optimized'), pairs):
                 Image.fromarray(display(pixels)).save(output/f'feature_{identifier}_{name}.png')
             crops.append(record)
         # Keep the previous error-based diagnostics and metrics beside feature-selected crops.
@@ -261,10 +292,9 @@ def run(unroll, trajectory, observable, output, raw_root=None):
             f'<p class="notice">名义 → 优化的留出 P95：{scores["heldout_before"]["norm_px"]["p95"]:.3f} → {scores["heldout_after"]["norm_px"]["p95"]:.3f} px；图像一致性检查{gate_label}（P95 ≤ {gate["threshold_p95_px"]:g} px）。本页不读取独立真值评价，不能用图像残差替代真实网格接缝、漂移和覆盖验收。</p>',
             '<p>x 轴向水平，q 周向竖直。概览缩小显示，点击查看文件；下方局部图每个输出像素约 0.2 mm，默认按 100% 像素显示。固定 DN 0–255，无锐化、自动对比度或接缝融合。</p><div class="overview">']
         for file, label in (('raw_helix.png', '① 未补偿的原始条带摆放'),
-                            ('geometry/nominal.png', '② 编码器名义展开（原来的左图）'),
                             ('geometry/optimized.png', '③ 图像匹配与全局轨迹优化')):
             page.append(f'<figure><figcaption>{label}</figcaption><a href="{file}"><img src="{file}"></a></figure>')
-        page.append('</div><h2 id="raw-band">单圈原始图：圈内前进造成的倾斜</h2>')
+        page.append('</div><details><summary>中间状态：编码器名义展开（精度比较基线）</summary><img style="width:100%" src="geometry/nominal.png"></details><h2 id="raw-band">单圈原始图：圈内前进造成的倾斜</h2>')
         page.append(f'<p>条带 {band}，原始 {width} 列 × {end-first} 曝光行；这一采集段编码器前进 {references[band]["observed_travel_m"]:.3f} m。横轴为曝光顺序，纵轴为传感器列；只转置并每隔 {raw_stride} 个像素抽样，不做图像变形。竖直板缝在此视图中呈斜线。</p><a href="raw_band.png"><img style="width:100%;height:auto" src="raw_band.png"></a>')
         page.append('<h2 id="features">板缝 / 裂缝形态附近的硬接缝</h2><p>位置仅从公开图像的细长暗结构选取，未读取裂缝编号、场景坐标或真值。形态标签不是独立缺陷鉴定；这些图用于看连续性，不另报挑选区域的验收分数。接缝在每张图正中，左右分别取相邻圈。</p>')
         for crop in crops:
@@ -272,13 +302,13 @@ def run(unroll, trajectory, observable, output, raw_root=None):
             item = crop['candidate']
             label = '宽线结构：板缝候选' if item['kind'] == 'wide' else '细线结构：裂缝候选'
             page.append(f'<h3>{html.escape(label)} {identifier+1} · 条带 {crop["bands"]}</h3><div class="pair">')
-            for name, title in (('nominal', '名义展开'), ('optimized', '全局优化')):
+            for name, title in (('raw', '未补偿螺旋的原始条带'), ('optimized', '全局优化')):
                 file = f'feature_{identifier}_{name}.png'
                 page.append(f'<figure><figcaption>{title}</figcaption><a href="{file}"><img src="{file}"></a></figure>')
-            page.append('</div>')
+            page.append(f'</div><details><summary>中间状态：名义展开</summary><img src="feature_{identifier}_nominal.png"></details>')
         page.append('<p><a href="geometry/review.html">保留的最大原始误差 / 最大剩余误差窗口与完整对比</a> · <a href="report.json">选择规则与资源报告</a> · <a href="provenance.json">输入输出哈希</a></p></html>')
         (output/'review.html').write_text('\n'.join(page), encoding='utf-8')
-        report = dict(schema='ssb.feature_review.v1', grid=grid, preview_stride=stride,
+        report = dict(schema='ssb.feature_review.v2', grid=grid, preview_stride=stride,
             raw=dict(selection='nearest original row and column; fixed first available x per band',
                      optical_correction=False, within_band_travel_compensation=False,
                      nominal_column_pitch_m=pitch, invalid_pixels=int(np.count_nonzero(~valid)),

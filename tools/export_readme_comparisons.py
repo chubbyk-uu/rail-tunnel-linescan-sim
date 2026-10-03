@@ -22,7 +22,7 @@ def export(features, output):
     output = Path(output).resolve()
     report = read_json(features/'report.json')
     record = read_json(features/'provenance.json')
-    if report.get('schema') != 'ssb.feature_review.v1' or record.get('stage') != 'feature_review':
+    if report.get('schema') != 'ssb.feature_review.v2' or record.get('stage') != 'feature_review':
         raise ValueError('verified public feature review required')
     selected = {}
     for crop in report['crops']:
@@ -33,7 +33,7 @@ def export(features, output):
     inputs = [features/'report.json', features/'provenance.json']
     sources = {}
     for kind in ('wide', 'thin'):
-        for name in ('nominal', 'optimized'):
+        for name in ('raw', 'optimized'):
             file = f'feature_{selected[kind]["id"]}_{name}.png'
             sources[(kind, name)] = confined_file(features, file)
     sources[('raw', 'band')] = confined_file(features, 'raw_band.png')
@@ -47,7 +47,7 @@ def export(features, output):
     products = []
     for kind, label in (('wide', 'joint'), ('thin', 'crack')):
         pixels = [np.array(Image.open(sources[kind, name]).convert('RGB'))
-                  for name in ('nominal', 'optimized')]
+                  for name in ('raw', 'optimized')]
         if pixels[0].shape != pixels[1].shape:
             raise ValueError('paired crop dimensions differ')
         h, w = pixels[0].shape[:2]
@@ -55,7 +55,7 @@ def export(features, output):
         fig = plt.figure(figsize=(width/100, height/100), dpi=100, facecolor='#202124')
         try:
             for x, image, title in zip((0, w+24), pixels,
-                    ('Encoder unroll', 'Feature matching + global optimization')):
+                    ('Raw helix (no motion compensation)', 'Feature matching + global optimization')):
                 ax = fig.add_axes([x/width, 0, w/width, h/height])
                 ax.imshow(image, interpolation='nearest'); ax.set_axis_off()
                 fig.text((x+8)/width, (h+24)/height, title, color='white', fontsize=12,

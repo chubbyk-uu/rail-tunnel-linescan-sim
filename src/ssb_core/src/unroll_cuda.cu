@@ -181,9 +181,19 @@ __device__ Row global_rows(const GlobalRay* rays, int n, double phase, double fo
           fmin(dl, dr) <= footprint/2.+1e-12, 0};
 }
 
-__device__ double2 global_hit(const GlobalRay& r, double x, double radius) {
+__device__ double2 global_hit(const GlobalRay& r, double x, double radius,
+                              double angular_offset = 0.) {
   double tangent = (x-r.axis)/radius;
-  double vx = r.tx*tangent+r.rx, vy = r.ry, vz = r.tz*tangent+r.rz;
+  // Rotate inside the recorded row's finite angular footprint, around the
+  // fitted scan axis (r.tx, 0, r.tz). This changes neither pose nor source row.
+  double rx = r.rx, ry = r.ry, rz = r.rz;
+  if (angular_offset != 0.) {
+    double cs = cos(angular_offset), sn = sin(angular_offset);
+    rx = cs*r.rx+sn*r.tz*r.ry;
+    ry = cs*r.ry+sn*(r.tx*r.rz-r.tz*r.rx);
+    rz = cs*r.rz-sn*r.tx*r.ry;
+  }
+  double vx = r.tx*tangent+rx, vy = ry, vz = r.tz*tangent+rz;
   double aa = vy*vy+vz*vz, bb = 2.*(r.oy*vy+r.oz*vz);
   double cc = r.oy*r.oy+r.oz*r.oz-radius*radius;
   double length = (-bb+sqrt(bb*bb-4.*aa*cc))/(2.*aa);
@@ -194,8 +204,9 @@ __device__ double2 global_hit(const GlobalRay& r, double x, double radius) {
 __device__ double2 global_forward(const GlobalRay* rays, int n, double x, double q,
                                   double radius, double footprint, Row* row) {
   *row = global_rows(rays, n, q/radius, footprint);
-  double2 a = global_hit(rays[row->lower], x, radius);
-  double2 b = global_hit(rays[row->upper], x, radius);
+  double offset = row->lower == row->upper ? q/radius-rays[row->lower].phase : 0.;
+  double2 a = global_hit(rays[row->lower], x, radius, offset);
+  double2 b = global_hit(rays[row->upper], x, radius, offset);
   return make_double2((1.-row->weight)*a.x+row->weight*b.x,
                       (1.-row->weight)*a.y+row->weight*b.y);
 }
