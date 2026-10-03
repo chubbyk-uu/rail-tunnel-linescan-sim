@@ -6,6 +6,7 @@
 
 | 数据 | 位置 | 用途 |
 |---|---|---|
+| 离线提速后冻结复核 | `sessions/perf_ring_{high,low}_20261003/`、`local_data/evaluation/perf_tier2_20261003/` | `d60e15d` 上用同一轨道种子与区段重采；协议 v4、公开运行审计和独立评分均通过，与原冻结结果的接缝分数一致到小数点后 6 位；每组约 3.8 GB |
 | 环缝高/低占比新轨道留出 | `sessions/ring_{high,low}_seed20261005_20261003/`、同名 `local_data/evaluation/` 目录 | 冻结 `b206f6d`、未用于调参的轨道种子；保留原图、独立重成像、D1/D2/D3、阶段 B 与协议核验、公开输入复现 |
 | 环缝修复完整 20 m 复算 | `sessions/ring_phase_20m_corrected_20261003/`、`local_data/evaluation/ring_phase_20261003/corrected_20m_*` | 使用第二批原图/D1，窗口间 P95 0.691 px；新匹配、轨迹、公开复现和真实网格评分，不是新 20 m 采集；没有新整幅图 |
 | 环缝开发对照与原内点评价 | `sessions/ring_phase_dev_20261003/`、`local_data/evaluation/ring_phase_20261003/` | 原 15.396 px 开发失败、新 0.690 px、141 个原接受窗口的带符号网格诊断、冻结计划和汇总哈希；原失败不覆盖 |
