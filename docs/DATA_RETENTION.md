@@ -6,6 +6,9 @@
 
 | 数据 | 位置 | 用途 |
 |---|---|---|
+| 可选局部姿态加密的新轮径留出 | `sessions/wheel81_holdout_final_20261004/`、同名 `local_data/evaluation/`；`local_data/stage_b/wheel81_seed20261009_bundle/` | 冻结 `05717c7`、新种子 20261009、[12,15] m、真实 81 / 标定 80 mm。25 项采集、15 项协议及公开输入审计通过；接缝 0.492 / 0.670 px。完整原图与真正独立重成像分别保留，未去重；资产包为相对资源引用 |
+| 密集取点的轮径反例与原模型对照 | `sessions/wheel_adaptive_regression_20261004/`、`local_data/evaluation/wheel_adaptive_20261004/` | 保留公开 D2/D3、0.1 m 取点的两种模型评分、逐点和材质诊断、36 个输入身份及汇总。旧 80/81 mm 在窗口间仍失败；原始输入继续在 `wheel_error_20261004/`，此处不额外复制独立原图 |
+| 局部加密开发及完整回归归档 | `local_data/evaluation/wheel_adaptive_20261004/development_and_tests.tar.gz`、`archive_hashes.json`、`cleanup.json` | 436 个归档项逐一验证，约 430 MB；含候选/拒绝模型、精简日志、629 项测试 XML、首次 CLI 参数缺口的证据及配置。排除原图和重复 D1 投影，不能冒充完整可运行采集；首批重复原图与最终重采的独立原图摘要分别核对相同后删除 |
 | 里程停车与三档轮径试验 | `sessions/wheel_error_20261004/`、`local_data/evaluation/wheel_error_implementation_20261004/` | 保留三档真实接触、原图、独立重成像、D1/D2/D3、25 项采集验收、公开输入审计及逐点几何；81 mm 主门限失败原样保留。开发失败诊断和 595 项测试日志集中归档；正式原图未去重 |
 | 当前 README 对比源 | `sessions/audit_guard_high_20261003/feature_review_readme_20261004/`、`local_data/readme_export_final_20261004/` | 最新验收会话的公开图像复核与 1048×1092 组合图；只读原始输入，不生成整幅大数组；图片/哈希说明在 docs/media |
 | 审计与报告保护后复采 | `sessions/audit_guard_high_20261003/`、同名 `local_data/evaluation/`；`local_data/evaluation/audit_guards_tests_20261003/` | 冻结 `6795971`，已知高环缝区段；阶段 B 24 项、协议 v5 的 14 项及实际审计通过。独立重成像原图本轮未去重；保留报告哈希、5,787 个逐点比较及 581 项回归日志归档 |
@@ -65,3 +68,5 @@ D1 v2 不保留原始列浮点缓存，因此其后续匹配仍依赖 `native_so
 2026-10-04 文档整理只清理本轮已完成测试的 4 个临时夹具目录和初次展示导出草稿；最终公开图像复核、干净提交导出、原始采集与独立重成像全部保留。测试/XML/构建及媒体核对记录先集中打包、校验后清理，清单见 `local_data/evaluation/readme_restructure_20261004/summary.json`，没有修改历史验收报告。
 
 2026-10-04 轮径试验清理：验证集中归档的 387 个文件哈希后，删除本轮三个开发目录及 12 个测试临时夹具目录，逻辑占用约 5.66 GB。开发原图和大时序表已删除，归档不再是完整可运行会话；保留首次失败报告、修正复核报告与物理诊断。最终三档全部原图、独立重成像和重建产物仍保留，清单和归档哈希见 `local_data/evaluation/wheel_error_implementation_20261004/cleanup.json`。
+
+本轮删除自身候选计算、未评分的重复首批采集、生成中间目录及 12 个测试夹具目录。逻辑文件量约 17.16 GB，其中原图硬链接仍由正式输入持有；实际释放独占分配块约 5.91 GB，归档占约 0.43 GB，净回收约 5.5 GB。最终正式留出及既有反例原图、独立重成像完整保留。
