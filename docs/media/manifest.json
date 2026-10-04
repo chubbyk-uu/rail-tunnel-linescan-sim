@@ -323,22 +323,313 @@
         "raw",
         "optimized"
       ]
+    },
+    {
+      "date": "2026-10-04",
+      "session": "sessions/audit_guard_high_20261003",
+      "capture_commit": "6795971",
+      "feature_review_commit": "3cf6094",
+      "source": "sessions/audit_guard_high_20261003/feature_review_readme_20261004",
+      "response_gain": 2.4,
+      "assumed_sensor_noise": true,
+      "summary": {
+        "schema": "ssb.readme_summary.v1",
+        "source": "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/audit_guard_high_20261003/feature_review_readme_20261004",
+        "target_x_m": [
+          12.0,
+          15.0
+        ],
+        "overview_theta_deg": [
+          -29.991666087922777,
+          29.879158274880186
+        ],
+        "selection": "first wide/thin public-image candidates with centre inside original target; no evaluation input",
+        "candidates": [
+          {
+            "shape": [
+              512,
+              512
+            ],
+            "seam_column": 256,
+            "bands": [
+              3,
+              4
+            ],
+            "x_first_m": 13.858117246020436,
+            "q_first_m": 1.080613467951016,
+            "grid_pitch_m": [
+              0.0002,
+              0.00019999953231409427
+            ],
+            "presentation_order": [
+              "raw",
+              "nominal",
+              "optimized"
+            ],
+            "raw_anchors": [
+              {
+                "band": 3,
+                "reference_x_m": 13.609219773546835,
+                "anchor_sequence": 212997,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              },
+              {
+                "band": 4,
+                "reference_x_m": 14.20921515618295,
+                "anchor_sequence": 272256,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              }
+            ],
+            "invalid_pixels": [
+              0,
+              0,
+              0
+            ],
+            "candidate": {
+              "kind": "wide",
+              "centre_px": [
+                512,
+                88
+              ],
+              "bbox_px": [
+                0,
+                74,
+                1024,
+                78
+              ],
+              "thickness_px": 12.0,
+              "score": 22714.0078125,
+              "window": {
+                "id": 457,
+                "bands": [
+                  3,
+                  4
+                ],
+                "q_center_m": 1.131713348457267,
+                "status": "planned",
+                "shape": [
+                  512,
+                  1024
+                ],
+                "x_first_m": 13.806917246020436,
+                "q_first_m": 1.080613467951016
+              },
+              "x_m": 13.909317246020436,
+              "q_m": 1.0982134267946564
+            },
+            "id": 1
+          },
+          {
+            "shape": [
+              512,
+              512
+            ],
+            "seam_column": 256,
+            "bands": [
+              1,
+              2
+            ],
+            "x_first_m": 12.751868488465057,
+            "q_first_m": 3.7806134679510115,
+            "grid_pitch_m": [
+              0.0002,
+              0.00019999953231409427
+            ],
+            "presentation_order": [
+              "raw",
+              "nominal",
+              "optimized"
+            ],
+            "raw_anchors": [
+              {
+                "band": 1,
+                "reference_x_m": 12.502968505391777,
+                "anchor_sequence": 107813,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              },
+              {
+                "band": 2,
+                "reference_x_m": 13.102974413458918,
+                "anchor_sequence": 167072,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              }
+            ],
+            "invalid_pixels": [
+              0,
+              0,
+              0
+            ],
+            "candidate": {
+              "kind": "thin",
+              "centre_px": [
+                512,
+                381
+              ],
+              "bbox_px": [
+                0,
+                265,
+                1024,
+                132
+              ],
+              "thickness_px": 4.0,
+              "score": 43683.8125,
+              "window": {
+                "id": 233,
+                "bands": [
+                  1,
+                  2
+                ],
+                "q_center_m": 3.8317133484572627,
+                "status": "planned",
+                "shape": [
+                  512,
+                  1024
+                ],
+                "x_first_m": 12.700668488465057,
+                "q_first_m": 3.7806134679510115
+              },
+              "x_m": 12.803068488465057,
+              "q_m": 3.8568132897626812
+            },
+            "id": 2
+          }
+        ],
+        "panels": [
+          {
+            "source_file": "raw_helix.png",
+            "source_box": [
+              0,
+              675,
+              469,
+              1125
+            ],
+            "destination_box": [
+              21,
+              98,
+              490,
+              548
+            ]
+          },
+          {
+            "source_file": "geometry/optimized.png",
+            "source_box": [
+              0,
+              675,
+              469,
+              1125
+            ],
+            "destination_box": [
+              557,
+              98,
+              1026,
+              548
+            ]
+          },
+          {
+            "source_file": "feature_1_raw.png",
+            "source_box": [
+              0,
+              0,
+              512,
+              192
+            ],
+            "destination_box": [
+              0,
+              604,
+              512,
+              796
+            ]
+          },
+          {
+            "source_file": "feature_1_optimized.png",
+            "source_box": [
+              0,
+              0,
+              512,
+              192
+            ],
+            "destination_box": [
+              536,
+              604,
+              1048,
+              796
+            ]
+          },
+          {
+            "source_file": "feature_2_raw.png",
+            "source_box": [
+              0,
+              285,
+              512,
+              477
+            ],
+            "destination_box": [
+              0,
+              852,
+              512,
+              1044
+            ]
+          },
+          {
+            "source_file": "feature_2_optimized.png",
+            "source_box": [
+              0,
+              285,
+              512,
+              477
+            ],
+            "destination_box": [
+              536,
+              852,
+              1048,
+              1044
+            ]
+          }
+        ],
+        "source_pixels_identical": true,
+        "raw_correction": false,
+        "within_band_travel_compensation": false,
+        "fusion": false,
+        "sharpening": false
+      },
+      "output_hashes": {
+        "reconstruction_comparison.png": "b89d402b111c486f26657d2e64064721dae5ab5ef5f9f5c8b4d5a4b0b42d1fbe",
+        "reconstruction_crack_raw.png": "228828e3df6f15363ee76d59f0f3835851f7c0316f88b1cc134691831032635a",
+        "reconstruction_joint_raw.png": "4ad5446bef116046d875354fa0a535621cf795090622926d5fab54481d4b8175",
+        "reconstruction_crack_optimized.png": "80b5134e6dca90572a2168a527bc4eb97552e992d6378c9cca4b41950bdeeda6",
+        "reconstruction_joint_optimized.png": "2e7ea0c441ec28e1cb04b873bf7a591291139864752a85048fe088f1f0427df3"
+      },
+      "export_provenance_sha256": "9456790b0428848b777acfd1879b14f92d1ed1508f069257df1bf876108f84ed",
+      "export_report_sha256": "2c6920cd191958c017e20a4032b8940d23fcce8deafaf0be74294f438af85b80",
+      "export_source": {
+        "git_head": "ceb68119c16de348fda1632f46315bd9b52e2dea",
+        "git_dirty": false,
+        "source_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "module": "/home/jerry/robot_ws/Subway_scan_bot_sim/src/ssb_tools/ssb_tools"
+      },
+      "exporter_sha256": "07457aad0937a16372fefc5f8b78ca2099810dda428af263b9b2d55d672f7f20",
+      "interpretation": "known high-ring 3 m recapture, not new blind validation; top sector is a display crop, not changed acceptance target",
+      "exporter_commit": "ceb68119c16de348fda1632f46315bd9b52e2dea",
+      "export_directory": "local_data/readme_export_final_20261004"
     }
   ],
   "reconstruction_figures": {
     "date": "2026-10-04",
-    "session": "sessions/audit_guard_high_20261003",
-    "capture_commit": "6795971",
-    "feature_review_commit": "3cf6094",
-    "source": "sessions/audit_guard_high_20261003/feature_review_readme_20261004",
+    "session": "sessions/boundary_crop81_holdout_20261004",
+    "capture_commit": "7abfc5bf7c3740948f1552c1e26484e6ba5ac05c",
+    "feature_review_commit": "7abfc5bf7c3740948f1552c1e26484e6ba5ac05c",
+    "source": "sessions/boundary_crop81_holdout_20261004/features",
     "response_gain": 2.4,
-    "assumed_sensor_noise": true,
+    "assumed_sensor_noise": false,
+    "track_seed": 20261029,
+    "true_wheel_mm": 81,
+    "calibrated_wheel_mm": 80,
     "summary": {
       "schema": "ssb.readme_summary.v1",
-      "source": "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/audit_guard_high_20261003/feature_review_readme_20261004",
+      "source": "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/boundary_crop81_holdout_20261004/features",
       "target_x_m": [
-        12.0,
-        15.0
+        8.0,
+        11.0
       ],
       "overview_theta_deg": [
         -29.991666087922777,
@@ -356,8 +647,8 @@
             3,
             4
           ],
-          "x_first_m": 13.858117246020436,
-          "q_first_m": 1.080613467951016,
+          "x_first_m": 9.703524737570758,
+          "q_first_m": 3.420613467951012,
           "grid_pitch_m": [
             0.0002,
             0.00019999953231409427
@@ -370,14 +661,14 @@
           "raw_anchors": [
             {
               "band": 3,
-              "reference_x_m": 13.609219773546835,
-              "anchor_sequence": 212997,
+              "reference_x_m": 9.454632518071111,
+              "anchor_sequence": 224554,
               "placement": "one fixed encoder anchor per band; no within-band motion compensation"
             },
             {
               "band": 4,
-              "reference_x_m": 14.20921515618295,
-              "anchor_sequence": 272256,
+              "reference_x_m": 10.054631935635099,
+              "anchor_sequence": 283813,
               "placement": "one fixed encoder anchor per band; no within-band motion compensation"
             }
           ],
@@ -390,35 +681,35 @@
             "kind": "wide",
             "centre_px": [
               512,
-              88
+              217
             ],
             "bbox_px": [
               0,
-              74,
+              191,
               1024,
-              78
+              36
             ],
-            "thickness_px": 12.0,
-            "score": 22714.0078125,
+            "thickness_px": 10.0,
+            "score": 24505.27734375,
             "window": {
-              "id": 457,
+              "id": 483,
               "bands": [
                 3,
                 4
               ],
-              "q_center_m": 1.131713348457267,
+              "q_center_m": 3.4717133484572633,
               "status": "planned",
               "shape": [
                 512,
                 1024
               ],
-              "x_first_m": 13.806917246020436,
-              "q_first_m": 1.080613467951016
+              "x_first_m": 9.652324737570758,
+              "q_first_m": 3.420613467951012
             },
-            "x_m": 13.909317246020436,
-            "q_m": 1.0982134267946564
+            "x_m": 9.754724737570758,
+            "q_m": 3.4640133664631705
           },
-          "id": 1
+          "id": 0
         },
         {
           "shape": [
@@ -427,11 +718,11 @@
           ],
           "seam_column": 256,
           "bands": [
-            1,
-            2
+            4,
+            5
           ],
-          "x_first_m": 12.751868488465057,
-          "q_first_m": 3.7806134679510115,
+          "x_first_m": 10.056635660378406,
+          "q_first_m": -3.6893865320489767,
           "grid_pitch_m": [
             0.0002,
             0.00019999953231409427
@@ -443,15 +734,15 @@
           ],
           "raw_anchors": [
             {
-              "band": 1,
-              "reference_x_m": 12.502968505391777,
-              "anchor_sequence": 107813,
+              "band": 4,
+              "reference_x_m": 9.807737229126475,
+              "anchor_sequence": 248699,
               "placement": "one fixed encoder anchor per band; no within-band motion compensation"
             },
             {
-              "band": 2,
-              "reference_x_m": 13.102974413458918,
-              "anchor_sequence": 167072,
+              "band": 5,
+              "reference_x_m": 10.40774145724337,
+              "anchor_sequence": 307959,
               "placement": "one fixed encoder anchor per band; no within-band motion compensation"
             }
           ],
@@ -464,33 +755,33 @@
             "kind": "thin",
             "centre_px": [
               512,
-              381
+              258
             ],
             "bbox_px": [
               0,
-              265,
+              249,
               1024,
-              132
+              140
             ],
             "thickness_px": 4.0,
-            "score": 43683.8125,
+            "score": 44586.66015625,
             "window": {
-              "id": 233,
+              "id": 531,
               "bands": [
-                1,
-                2
+                4,
+                5
               ],
-              "q_center_m": 3.8317133484572627,
+              "q_center_m": -3.6382866515427255,
               "status": "planned",
               "shape": [
                 512,
                 1024
               ],
-              "x_first_m": 12.700668488465057,
-              "q_first_m": 3.7806134679510115
+              "x_first_m": 10.005435660378406,
+              "q_first_m": -3.6893865320489767
             },
-            "x_m": 12.803068488465057,
-            "q_m": 3.8568132897626812
+            "x_m": 10.107835660378406,
+            "q_m": -3.6377866527119402
           },
           "id": 2
         }
@@ -527,12 +818,12 @@
           ]
         },
         {
-          "source_file": "feature_1_raw.png",
+          "source_file": "feature_0_raw.png",
           "source_box": [
             0,
-            0,
+            121,
             512,
-            192
+            313
           ],
           "destination_box": [
             0,
@@ -542,12 +833,12 @@
           ]
         },
         {
-          "source_file": "feature_1_optimized.png",
+          "source_file": "feature_0_optimized.png",
           "source_box": [
             0,
-            0,
+            121,
             512,
-            192
+            313
           ],
           "destination_box": [
             536,
@@ -560,9 +851,9 @@
           "source_file": "feature_2_raw.png",
           "source_box": [
             0,
-            285,
+            162,
             512,
-            477
+            354
           ],
           "destination_box": [
             0,
@@ -575,9 +866,9 @@
           "source_file": "feature_2_optimized.png",
           "source_box": [
             0,
-            285,
+            162,
             512,
-            477
+            354
           ],
           "destination_box": [
             536,
@@ -594,23 +885,18 @@
       "sharpening": false
     },
     "output_hashes": {
-      "reconstruction_comparison.png": "b89d402b111c486f26657d2e64064721dae5ab5ef5f9f5c8b4d5a4b0b42d1fbe",
-      "reconstruction_crack_raw.png": "228828e3df6f15363ee76d59f0f3835851f7c0316f88b1cc134691831032635a",
-      "reconstruction_joint_raw.png": "4ad5446bef116046d875354fa0a535621cf795090622926d5fab54481d4b8175",
-      "reconstruction_crack_optimized.png": "80b5134e6dca90572a2168a527bc4eb97552e992d6378c9cca4b41950bdeeda6",
-      "reconstruction_joint_optimized.png": "2e7ea0c441ec28e1cb04b873bf7a591291139864752a85048fe088f1f0427df3"
+      "reconstruction_comparison.png": "acdaa4139be5669b0b32756cbef6041927441c5c14371dc407279c06dd246e06",
+      "reconstruction_crack_optimized.png": "811c0d15b8527309af8b1b37a62b5a62ded1fddc33a33b00ede95ae9201c0c13",
+      "reconstruction_crack_raw.png": "7157f141baf6b8ba9f3ff85b84a4224a0818ee7fcfc44c77e44f1eb4b81b4d73",
+      "reconstruction_joint_optimized.png": "612c24b94a867c9a6c3a0941f94ee6ea554133eb8ef8cbac68b29ac9514017ef",
+      "reconstruction_joint_raw.png": "8318908e5aaea3f8cdb9cfec5cd5f3eb30bc17798d9ac3e4cbb131d809e3f541"
     },
-    "export_provenance_sha256": "9456790b0428848b777acfd1879b14f92d1ed1508f069257df1bf876108f84ed",
-    "export_report_sha256": "2c6920cd191958c017e20a4032b8940d23fcce8deafaf0be74294f438af85b80",
-    "export_source": {
-      "git_head": "ceb68119c16de348fda1632f46315bd9b52e2dea",
-      "git_dirty": false,
-      "source_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "module": "/home/jerry/robot_ws/Subway_scan_bot_sim/src/ssb_tools/ssb_tools"
-    },
+    "export_provenance_sha256": "2d1e935ef764a65d44e63ae52aa987d37b16cd956e3553c2ef11caef068265a9",
+    "export_report_sha256": "456f7da2425073a51be71ec486a8791e69d2b72b3d9e499c7414b701c0de88c3",
+    "export_source": "tools/export_readme_summary.py",
     "exporter_sha256": "07457aad0937a16372fefc5f8b78ca2099810dda428af263b9b2d55d672f7f20",
-    "interpretation": "known high-ring 3 m recapture, not new blind validation; top sector is a display crop, not changed acceptance target",
-    "exporter_commit": "ceb68119c16de348fda1632f46315bd9b52e2dea",
-    "export_directory": "local_data/readme_export_final_20261004"
+    "exporter_commit": "7abfc5bf7c3740948f1552c1e26484e6ba5ac05c",
+    "export_directory": "local_data/boundary_readme_export_20261004",
+    "interpretation": "uncorrected raw helix vs calibrated globally optimized shared-depth reconstruction; no fusion, sharpening or automatic contrast; independent 3 m geometry P95 0.475/0.645 px"
   }
 }

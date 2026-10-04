@@ -42,7 +42,7 @@ ffmpeg -y -ss 1 -t 8 -i local_data/readme_media_20261002/rviz.mp4 \
 
 `joint_comparison_20m.png` 与 `crack_comparison_20m.png` 分别选图像检测器给出的首个宽/细结构，不使用缺陷真值或真实误差选图。每侧 512×512，两个面板逐字节等于源 PNG 的 RGB 像素，只在面板之外加标题。左侧原始 Mono8 每圈仅以局部中央角度的一次编码器位置固定摆放，没有螺旋、畸变和平场补偿；右侧经过采后光学校正、展开与全局优化。两侧固定 DN 0–255，无融合、锐化或调色。此为完整处理链对比，D3 定量精度仍比较名义展开和优化。`raw_band_20m.png` 是源 `raw_band.png` 的原样复制：原始 59,259×4096 曝光数据只转置并每隔 33 像素抽样，未作光学校正和圈内位移补偿。
 
-完整输出覆盖和保存值核验通过，但末圈 15 个预定双圈评价点缺测，整体验收仍失败；展示图不能豁免该失败，也不代表所有位置都达到 1 px。两组局部图由本机可选假设噪声档生成，不替换默认关闭噪声的演示。来源、候选位置和哈希见 `manifest.json` 的 `reconstruction_figures`。
+完整输出覆盖和保存值核验通过，但末圈 15 个预定双圈评价点缺测，整体验收仍失败；展示图不能豁免该失败，也不代表所有位置都达到 1 px。两组局部图由本机可选假设噪声档生成，不替换默认关闭噪声的演示。来源、候选位置和哈希见 `manifest.json` 的 `reconstruction_figures_history`。
 
 重新生成自己的复核页后，使用已构建的 Python 包导出（输出目录须为新目录）：
 
@@ -54,35 +54,33 @@ python3 tools/export_readme_comparisons.py \
   --output local_data/readme_export_NEW
 ```
 
-输出 `joint_comparison.png`、`crack_comparison.png`、`raw_band.png`、报告与自动溯源；导出前核验源文件身份，导出后核验所有面板像素。README 中的后缀 `20m` 表示本次数据范围，导出器自身也可用于其他范围。
+输出 `joint_comparison.png`、`crack_comparison.png`、`raw_band.png`、报告与自动溯源；导出前核验源文件身份，导出后核验所有面板像素。当时导出文件的后缀 `20m` 表示数据范围；当前 README 使用下节组合图，导出器也可用于其他范围。
 
 
 ## 重建对比图片（2026-10-04）
 
-当前 README 使用 [组合图](reconstruction_comparison.png)，尺寸 1048×1092。来源为 `6795971` 构建并采集的 `sessions/audit_guard_high_20261003`，带轨道起伏及假设噪声、增益 2.4；阶段 B 24 项、新协议 14 项和独立网格接缝/四边支撑通过。窗口内/间 P95 0.844/0.905 px，属于已知高环缝区段的复现，不是新盲验，也不表示每个点都 ≤1 px。
+当前 [组合图](reconstruction_comparison.png) 为 1048×1092，来自 `7abfc5b` 冻结后新种子 20261029 的 `sessions/boundary_crop81_holdout_20261004`：真实轮径 81 mm、标定 80 mm，带起伏，噪声关闭，增益 2.4；阶段 B 25 项、协议 v7 16 项与独立接缝／四边支撑均通过。窗口内／间 P95 为 0.475／0.645 px，不表示每点都 ≤1 px。
 
-- 总览显示 `[12,15] m` 顶部约 `−30°～+30°`，原 240° 目标和评价域没有改变。源预览按 32 像素间隔抽样，横轴轴向、纵轴周向；原始与优化使用相同网格，不拉伸、不人为增加倾斜。完整范围仍保存在本机复核页。
-- 局部位置只依据公开图像。选择中心位于原目标内的首个宽/细候选，因此跳过落在目标外的第 0 个候选，使用板缝候选 1、裂缝候选 2。每张源局部为 512×512；组合图裁取结构附近的 512×192，按 1:1 像素粘贴。没有读缺陷标签或按真值误差选位置。
-- 左侧原始 Mono8 每圈固定摆放，不补偿圈内前进、畸变或平场；右侧包含采后校正、展开、匹配与全局优化。固定 DN 0–255，无融合、锐化或自动对比度。去螺旋的效果主要来自展开，D3 定量基线仍是名义展开。
-- 标题与说明放在图像外；保存后的六个面板矩形与源图逐像素一致。源文件、裁切坐标、输出哈希及导出器身份写入 manifest.json，不将整幅数组保存进 Git。
-
-完整原尺度局部：
+- 总览展示 8–11 m 的顶部约 ±30°，源预览步距 32 像素；目标与评价仍为完整 240°。
+- 局部只依据公开图像，使用中心位于目标内的首个宽／细候选（编号 0／2）；没有读缺陷标签或按真值分数挑选。源局部 512×512，组合图截取结构附近的 512×192，保持 1:1 像素。
+- 左侧每圈固定摆放原始 Mono8，不补偿圈内前进、畸变或平场。右侧包含采后校正、展开、匹配、全局优化及共享径向深度。固定 DN 0–255，无融合、锐化和自动对比度。去螺旋主要来自展开，D3 定量基线仍为名义展开。
+- 保存后的六个面板矩形与哈希核验过的源图逐像素一致，来源、裁切和哈希见 manifest.json；整幅数组不入 Git。
 
 | 形态 | 原始条带 | 采后重建 |
 |---|---|---|
 | 板缝候选 | [原图](reconstruction_joint_raw.png) | [重建](reconstruction_joint_optimized.png) |
 | 裂缝候选 | [原图](reconstruction_crack_raw.png) | [重建](reconstruction_crack_optimized.png) |
 
-重新导出（目录须为新目录；工具使用已安装包）：
+重新导出时使用新目录，工具读取已安装包：
 
 ```bash
 python3 -m ssb_tools.feature_review \
-  --unroll sessions/audit_guard_high_20261003/unroll \
-  --trajectory sessions/audit_guard_high_20261003/fit \
-  --observable sessions/audit_guard_high_20261003/capture/config/observable_config.json \
+  --unroll sessions/boundary_crop81_holdout_20261004/unroll \
+  --trajectory sessions/boundary_crop81_holdout_20261004/fit \
+  --observable sessions/boundary_crop81_holdout_20261004/capture/config/observable_config.json \
   --output sessions/FEATURES_NEW > /tmp/ssb_features_NEW.log 2>&1
 python3 tools/export_readme_summary.py --features sessions/FEATURES_NEW \
   --output local_data/EXPORT_NEW
 ```
 
-本机生成物为 `feature_review_readme_20261004` 和 `local_data/readme_export_final_20261004`。复核生成代码为 `3cf6094`，展示导出在干净提交 `ceb6811` 上重新执行，与初次导出像素完全相同。未改动采集、匹配或优化算法；不能把图片导出当成重新冻结采集。
+当前导出目录为 `local_data/boundary_readme_export_20261004`。历史 20261005 种子、带噪声对比与对应哈希保留于 Git 历史及 manifest 的 reconstruction_figures_history，不将旧图的噪声档位或精度沿用到新图。

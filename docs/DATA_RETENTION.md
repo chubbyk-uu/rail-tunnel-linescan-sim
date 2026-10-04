@@ -8,6 +8,18 @@
 
 历史共享深度修复收尾：50 个正式证据哈希、两个导出包各 344 个文件均核对通过，217 项开发与测试记录逐项校验后集中归档（约 61 MB）。删除当轮开发目录、导出前中间世界和 16 个测试临时夹具目录，按 inode/硬链接计数预计净释放约 2.13 GiB；保留在正式会话中的原图硬链接不算释放空间。正式采集与独立重成像未删除或去重，首次缺测候选与失败测试日志仍在归档。
 
+## 首尾支撑修复后的保留数据（2026-10-04）
+
+| 用途 | 路径 | 范围 |
+|---|---|---|
+| 新种子 3 m 正式验收与展示 | `sessions/boundary_crop81_holdout_20261004/`、同名 `local_data/evaluation/` | 81 / 80 mm，独立原图与重成像、公开重建、取点 v4／报告 v5、16 项协议及图片来源全部保留 |
+| 新种子 20 m 正式验收与完整全图 | `sessions/boundary_crop20_holdout_20261004/`、同名 `local_data/evaluation/` | 80 / 80 mm、假设噪声；原图、独立重成像、重建、整图数组、完整覆盖与 CPU 探针、SIGTERM 中断及恢复记录保留 |
+| 三档受控回归 | `sessions/boundary_wheel_20261004/`、`sessions/boundary_crop_wheel_20261004/`、`local_data/evaluation/boundary_crop_wheel_20261004/` | 前者保存三档物理与采集／独立重成像，后者读取同一原图作修复后的展开与公开优化；不是三批新的盲验 |
+| 首轮余量补修失败 | `sessions/boundary81_holdout_20261004/`、`sessions/boundary20_holdout_20261004/`、同名 evaluation | 81 mm 缺测失败及 20 m 重建前停止；保留反例，不覆盖或改称通过 |
+| 审计与边界修复证据 | `local_data/evaluation/boundary_repairs_20261004/` | 723 项测试、反向回注、源记录诊断、汇总与日志／程序归档；`cleanup_tests.json` 只删除本轮临时测试夹具 |
+
+新增正式原图、独立重成像和全图数组保留用于复核，当前不删除。大块二进制顺序读写，无逐行／逐像素小文件；不批量改写历史验收报告。下文旧 review 的失败结论保留其当时规则与数据身份。
+
 ## 当前保留
 
 | 数据 | 位置 | 用途 |
@@ -26,12 +38,12 @@
 | 审计与报告保护后复采 | `sessions/audit_guard_high_20261003/`、同名 `local_data/evaluation/`；`local_data/evaluation/audit_guards_tests_20261003/` | 冻结 `6795971`，已知高环缝区段；阶段 B 24 项、协议 v5 的 14 项及实际审计通过。独立重成像原图本轮未去重；保留报告哈希、5,787 个逐点比较及 581 项回归日志归档 |
 | 离线提速后冻结复核 | `sessions/perf_ring_{high,low}_20261003/`、`local_data/evaluation/perf_tier2_20261003/` | `d60e15d` 上用同一轨道种子与区段重采；协议 v4、公开运行审计和独立评分均通过，与原冻结结果的接缝分数一致到小数点后 6 位；每组约 3.8 GB |
 | 环缝高/低占比新轨道留出 | `sessions/ring_{high,low}_seed20261005_20261003/`、同名 `local_data/evaluation/` 目录 | 冻结 `b206f6d`、未用于调参的轨道种子；保留原图、独立重成像、D1/D2/D3、阶段 B 与协议核验、公开输入复现 |
-| 环缝修复完整 20 m 复算 | `sessions/ring_phase_20m_corrected_20261003/`、`local_data/evaluation/ring_phase_20261003/corrected_20m_*` | 使用第二批原图/D1，窗口间 P95 0.691 px；新匹配、轨迹、公开复现和真实网格评分，不是新 20 m 采集；没有新整幅图 |
+| 环缝修复完整 20 m 复算 | `sessions/ring_phase_20m_corrected_20261003/`、`local_data/evaluation/ring_phase_20261003/corrected_20m_*` | 使用第二批原图/D1，窗口间 P95 0.691 px；新匹配、轨迹、公开复现和真实网格评分，不是新 20 m 采集；该环缝修复当时未生成整幅图 |
 | 环缝开发对照与原内点评价 | `sessions/ring_phase_dev_20261003/`、`local_data/evaluation/ring_phase_20261003/` | 原 15.396 px 开发失败、新 0.690 px、141 个原接受窗口的带符号网格诊断、冻结计划和汇总哈希；原失败不覆盖 |
 | 未调参轨道生成资产 | `local_data/stage_b/ring_holdout_seed20261005/` | 仅改变轨道起伏种子，共享不可变光学资产；源配置、世界和标定不变；含生成端私有配置，不分享为公开重建输入 |
 | 双圈共同域协议新采 | `sessions/d3_common_target_3m_20261003/`、`local_data/evaluation/d3_common_target_3m_20261003/` | `81fe051` 冻结复采，公共输入复现、采集验收与协议检查通过；已规划接缝通过，目标外及不可规划位置单列。保留原图和独立重成像 |
 | 共同域 v1 失败反例 | `sessions/d3_common_domain_3m_20261003/`、`local_data/evaluation/d3_common_domain_3m_20261003/` | 目标末端 9 点缺测的旧规则失败及公开支撑诊断；不能用新协议覆盖旧报告。2026-10-03 起只保留报告、溯源与日志，原图及大数组已删，不能再复现 |
-| 新巡航余量 20 m 历史反例 | `sessions/d3_noise_20m_support_20261003/`、`local_data/evaluation/d3_noise_20m_support_20261003/` | 原模型已规划共同域无缺测、窗口间 P95 4.232 px 失败报告保留；同一原图的环缝与共享深度修复分别另存，不覆盖旧报告，尚未生成新的优化整幅输出 |
+| 新巡航余量 20 m 历史反例 | `sessions/d3_noise_20m_support_20261003/`、`local_data/evaluation/d3_noise_20m_support_20261003/` | 原模型已规划共同域无缺测、窗口间 P95 4.232 px 失败报告保留；同一原图的环缝与共享深度修复分别另存，不覆盖旧报告；该原模型没有整幅输出，后续共享深度整图已核验并保留预览与覆盖证明 |
 | README 未补偿螺旋对比 | `sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/`、`local_data/readme_export_rawleft_20m_20261003/` | 旧采集原图和重建不变，`284e265` 生成原始左图、优化右图，逐像素与哈希核验通过；当前 8769 特征复核页 |
 | 双圈支撑回归证据 | `local_data/evaluation/double_support_fix_20261003/` | 日志归档、完整 XML、真实空隙/旧实现变异检查、导出像素校验及清理清单 |
 | 默认完整演示及标定 | `local_data/stage_b/contact_demo/` | Gazebo/RViz 默认入口；当前采集 250°、输出 240°、增益 2.4，带 2 mm 档轨道起伏。旧光学场景及 `*_baseline_240_20261003` 配置/标定保留，新旧会话不能混用标定 |
@@ -82,7 +94,7 @@ python3 -m ssb_tools.evaluate_global_geometry \
   > /tmp/ssb_relocated_20m_recheck.log 2>&1
 ```
 
-现有数据的严格接缝门限仍失败，命令应退出非零；迁移不会改变几何结果，不表示新的冻结或盲验。
+上述迁移的旧 review 数据严格接缝门限仍失败，命令应退出非零；迁移不会改变几何结果，不表示新的冻结或盲验。
 
 ## 清理原则与历史缺口
 
