@@ -2,15 +2,20 @@
 
 更新：2026-10-04。大型本机资产和会话不进 Git。清理只针对已完成的重复计算、重放及界面测试；生成、采集、重建中的文件不能删除。
 
+本次共享深度修复收尾：50 个正式证据哈希、两个导出包各 344 个文件均核对通过，217 项开发与测试记录逐项校验后集中归档（约 61 MB）。删除本轮开发目录、导出前中间世界和 16 个测试临时夹具目录，按 inode/硬链接计数预计净释放约 2.13 GiB；保留在正式会话中的原图硬链接不算释放空间。正式采集与独立重成像未删除或去重，首次缺测候选与失败测试日志仍在归档。
+
 ## 当前保留
 
 | 数据 | 位置 | 用途 |
 |---|---|---|
+| 共享径向深度的两个独立留出 | `sessions/relief81_holdout_20261004/`、`sessions/relief81_cached_holdout_20261004/`、同名 `local_data/evaluation/`；`local_data/stage_b/relief81_seed20261013_bundle/`、`relief81_seed20261017_bundle/` | 分别冻结 `a16958f`、`857f5c7`，新种子 20261013、20261017，[8,11] m，真实 81 / 标定 80 mm。每次 25 项阶段 B、16 项协议 v7 通过；完整原图与实际独立重成像分别保留，未去重 |
+| 共享深度与等价缓存回归 | `sessions/relief_final_20261004/`、`sessions/relief_cached_20261004/`、同名 `local_data/evaluation/` | 原 79/80/81 mm 及 20 m 高环缝噪声原图回归，主门限和四边支撑通过；缓存前后匹配、轨迹、深度数组、取点计划及逐点评价一致。汇总 `relief_cached_20261004/summary.json` 绑定 50 个证据哈希；不是新 20 m 轮径误差采集 |
+| 共享深度根因及本轮开发归档 | `local_data/evaluation/relief_root_20261004/`；`local_data/evaluation/relief_cached_20261004/development_and_tests.tar.gz`、`archive_hashes.json`、`cleanup.json` | 保留真实网格/理想圆柱隔离诊断、缺测候选、原型图像、性能对照、失败测试及最终 661 项测试日志。归档排除重复原图、D1 投影和临时测试夹具，不是完整可运行会话；逐项校验后清理本轮开发目录和导出前中间世界 |
 | 可选局部姿态加密的新轮径留出 | `sessions/wheel81_holdout_final_20261004/`、同名 `local_data/evaluation/`；`local_data/stage_b/wheel81_seed20261009_bundle/` | 冻结 `05717c7`、新种子 20261009、[12,15] m、真实 81 / 标定 80 mm。25 项采集、15 项协议及公开输入审计通过；接缝 0.492 / 0.670 px。完整原图与真正独立重成像分别保留，未去重；资产包为相对资源引用 |
 | 密集取点的轮径反例与原模型对照 | `sessions/wheel_adaptive_regression_20261004/`、`local_data/evaluation/wheel_adaptive_20261004/` | 保留公开 D2/D3、0.1 m 取点的两种模型评分、逐点和材质诊断、36 个输入身份及汇总。旧 80/81 mm 在窗口间仍失败；原始输入继续在 `wheel_error_20261004/`，此处不额外复制独立原图 |
 | 局部加密开发及完整回归归档 | `local_data/evaluation/wheel_adaptive_20261004/development_and_tests.tar.gz`、`archive_hashes.json`、`cleanup.json` | 436 个归档项逐一验证，约 430 MB；含候选/拒绝模型、精简日志、629 项测试 XML、首次 CLI 参数缺口的证据及配置。排除原图和重复 D1 投影，不能冒充完整可运行采集；首批重复原图与最终重采的独立原图摘要分别核对相同后删除 |
 | 里程停车与三档轮径试验 | `sessions/wheel_error_20261004/`、`local_data/evaluation/wheel_error_implementation_20261004/` | 保留三档真实接触、原图、独立重成像、D1/D2/D3、25 项采集验收、公开输入审计及逐点几何；81 mm 主门限失败原样保留。开发失败诊断和 595 项测试日志集中归档；正式原图未去重 |
-| 当前 README 对比源 | `sessions/audit_guard_high_20261003/feature_review_readme_20261004/`、`local_data/readme_export_final_20261004/` | 最新验收会话的公开图像复核与 1048×1092 组合图；只读原始输入，不生成整幅大数组；图片/哈希说明在 docs/media |
+| 当前 README 对比源 | `sessions/audit_guard_high_20261003/feature_review_readme_20261004/`、`local_data/readme_export_final_20261004/` | 2026-10-03 历史验收会话的公开图像复核与 1048×1092 组合图，尚未换成共享深度版本；只读原始输入，不生成整幅大数组；图片/哈希说明在 docs/media |
 | 审计与报告保护后复采 | `sessions/audit_guard_high_20261003/`、同名 `local_data/evaluation/`；`local_data/evaluation/audit_guards_tests_20261003/` | 冻结 `6795971`，已知高环缝区段；阶段 B 24 项、协议 v5 的 14 项及实际审计通过。独立重成像原图本轮未去重；保留报告哈希、5,787 个逐点比较及 581 项回归日志归档 |
 | 离线提速后冻结复核 | `sessions/perf_ring_{high,low}_20261003/`、`local_data/evaluation/perf_tier2_20261003/` | `d60e15d` 上用同一轨道种子与区段重采；协议 v4、公开运行审计和独立评分均通过，与原冻结结果的接缝分数一致到小数点后 6 位；每组约 3.8 GB |
 | 环缝高/低占比新轨道留出 | `sessions/ring_{high,low}_seed20261005_20261003/`、同名 `local_data/evaluation/` 目录 | 冻结 `b206f6d`、未用于调参的轨道种子；保留原图、独立重成像、D1/D2/D3、阶段 B 与协议核验、公开输入复现 |
@@ -19,7 +24,7 @@
 | 未调参轨道生成资产 | `local_data/stage_b/ring_holdout_seed20261005/` | 仅改变轨道起伏种子，共享不可变光学资产；源配置、世界和标定不变；含生成端私有配置，不分享为公开重建输入 |
 | 双圈共同域协议新采 | `sessions/d3_common_target_3m_20261003/`、`local_data/evaluation/d3_common_target_3m_20261003/` | `81fe051` 冻结复采，公共输入复现、采集验收与协议检查通过；已规划接缝通过，目标外及不可规划位置单列。保留原图和独立重成像 |
 | 共同域 v1 失败反例 | `sessions/d3_common_domain_3m_20261003/`、`local_data/evaluation/d3_common_domain_3m_20261003/` | 目标末端 9 点缺测的旧规则失败及公开支撑诊断；不能用新协议覆盖旧报告。2026-10-03 起只保留报告、溯源与日志，原图及大数组已删，不能再复现 |
-| 新巡航余量 20 m 反例 | `sessions/d3_noise_20m_support_20261003/`、`local_data/evaluation/d3_noise_20m_support_20261003/` | 已规划共同域无缺测，但窗口间 P95 4.232 px 仍失败；原协议与补充 v2 评价分别保留，新批次尚未生成优化整幅输出 |
+| 新巡航余量 20 m 历史反例 | `sessions/d3_noise_20m_support_20261003/`、`local_data/evaluation/d3_noise_20m_support_20261003/` | 原模型已规划共同域无缺测、窗口间 P95 4.232 px 失败报告保留；同一原图的环缝与共享深度修复分别另存，不覆盖旧报告，尚未生成新的优化整幅输出 |
 | README 未补偿螺旋对比 | `sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/`、`local_data/readme_export_rawleft_20m_20261003/` | 旧采集原图和重建不变，`284e265` 生成原始左图、优化右图，逐像素与哈希核验通过；当前 8769 特征复核页 |
 | 双圈支撑回归证据 | `local_data/evaluation/double_support_fix_20261003/` | 日志归档、完整 XML、真实空隙/旧实现变异检查、导出像素校验及清理清单 |
 | 默认完整演示及标定 | `local_data/stage_b/contact_demo/` | Gazebo/RViz 默认入口；当前采集 250°、输出 240°、增益 2.4，带 2 mm 档轨道起伏。旧光学场景及 `*_baseline_240_20261003` 配置/标定保留，新旧会话不能混用标定 |

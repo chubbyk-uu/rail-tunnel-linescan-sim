@@ -2,7 +2,7 @@
 
 轨道车沿钢轨前进，线阵相机与 COB 光源共同旋转，编码器逐行触发，形成连续螺旋扫描。Gazebo 负责轮轨接触与运动，OptiX 负责高速成像，ROS 2 / RViz 提供任务控制；采后通过标定、展开、特征匹配和全局优化复原隧道内壁。
 
-已完成 20 米采集、CUDA 展开、匹配和连续轨迹优化。修复后的 20 米接缝 P95 为 **0.689/0.691 px**（窗口内/间），通过 **1 px** 目标；新的优化整幅图与融合仍待完成。当前主要场景保留轨道起伏和车体小姿态变化，不读取仿真真值进行拼接。后续最多扩展到 **50 米**。
+已完成 20 米采集、CUDA 展开、匹配、连续轨迹优化与公开图像估计的板缝深度补偿。当前 20 米高环缝回归接缝 P95 为 **0.625/0.692 px**（窗口内/间），通过 **1 px** 目标；79/80/81 mm 的 3 米轮径场景和新种子留出也通过。新的优化整幅图与融合仍待完成。保留轨道起伏和车体小姿态变化，不读取仿真真值进行拼接，后续最多扩展到 **50 米**。
 
 ## 运行效果
 
@@ -24,7 +24,7 @@
 
 ![原始螺旋条带与重建结果，含板缝和裂缝局部](docs/media/reconstruction_comparison.png)
 
-来自最新通过验收的带起伏、带假设噪声会话。上部显示 12–15 米壁面顶部约 60° 区域；下部为板缝和裂缝候选的原尺度局部。左侧每圈固定摆放，**不补偿螺旋位移、畸变或平场**；右侧为采后校正、展开、匹配和优化结果。固定 DN 0–255，没有融合或锐化。
+来自已验收的种子 20261005、带起伏和假设噪声会话，展示图尚未换成新增深度补偿版本。上部显示 12–15 米壁面顶部约 60° 区域；下部为板缝和裂缝候选的原尺度局部。左侧每圈固定摆放，**不补偿螺旋位移、畸变或平场**；右侧为采后校正、展开、匹配和优化结果。固定 DN 0–255，没有融合或锐化。
 
 螺旋倾斜主要由展开消除，优化修正剩余接缝误差；定量评价以名义展开为基线。该批窗口内/间 P95 为 **0.844/0.905 px**，局部仍可能超过 1 px。完整局部图、来源及选点规则见 [媒体说明](docs/media/README.md#重建对比图片2026-10-04)，定量结论见 [验收文档](docs/EVALUATION.md)。
 
@@ -38,7 +38,7 @@
 | 运动 / 触发 | 0.2 m/s，估计里程 0.6 m/圈；名义约 28.444 kHz |
 | 扫描范围 | 采集 250°，输出上方 240°，每侧 5° 保护区 |
 | 壁面 | Concrete034 背景、砂浆板缝、0.2–0.6 mm 裂缝 |
-| 误差与噪声 | 默认有轨道起伏；固定安装和轮径偏差尚待端到端验证，噪声默认关闭 |
+| 误差与噪声 | 默认有轨道起伏；三档轮径已完成 3 m 验证，固定安装与长距离组合待验收；噪声默认关闭 |
 
 真实轮径和标定轮径分开配置；默认均为 80 mm；另有 79、81 mm 受控场景。扫描与新任务停车跟随估计里程；轮径试验见 [WHEEL_ERROR](docs/WHEEL_ERROR.md)，扫描轴误差与组合验收见 [后续计划](docs/ROADMAP.md)。暂不加 IMU。
 
@@ -123,7 +123,7 @@ python3 -m ssb_tools.initial_unroll --session sessions/wall_NEW \
 python3 -m ssb_tools.public_reconstruction \
   --unroll sessions/d1_NEW \
   --observable sessions/wall_NEW/config/observable_config.json \
-  --root sessions/reconstruction_NEW > /tmp/ssb_reconstruction.log 2>&1
+  --root sessions/reconstruction_NEW --surface-relief > /tmp/ssb_reconstruction.log 2>&1
 python3 -m ssb_tools.feature_review \
   --unroll sessions/d1_NEW --trajectory sessions/reconstruction_NEW/fit \
   --observable sessions/wall_NEW/config/observable_config.json \
@@ -137,14 +137,14 @@ D1 默认产物约 25 MB / 3 m、137 MB / 20 m，仍依赖原图；不要因此�
 
 ## 验收、测试与排障
 
-正式冻结采集、独立重成像、15 项协议核验（v6）和网格评价见 [EVALUATION](docs/EVALUATION.md)。阶段 B 报告禁止覆盖，复查用 `--read-only` 或新报告路径；已去重副本的比对不是新的独立验证。
+正式冻结采集、独立重成像、协议核验（v6 为 15 项，含共享深度的 v7 为 16 项）和网格评价见 [EVALUATION](docs/EVALUATION.md)。阶段 B 报告禁止覆盖，复查用 `--read-only` 或新报告路径；已去重副本的比对不是新的独立验证。
 
 ```bash
 python3 tools/run_tests.py > /tmp/ssb_test.log 2>&1
 colcon test-result --all
 ```
 
-当前完整回归 **629 项通过，无失败/跳过**，本机约 25–31 秒（本轮 24.60 秒）；正式采集与评价另行执行。生产 D2/评价默认最多 8 个可用 CPU，测试入口默认 4 个工作进程。原生 GPU 测试边界见部署文档。
+当前完整回归 **661 项通过，无失败/跳过**，本轮耗时 25.41 秒；正式采集与评价另行执行。生产 D2/评价默认最多 8 个可用 CPU，测试入口默认 4 个工作进程。原生 GPU 测试边界见部署文档。
 
 | 现象 | 检查 |
 |---|---|
