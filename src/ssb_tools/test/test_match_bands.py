@@ -125,6 +125,31 @@ def test_window_resource_budget_is_checked_before_large_plan_allocation(tmp_path
         plan_windows(sampler, report['grid'], .000001, 128, 256, MatchSettings(max_shift_mm=4.))
 
 
+def test_relative_scale_matching_halo_connects_recorded_outside_target_support():
+    from ssb_tools.reconstruction_support import matching_halo_m
+    from ssb_tools.match_bands import graph_components
+    phase=np.linspace(-.4,.4,1001);offsets=np.linspace(-.42,.42,4096)
+    p=np.zeros(2*len(phase),PROJECTION)
+    for band,axis in enumerate([-.9,-.3]):
+        ids=slice(band*len(phase),(band+1)*len(phase))
+        p['segment'][ids]=band;p['theta_rad'][ids]=phase+2*math.pi*band
+        p['lattice_row'][ids]=np.arange(len(phase))+band*10000
+        p['x_axis_m'][ids]=axis+.09*phase
+    class Rows:
+        def gather(self,*args):pytest.fail('planning must not access pixels')
+    sampler=BandSampler(p,Rows(),offsets,offsets,np.ones(4096,bool),.001)
+    grid=dict(dx_m=.0002,dq_m=.0002,radius_m=2.75,theta_rad=[-.4,.4],target_x_m=[0.,20.])
+    settings=MatchSettings(max_q_shift_mm=10)
+    old=plan_windows(sampler,grid,.1,256,1024,settings)
+    assert not any(w['status']=='planned' for w in old)
+    halo=matching_halo_m([-1.2,21.2],True)
+    assert halo==pytest.approx(.586)
+    assert matching_halo_m([-1.2,21.2],False)==.25
+    new=plan_windows(sampler,grid,.1,256,1024,settings,halo)
+    accepted=[dict(w,status='accepted') for w in new if w['status']=='planned']
+    assert accepted and graph_components(2,accepted)==[[0,1]]
+
+
 def test_diagnostic_descriptors_do_not_allocate_pixel_budget_but_live_windows_stay_capped(tmp_path, monkeypatch):
     import ssb_tools.match_bands as module
     root = tmp_path/'d1'; bands_fixture(root)

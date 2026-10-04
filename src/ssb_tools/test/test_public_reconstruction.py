@@ -6,7 +6,8 @@ from ssb_tools import public_reconstruction as module
 
 @pytest.mark.parametrize('gate', ['pass', 'fail', 'unmeasurable'])
 @pytest.mark.parametrize('slow', [False, True])
-def test_public_report_separates_completed_computation_audit_and_quality(tmp_path, monkeypatch, gate, slow):
+@pytest.mark.parametrize('relative', [False, True])
+def test_public_report_separates_completed_computation_audit_and_quality(tmp_path, monkeypatch, gate, slow,relative):
     from ssb_tools import fast_normal
     from ssb_tools.global_geometry import reconstruction_settings
     events=[]
@@ -14,7 +15,8 @@ def test_public_report_separates_completed_computation_audit_and_quality(tmp_pat
     def stage(*args):
         (tmp_path/'public_run').mkdir()
         return tmp_path/'d1', tmp_path/'config', tmp_path/'raw', 1
-    def match(*args):
+    def match(*args,**kwargs):
+        assert kwargs['relative_encoder_scale'] is relative
         (tmp_path/'matches').mkdir()
         return dict(status='complete', windows=1, matches=dict(total=12), worker_audits=[], performance=dict(wall_s=0.))
     def optimize(*args):
@@ -26,7 +28,7 @@ def test_public_report_separates_completed_computation_audit_and_quality(tmp_pat
     monkeypatch.setattr(module.public_audit, 'install', lambda *a, **kw: events.append('audit') or {})
     monkeypatch.setattr(module.public_audit, 'verified_states', lambda *a: [dict(blocked_reads=0)])
     report = module.run(tmp_path/'input', tmp_path/'observable', tmp_path, workers=1,
-                        settings=reconstruction_settings(slow_translation=slow))
+                        settings=reconstruction_settings(slow_translation=slow,relative_encoder_scale=relative))
     assert events == (['backend', 'audit'] if slow else ['audit'])
     assert report['status'] == 'complete' and report['audit_status'] == 'pass'
     assert report['quality_status'] == gate and report['d3']['image_consistency_gate'] == gate

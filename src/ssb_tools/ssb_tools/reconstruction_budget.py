@@ -17,6 +17,7 @@ from .match_bands import plan_windows, WINDOW_BUDGET, DIAGNOSTIC_WINDOW_BUDGET
 from .mission_plan import wall_plan
 from .session import sha256_file
 from .wall_coverage import calibrated_row_footprint, target_grid
+from .reconstruction_support import matching_halo_m
 
 MAXIMUM_PLANNING_LATTICE_ROWS = 4_000_000
 
@@ -60,7 +61,8 @@ def plan(config, calibration, start, length, settings, spacing_m=.1, height=256,
                           calibrated_row_footprint(config, calibration))
     model = Trajectory(sampler, config['calibration']['radius_m'], config['robot']['scan_axis_height_m'], settings)
     grid = target_grid([start, start+length], model.radius, [-2*math.pi/3, 2*math.pi/3], .0002)
-    windows = plan_windows(sampler, grid, spacing_m, height, 1024, MatchSettings(max_q_shift_mm=max_q_shift_mm))
+    halo=matching_halo_m([float(p['x_axis_m'].min()),float(p['x_axis_m'].max())],settings.relative_encoder_scale)
+    windows = plan_windows(sampler, grid, spacing_m, height, 1024, MatchSettings(max_q_shift_mm=max_q_shift_mm),halo)
     raw_bytes = len(p)*len(offsets)
     pixels = math.prod(grid['shape'])
     return dict(schema='ssb.nominal_reconstruction_budget.v1', status='pass',
@@ -68,7 +70,7 @@ def plan(config, calibration, start, length, settings, spacing_m=.1, height=256,
         d2=dict(spacing_m=spacing_m, height=height, max_q_shift_mm=max_q_shift_mm),
         estimated_rows=len(p), bands=len(sampler.bounds), trajectory_coefficients=model.size,
         coefficient_limit=2048, available_refinement_coefficients=2048-model.size,
-        matching=dict(descriptors=len(windows), image_windows=sum(w['status'] == 'planned' for w in windows),
+        matching=dict(descriptors=len(windows), image_windows=sum(w['status'] == 'planned' for w in windows),halo_m=halo,
                       image_window_limit=WINDOW_BUDGET, descriptor_limit=DIAGNOSTIC_WINDOW_BUDGET),
         scale_margin_m=model.scale_margin_m(), projection_bytes=p.nbytes, grid=grid,
         storage=dict(estimated_raw_bytes=raw_bytes, optimized_mosaic_bytes=3*pixels,

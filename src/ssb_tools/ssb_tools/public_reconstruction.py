@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import time
 
 from . import public_audit
@@ -68,7 +69,8 @@ def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
     staged_s = time.monotonic()-started
     reads = set()
     audit = public_audit.install(record/'public', raw, reads, recorded=[matches, fit, pose])
-    d2 = match(d1, matches, spacing_m, height, 1024, MatchSettings(max_q_shift_mm=max_q_shift_mm), .25, raw, workers)
+    d2 = match(d1, matches, spacing_m, height, 1024, MatchSettings(max_q_shift_mm=max_q_shift_mm), .25, raw, workers,
+               relative_encoder_scale=settings.relative_encoder_scale)
     if d2['status'] == 'unmeasurable':
         raise ValueError('D2 found no usable matches')
     d3 = optimize(d1, matches, config, pose, settings, raw)
@@ -96,6 +98,9 @@ def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
 
 
 def main():
+    # Ubuntu's optional crash reporter opens unrelated host files on exceptions.
+    # Keep the ordinary traceback without weakening the production read audit.
+    sys.excepthook=sys.__excepthook__
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--unroll', required=True); parser.add_argument('--observable', required=True)
     parser.add_argument('--root', required=True, help='session root; writes matches/, fit/ and public_run/')

@@ -12,6 +12,13 @@ def relative_scale_reach_m(domain, bound):
     return bound*(domain[1]-domain[0])/2
 
 
+def matching_halo_m(domain, relative_enabled, base=.25):
+    """Recorded buffer matches must cover the declared relative scale support."""
+    if type(relative_enabled) is not bool or not math.isfinite(base) or not 0 <= base <= .5:
+        raise ValueError('finite base matching halo and Boolean scale policy required')
+    return base+relative_scale_reach_m(domain,RELATIVE_SCALE_BOUND if relative_enabled else 0.)
+
+
 def correction_reach_m(radius, height):
     """Bound supported small-motion reconstruction beyond nominal footprints.
 

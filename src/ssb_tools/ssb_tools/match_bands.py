@@ -22,6 +22,7 @@ from .public_capture import confined_file
 from .provenance import stage_record
 from .session import read_json, sha256_file
 from .stage_b_scene import peak_rss_bytes
+from .reconstruction_support import matching_halo_m
 
 WINDOW_BUDGET = 4096
 # Rejected source-geometry descriptors carry no image work. Bound them separately
@@ -78,7 +79,7 @@ def verified_bands(root, raw_root=None, verify_raw=True):
 
 def plan_windows(sampler, grid, spacing_m, height, max_width, settings, halo_m=.25):
     if (not math.isfinite(spacing_m) or spacing_m <= 0 or height < 64 or max_width < 64 or
-        height*max_width > 1024*1024 or not math.isfinite(halo_m) or not 0 <= halo_m <= .5):
+        height*max_width > 1024*1024 or not math.isfinite(halo_m) or not 0 <= halo_m <= 1.):
         raise ValueError('invalid or excessive matching window budget')
     dq, dx, radius = grid['dq_m'], grid['dx_m'], grid['radius_m']
     half = (height-1)*dq/2
@@ -279,10 +280,12 @@ def write_review(sampler, grid, windows, table, output):
 
 
 def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSettings(), halo_m=.25, raw_root=None,
-        workers=1):
+        workers=1, relative_encoder_scale=False):
     workers = resolve_workers(workers)
     started = time.monotonic(); sampler, upstream, inputs = verified_bands(root, raw_root)
     input_s = time.monotonic()-started; grid = upstream['grid']
+    axes=sampler.projection['x_axis_m']
+    halo_m=matching_halo_m([float(axes.min()),float(axes.max())],relative_encoder_scale,halo_m)
     output = Path(output).resolve()
     if output.is_relative_to(Path(root).resolve()): raise ValueError('D2 output must be separate from D1 inputs')
     windows = plan_windows(sampler, grid, spacing_m, height, max_width, settings, halo_m)
@@ -361,10 +364,13 @@ def main():
                         help='window-matching processes; default min(8, available CPUs)')
     parser.add_argument('--halo-m', type=float, default=.25,
                         help='use already recorded native columns around ROI edges; no extra capture')
+    parser.add_argument('--relative-encoder-scale',action='store_true',
+                        help='extend matching halo by the public relative scale bound')
     args = parser.parse_args()
     report = run(args.unroll, args.output, args.spacing_m, args.height, args.max_width,
                  MatchSettings(max_shift_mm=args.max_shift_mm,
-                     exclude_long_structures=not args.keep_long_structures), args.halo_m, args.raw, args.workers)
+                     exclude_long_structures=not args.keep_long_structures), args.halo_m, args.raw, args.workers,
+                 args.relative_encoder_scale)
     print(json.dumps({k:report[k] for k in ('status', 'windows', 'matches', 'performance')}))
     if report['status'] == 'unmeasurable': raise SystemExit(2)
 
