@@ -76,7 +76,8 @@ def calibrate(output, rows=512):
         with (output/'bench'/(name+'.log')).open('w') as log:
             subprocess.run(probe_command()+['--config',str(output/'bench'/target['config']),
                 '--output',str(output/'bench'/target['capture']), '--rows',str(rows),
-                '--x',str(target['camera_x_m']), '--theta',str(target['theta_rad'])],
+                '--x',str(target['camera_x_m']), '--theta',str(target['theta_rad']),
+                '--centered-bench'],
                 stdout=log, stderr=subprocess.STDOUT, check=True)
     result = fit(output/'bench/bench.json', output/'calibration.json')
     from .optical_identity import check_calibration

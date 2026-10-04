@@ -61,6 +61,35 @@ def test_noise_bench_has_independent_temporal_realizations_and_same_fixed_column
     assert 'realization_seed' not in json.dumps(meta) and 'electrons_per_dn' not in json.dumps(meta)
 
 
+def test_noise_calibration_uses_independent_fixture_for_coupled_nonzero_mount(tmp_path,monkeypatch):
+    from ssb_tools import sensor_noise_demo as module
+    original=tmp_path/'original';bundle(original)
+    config=yaml.safe_load((original/'capture.yaml').read_text())
+    config['truth']['mount'].update(dy_m=.02,dz_m=-.02,tilt_y_rad=.001,tilt_z_rad=-.001)
+    (original/'capture.yaml').write_text(yaml.safe_dump(config))
+    manifest=json.loads((original/'bundle.json').read_text())
+    manifest['files']['capture.yaml']=sha256_file(original/'capture.yaml')
+    (original/'bundle.json').write_text(json.dumps(manifest))
+    output=tmp_path/'variant';prepare(original,output,profile());commands=[]
+    def render(command,**kwargs):
+        target=yaml.safe_load(Path(command[command.index('--config')+1]).read_text())
+        assert target['truth']['mount']==config['truth']['mount']
+        assert command[command.index('--rows')+1]=='512'
+        assert '--speed' not in command and '--omega' not in command
+        commands.append(command)
+    def fit(bench,path):
+        assert json.loads(Path(bench).read_text())['centered_bench'] is True
+        Path(path).write_text('{}')
+        return dict(validation={})
+    monkeypatch.setattr(module.subprocess,'run',render)
+    monkeypatch.setattr(module,'fit',fit)
+    monkeypatch.setattr('ssb_tools.optical_identity.check_calibration',lambda *a:None)
+    module.calibrate(output,512)
+    assert len(commands)==5
+    assert all('--centered-bench' in command for command in commands)
+    assert json.loads((output/'preparation.json').read_text())['status']=='complete'
+
+
 @pytest.mark.parametrize('key,value',[('prnu_fraction',float('nan')),('realization_seed',-1),('read_noise_e',-1),('bias_dn',True)])
 def test_invalid_noise_profile_is_rejected_before_copying(tmp_path,key,value):
     noise=profile();noise[key]=value
