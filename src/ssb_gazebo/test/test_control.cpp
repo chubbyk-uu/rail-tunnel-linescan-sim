@@ -55,6 +55,7 @@ TEST(Control, ServoFollowsBiasedQuantizedOdometryAndStops) {
   EXPECT_GT(angle,start+2*M_PI*1.8/pitch); // responds to measured diameter bias, not true travel
 }
 
+#include <gz/sim/components/Joint.hh>
 TEST(Assembly, ReadsActualLinkPosesAndRejectsMismatch) {
   gz::sim::EntityComponentManager ecm;
   auto model=ecm.CreateEntity();ecm.CreateComponent(model,gz::sim::components::Model());
@@ -65,11 +66,44 @@ TEST(Assembly, ReadsActualLinkPosesAndRejectsMismatch) {
     ecm.CreateComponent(e,gz::sim::components::Pose(gz::math::Pose3d(0,0,z,0,0,0)));
   };
   link("base",.37);link("head",2.015);
+  auto joint=ecm.CreateEntity();ecm.CreateComponent(joint,gz::sim::components::Joint());
+  ecm.CreateComponent(joint,gz::sim::components::Name("scan"));
+  ecm.CreateComponent(joint,gz::sim::components::ParentEntity(model));
+  sdf::JointAxis axis;axis.SetXyz(gz::math::Vector3d(-1,0,0));
+  ecm.CreateComponent(joint,gz::sim::components::JointAxis(axis));
   ssb::Config c;c.base_reference_z_m=.37;c.scan_axis_height_m=1.645;
   EXPECT_NO_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c));
   c.base_reference_z_m=.3;
   EXPECT_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c),std::runtime_error);
   c.base_reference_z_m=.37;c.scan_axis_height_m=1.715;
+  EXPECT_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c),std::runtime_error);
+}
+
+TEST(Assembly, FixedOffsetTiltAndShaftFrameAreChecked) {
+  gz::sim::EntityComponentManager ecm;
+  auto model=ecm.CreateEntity();ecm.CreateComponent(model,gz::sim::components::Model());
+  ssb::Config c;c.base_reference_z_m=.3;c.scan_axis_height_m=1.715;
+  c.truth.head_mount_x_m=.007;c.truth.mount.dy_m=.02;c.truth.mount.dz_m=-.013;
+  c.truth.mount.tilt_y_rad=.001;c.truth.mount.tilt_z_rad=-.0015;
+  for (const char* name : {"base","head"}) {
+    auto link=ecm.CreateEntity();ecm.CreateComponent(link,gz::sim::components::Link());
+    ecm.CreateComponent(link,gz::sim::components::Name(name));
+    ecm.CreateComponent(link,gz::sim::components::ParentEntity(model));
+    const auto pose=std::string(name)=="base" ? gz::math::Pose3d(0,0,.3,0,0,0) :
+      gz::math::Pose3d(.007,.02,2.002,0,.001,-.0015);
+    ecm.CreateComponent(link,gz::sim::components::Pose(pose));
+  }
+  auto joint=ecm.CreateEntity();ecm.CreateComponent(joint,gz::sim::components::Joint());
+  ecm.CreateComponent(joint,gz::sim::components::Name("scan"));
+  ecm.CreateComponent(joint,gz::sim::components::ParentEntity(model));
+  sdf::JointAxis axis;axis.SetXyz(gz::math::Vector3d(-1,0,0));
+  ecm.CreateComponent(joint,gz::sim::components::JointAxis(axis));
+  EXPECT_NO_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c));
+  c.truth.mount.tilt_z_rad=0;
+  EXPECT_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c),std::runtime_error);
+  c.truth.mount.tilt_z_rad=-.0015;
+  axis.SetXyzExpressedIn("__model__");
+  ecm.Component<gz::sim::components::JointAxis>(joint)->Data()=axis;
   EXPECT_THROW(ssb_gazebo::CheckAssembly(gz::sim::Model(model),ecm,c),std::runtime_error);
 }
 

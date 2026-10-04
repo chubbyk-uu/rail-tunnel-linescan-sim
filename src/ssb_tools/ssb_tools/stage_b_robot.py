@@ -10,7 +10,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .stage_b_scene import sub, box, cylinder, inertial, make_joint
-from .robot_geometry import mount_geometry
+from .robot_geometry import mount_geometry, assembly_pose
 
 WHITE = '0.91 0.93 0.95 1'
 ORANGE = '1.0 0.235 0.025 1'
@@ -334,7 +334,7 @@ def make_robot(out,config,spec):
         for k,x in enumerate((-.16,.16)):
             base_box(f'{side}_belly_latch_{k}',x,sign*(belly_y+.005),.235,'.04 .006 .02',DARK)
 
-    head=sub(car,'link',name='head');sub(head,'pose',pose(z=zc))
+    head=sub(car,'link',name='head');sub(head,'pose',pose(*assembly_pose(config)))
     inertial(head,15,(.25,.20,.20))
     # Ideal thin-lens/pinhole baseline: the projection centre, NOT the front
     # glass or sensor, lies on the shaft. Derive image distance from the same
@@ -402,6 +402,28 @@ def make_robot(out,config,spec):
     from .stage_b_lighting import add_strip_light, add_work_lights
     add_strip_light(head,folder,config,spec)
     add_work_lights(base,spec)
+    # The bearing/cradle/stator assembly shares the fixed mount transform.
+    # Rotor parts and lights already inherit it through the head link.
+    import numpy as np
+    import warnings
+    from scipy.spatial.transform import Rotation
+    placement = assembly_pose(config)
+    rotation = Rotation.from_euler('xyz', placement[3:])
+    cradle_names = ('u_cradle_', 'front_cradle_', 'rear_cradle_', 'front_bearing',
+                    'rear_bearing', 'front_head_attachment', 'rear_head_attachment',
+                    'slipring', 'motor_mount', 'rotation_motor', 'gear_guard', 'scan_encoder')
+    for visual in base.findall('visual'):
+        if not visual.get('name').startswith(cradle_names):
+            continue
+        node = visual.find('pose'); old = np.array(list(map(float, node.text.split())))
+        local = old[:3]-np.array([0., 0., axis_height])
+        xyz = rotation.apply(local)+np.array(placement[:3])-[0., 0., base_z]
+        # Some nominal bearing cylinders are exactly at Euler pitch pi/2.
+        # The equivalent Euler triple is nonunique; the rotation is unchanged.
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message='Gimbal lock detected')
+            angles = (rotation*Rotation.from_euler('xyz', old[3:])).as_euler('xyz')
+        node.text = pose(*xyz, *angles)
     for visual in car.findall('link/visual'):
         # Uniform rough finishes, small low-poly primitives; no extra texture maps.
         material=visual.find('material')

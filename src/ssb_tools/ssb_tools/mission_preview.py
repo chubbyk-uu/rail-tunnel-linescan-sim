@@ -143,7 +143,7 @@ class Preview:
             name = link.get('name')
             relative = np.linalg.inv(self.base)@transform(link.findtext('pose', '0 0 0 0 0 0'))
             if name == 'head':
-                relative[:3, :3] = Rotation.from_rotvec([-status['scan'], 0, 0]).as_matrix()@relative[:3, :3]
+                relative[:3, :3] = relative[:3, :3]@Rotation.from_rotvec([-status['scan'], 0, 0]).as_matrix()
             elif name in wheel_names or name in measure_names:
                 angle = (status['wheel_angles'][wheel_names.index(name)] if name in wheel_names else
                          status.get('measure_angles', [0., 0.])[measure_names.index(name)])

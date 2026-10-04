@@ -58,7 +58,7 @@ def run(output):
                                        cross_level_tier_m=.002,band_m=[.5,10.],common_mode=False),
                wheel_compliance=dict(static_deflection_m=.0002,damping_ratio=.2,stiffness_n_m=stiffness['stiffness_n_m'],
                                      damping_n_s_m=stiffness['damping_n_s_m']))
-    cases=[('ideal',False,None,{}),('contact',True,None,{}),('mismatch',True,'assembly height differs',{}),
+    cases=[('ideal',False,None,{}),('contact',True,None,{}),('mismatch',True,'physical world check failed',{}),
            ('irregular',True,None,rough),('irregular_mismatch',True,'physical world check failed',rough),
            ('start_mismatch',True,'start position differs',{}),
            # Configuration edited after the world was generated: true wheel diameter, track seed.
@@ -67,6 +67,12 @@ def run(output):
            ('irregular_box_mismatch',True,'physical world check failed',rough),
            ('loaded_flat_box_mismatch',True,'physical world differs from its manifest',{}),
            ('loaded_irregular_box_mismatch',True,'physical world differs from its manifest',rough)]
+    fixed_mount=dict(e_m=0.,tangential_m=0.,dy_m=.02,dz_m=-.013,
+                     tilt_y_rad=.001,tilt_z_rad=-.0015,twist_rad=0.)
+    for contact in (False,True):
+        cases.append((f'mount_{"contact" if contact else "ideal"}',contact,None,dict(mount=fixed_mount)))
+    cases.append(('loaded_mount_mismatch',True,'fixed scanner mount differs',dict(mount=fixed_mount)))
+    cases.append(('loaded_axis_mismatch',True,'joint axis must be',dict(mount=fixed_mount)))
     for name,contact,bad,truth in cases:
         folder=output/name;folder.mkdir()
         c=copy.deepcopy(base);c['robot']={'base_reference_z_m':.37,'scan_axis_height_m':1.645}
@@ -92,6 +98,12 @@ def run(output):
         if name=='mismatch':
             tree=ET.parse(world);pose=tree.find("world/model[@name='scan_car']/link[@name='head']/pose")
             p=list(map(float,pose.text.split()));p[2]+=.01;pose.text=' '.join(map(str,p));tree.write(world)
+        if name=='loaded_mount_mismatch':
+            tree=ET.parse(world);pose=tree.find("world/model[@name='scan_car']/link[@name='head']/pose")
+            p=list(map(float,pose.text.split()));p[5]+=.001;pose.text=' '.join(map(str,p));tree.write(world)
+        if name=='loaded_axis_mismatch':
+            tree=ET.parse(world);tree.find("world/model[@name='scan_car']/joint[@name='scan']/axis/xyz").text='1 0 0'
+            tree.write(world)
         if name=='start_mismatch':
             tree=ET.parse(world);pose=tree.find("world/model[@name='scan_car']/pose")
             p=list(map(float,pose.text.split()));p[0]+=.5;pose.text=' '.join(map(str,p));tree.write(world)
@@ -121,7 +133,7 @@ def run(output):
         if contact:
             assert abs(poses['z']-.37).max()<.003
             assert poses['body_valid'].all()
-        if truth:
+        if 'track_irregularity' in truth:
             rails=[m for m in ET.parse(world).getroot().iter('model') if m.get('name','').startswith('rail_surface_')]
             assert rails and np.ptp(poses['z'])>2e-4, 'irregular track must move the body'
         results.append({'name':name,'rows':s.summary['rows'],'complete':True})

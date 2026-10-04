@@ -36,6 +36,29 @@ std::string ReadFile(const std::filesystem::path& p) {
 
 }  // namespace
 
+TEST(Render, SeparateBenchCancelsExternalMountWithoutChangingTheLensOrIdentity) {
+  auto c = BaseConfig();
+  c.truth.mount = {};
+  c.truth.mount.dy_m=.02; c.truth.mount.dz_m=-.013;
+  c.truth.mount.tilt_y_rad=.001; c.truth.mount.tilt_z_rad=-.0015;
+  c.truth.head_mount_x_m=.007;
+  const auto signature = c.OpticalSignature();
+  for (double theta : {-2., -.3, 0., .19, 2.}) {
+    const auto h = TrueHeadPose(c, CenteredBenchPose(c, 8., theta));
+    const Vec3 origin{8.,0.,c.base_reference_z_m+c.scan_axis_height_m};
+    const Vec3 optical{0.,std::sin(theta),std::cos(theta)};
+    const Vec3 line{1.,0.,0.};
+    for (int k=0;k<3;++k) {
+      EXPECT_NEAR(h.origin[k],origin[k],1e-12);
+      EXPECT_NEAR(h.optical[k],optical[k],1e-12);
+      EXPECT_NEAR(h.line[k],line[k],1e-12);
+    }
+  }
+  EXPECT_EQ(signature,c.OpticalSignature());
+  c.truth.mount.e_m=.001;
+  EXPECT_THROW(CenteredBenchPose(c,8.,0.),std::runtime_error);
+}
+
 TEST(Render, BackendLoadsAndPassesItsSelfCheck) {
   OptixRenderer r(BaseConfig(), DefaultPtxPath(), 16);
   const auto check = r.SelfCheck();

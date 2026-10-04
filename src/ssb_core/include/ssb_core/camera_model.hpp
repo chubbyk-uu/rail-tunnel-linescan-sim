@@ -22,6 +22,10 @@ struct HeadPose {
 // True head pose from a true pose sample and the true mount (DESIGN.md §4.4).
 HeadPose TrueHeadPose(const Config& config, const PoseSample& pose);
 
+// Generator-only calibration jig: align the camera independently of its vehicle
+// mount to a known cylindrical target. Never used by acquisition/reconstruction.
+PoseSample CenteredBenchPose(const Config& config, double axis_x, double theta);
+
 // Per-pixel tangent table, u = 0..width-1.
 std::vector<double> PixelTangents(const Config& config);
 

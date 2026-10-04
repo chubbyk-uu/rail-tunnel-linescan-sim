@@ -4,12 +4,16 @@
 #include <iostream>
 #include "ssb_core/optix_renderer.hpp"
 #include "ssb_core/sha256.hpp"
+#include "ssb_core/camera_model.hpp"
 
 int main(int argc,char** argv) {
   try {
     std::string config_path,output;int rows=1024;double x=8,theta=.2,omega=0,speed=0,rate=50000;
+    bool centered_bench=false;
     for(int i=1;i<argc;++i) {
-      std::string arg=argv[i];if(++i>=argc) throw std::runtime_error("missing option value");std::string value=argv[i];
+      std::string arg=argv[i];
+      if(arg=="--centered-bench") {centered_bench=true;continue;}
+      if(++i>=argc) throw std::runtime_error("missing option value");std::string value=argv[i];
       if(arg=="--config") config_path=value;else if(arg=="--output") output=value;
       else if(arg=="--rows") rows=std::stoi(value);else if(arg=="--x") x=std::stod(value);
       else if(arg=="--theta") theta=std::stod(value);else if(arg=="--omega") omega=std::stod(value);
@@ -18,6 +22,8 @@ int main(int argc,char** argv) {
     }
     if(config_path.empty()||rows<1||rows>200000||rate<=0) throw std::runtime_error("invalid probe arguments");
     auto c=ssb::Config::Load(config_path);ssb::OptixRenderer renderer(c,ssb::DefaultPtxPath(),c.batch_rows);
+    if(centered_bench && (speed!=0 || omega!=0))
+      throw std::runtime_error("calibration fixture requires stationary optical targets");
     auto check=renderer.SelfCheck();std::ofstream pgm,hit_file;
     if(!output.empty()) {
       if(std::filesystem::exists(output)) throw std::runtime_error("probe output exists");
@@ -35,6 +41,7 @@ int main(int argc,char** argv) {
         jobs[j].record.sequence=first+j;
         jobs[j].pose.x=x+speed*dt;jobs[j].pose.v=speed;
         jobs[j].pose.theta=theta+omega*dt;jobs[j].pose.omega=omega;
+        if(centered_bench) jobs[j].pose=ssb::CenteredBenchPose(c,x+c.truth.head_mount_x_m,theta);
       }
       std::vector<uint8_t> pixels;std::vector<double> hits;renderer.Render(jobs,pixels,hits);
       for(auto v:pixels){checksum+=v;min_code=std::min(min_code,int(v));max_code=std::max(max_code,int(v));}
@@ -46,6 +53,7 @@ int main(int argc,char** argv) {
     while(std::getline(status,line)) if(line.rfind("VmHWM:",0)==0) peak=std::stoull(line.substr(6))*1024;
     nlohmann::json result={{"schema","ssb.optical_probe.v1"},{"purpose","optical inspection; not encoder capture"},
       {"optical_signature",c.OpticalSignature()},
+      {"centered_bench",centered_bench},
       {"rows",rows},{"wall_seconds",seconds},{"rows_per_second",rows/seconds},{"nominal_imaging_rtf",rows/rate/seconds},
       {"peak_rss_bytes",peak},{"checksum",checksum},{"min_code",min_code},{"max_code",max_code},
       {"x_mid_m",x},{"theta_mid_rad",theta},{"omega_rad_s",omega},{"speed_m_s",speed},{"row_rate_hz",rate},

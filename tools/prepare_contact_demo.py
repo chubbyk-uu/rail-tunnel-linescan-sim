@@ -49,6 +49,10 @@ def main():
     p.add_argument('--odo-calibration-mm',type=float,nargs=2,metavar=('LEFT','RIGHT'),
                    help='calibrated measuring-wheel diameters the controller and reconstruction use. '
                         'Default: the nominal spec diameter')
+    p.add_argument('--mount-offset-mm',type=float,nargs=2,metavar=('LATERAL','VERTICAL'),
+                   help='simulation-only fixed scanner offset; rebuilds the head/cradle, requires new image calibration')
+    p.add_argument('--mount-tilt-mrad',type=float,nargs=2,metavar=('Y','Z'),
+                   help='simulation-only shaft tilt Ry then Rz; rebuilds assembly, requires new image calibration')
     p.add_argument('--wheel-deflection-mm',type=float,default=.2,
                    help='realized polyurethane tread static deflection (assumption, >=0.15; 0 = rigid wheels)')
     a=p.parse_args();out=a.output.resolve()
@@ -67,6 +71,12 @@ def main():
     if out.exists():raise ValueError('refuse to overwrite prepared demo')
     out.mkdir(parents=True)
     c=yaml.safe_load(a.config.read_text());spec=yaml.safe_load(a.spec.read_text())
+    for values, keys, limit in ((a.mount_offset_mm, ('dy_m','dz_m'), 20.),
+                                (a.mount_tilt_mrad, ('tilt_y_rad','tilt_z_rad'), 2.)):
+        if values is not None:
+            if not all(math.isfinite(v) and abs(v)<=limit for v in values):
+                p.error(f'fixed mount sensitivity exceeds supported +/-{limit} mm or mrad')
+            c['truth']['mount'].update({k:v/1000 for k,v in zip(keys,values)})
     ensure_optical_key(c)
     base,height=mount_geometry(c)
     c['robot']={'base_reference_z_m':base,'scan_axis_height_m':height}

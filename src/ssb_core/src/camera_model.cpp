@@ -54,6 +54,26 @@ HeadPose TrueHeadPose(const Config& config, const PoseSample& pose) {
   return h;
 }
 
+PoseSample CenteredBenchPose(const Config& config, double axis_x, double theta) {
+  const auto& m = config.truth.mount;
+  if (m.e_m!=0 || m.tangential_m!=0 || m.twist_rad!=0)
+    throw std::runtime_error("centered bench supports axis placement errors only");
+  // A physical alignment fixture cancels the external mount, not lens distortion.
+  const Mat3 body = Mul(Ry(-m.tilt_y_rad), Rz(-m.tilt_z_rad));
+  PoseSample pose{};
+  pose.body_valid = true;
+  pose.roll = std::atan2(body[2][1], body[2][2]);
+  pose.pitch = std::atan2(-body[2][0], std::hypot(body[0][0], body[1][0]));
+  pose.yaw = std::atan2(body[1][0], body[0][0]);
+  const auto local = Mul(body, Vec3{config.truth.head_mount_x_m, m.dy_m,
+                                 config.scan_axis_height_m+m.dz_m});
+  pose.x = axis_x-local[0];
+  pose.y = -local[1];
+  pose.z = config.base_reference_z_m+config.scan_axis_height_m-local[2];
+  pose.theta = theta;
+  return pose;
+}
+
 std::vector<double> PixelTangents(const Config& config) {
   std::vector<double> t(config.width);
   for (int u = 0; u < config.width; ++u) t[u] = config.PixelTangent(u);

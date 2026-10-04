@@ -16,8 +16,9 @@ def prepare(config_path, output):
     if not config['truth'].get('optical_key'):
         raise ValueError('prepare a persistent optical key in the capture configuration before calibrating')
     ensure_optical_key(config)
-    if any(config['truth']['mount'].values()):
-        raise ValueError('bench currently requires nominal centered/parallel mounting')
+    mount = config['truth']['mount']
+    if any(mount[k] for k in ('e_m','tangential_m','twist_rad')):
+        raise ValueError('bench currently supports external axis placement errors only')
     scene_path = Path(config['render']['optical_scene'])
     if not scene_path.is_absolute():
         scene_path = config_path.parent/scene_path
@@ -65,7 +66,9 @@ def prepare(config_path, output):
     meta = dict(schema='ssb.optical_bench.v1', fov_m=fov, targets=targets,
                 config_sha256=sha256_file(config_path), target_sha256=sha256_file(mesh),
                 sensor_noise_enabled=bool(config['truth'].get('sensor_noise', {}).get('enabled')),
-                description='Known smooth cylindrical target, nominal distance; held-out shifted bars and different gray/angle.')
+                centered_bench=True,
+                description='Camera aligned in a separate known-distance jig; external vehicle mount is absent. '
+                            'Images estimate intrinsics/flat only, not vehicle extrinsics; independent shifted bars and gray/angle.')
     (output/'bench.json').write_text(json.dumps(meta, indent=2)+'\n')
     return meta
 
@@ -80,7 +83,7 @@ def main():
             with (root/(name+'.log')).open('w') as log:
                 subprocess.run(probe_command()+[ '--config', str(root/target['config']),
                     '--output',str(root/target['capture']), '--rows','256', '--x',str(target['camera_x_m']),
-                    '--theta',str(target['theta_rad'])], stdout=log, stderr=subprocess.STDOUT, check=True)
+                    '--theta',str(target['theta_rad']), '--centered-bench'], stdout=log, stderr=subprocess.STDOUT, check=True)
     print(json.dumps(dict(bench=str(root/'bench.json'), rendered=a.render)))
 
 if __name__ == '__main__':

@@ -89,8 +89,17 @@ def describe(world_path, snapshot=None):
                               link_pose=_floats(link.findtext('pose', '0 0 0 0 0 0')),
                               pose=_floats(collision.findtext('pose', '0 0 0 0 0 0')),
                               size=_floats(box.findtext('size')) if box is not None else []))
+    assembly = None
+    if car is not None:
+        base = car.find("link[@name='base']"); head = car.find("link[@name='head']")
+        scan = car.find("joint[@name='scan']")
+        if base is not None and head is not None and scan is not None:
+            assembly = dict(base_pose=_floats(base.findtext('pose', '0 0 0 0 0 0')),
+                            head_pose=_floats(head.findtext('pose', '0 0 0 0 0 0')),
+                            axis=_floats(scan.findtext('axis/xyz', '0 0 0')),
+                            axis_frame=scan.find('axis/xyz').get('expressed_in', ''))
     return dict(rails=sorted(rails, key=lambda r: r['name']), rail_boxes=sorted(boxes, key=lambda b: b['name']),
-                wheels=wheels, joints=joints)
+                wheels=wheels, joints=joints, scanner_assembly=assembly)
 
 
 def expected(config, spec):
@@ -248,6 +257,19 @@ def check(config, spec, world_path, manifest_path=None, snapshot=None, decode=Tr
                  if n not in have['joints'] or any(abs(have['joints'][n][k]-v) > 1e-9*max(1., abs(v)) for k, v in j.items())]
     extra = [n for n in have['joints'] if n not in want['joints']]
     record('springs_match_configuration', not joint_bad and not extra, mismatched=joint_bad, unexpected=extra)
+    from .robot_geometry import assembly_pose, mount_geometry
+    base_z, _ = mount_geometry(config)
+    assembly = dict(base_pose=[0.,0.,base_z,0.,0.,0.], head_pose=assembly_pose(config),
+                    axis=[-1.,0.,0.], axis_frame='')
+    actual = have['scanner_assembly']
+    assembly_ok = (actual is not None and actual['axis_frame']=='' and
+                   all(_close(actual[k], assembly[k]) for k in ('base_pose','head_pose','axis')))
+    record('scanner_assembly_matches_truth', assembly_ok, expected=assembly, actual=actual)
+    # Legacy nominal manifests lack this optional entry; the direct configuration
+    # comparison above is mandatory, including for those old bundles.
+    listed = manifest['actual'].get('scanner_assembly') if manifest is not None else None
+    if listed is not None:
+        record('scanner_assembly_matches_manifest', actual == listed)
     return dict(passed=all(c['passed'] for c in checks.values()), checks=checks, world=str(world_path))
 
 
