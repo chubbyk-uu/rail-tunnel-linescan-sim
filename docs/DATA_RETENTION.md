@@ -2,6 +2,10 @@
 
 更新：2026-10-04。大型本机资产和会话不进 Git。清理只针对已完成的重复计算、重放及界面测试；生成、采集、重建中的文件不能删除。
 
+综合误差 3 m 新采已完成：`sessions/compound81_noise_holdout_20261004/` 保留独立原图／重成像、公开 D1/D2/D3、完整优化图及复核页；同名 `local_data/evaluation/` 保留首次协议、几何评分、完整像素核验和性能汇总。最终可运行资产为 `local_data/stage_b/compound81_noise_seed20261117/bundle/`，含独立噪声标定的五靶图片与结果。
+
+本轮已删除重复的 `prepared/`、`base_bundle/` 以及完成的 `/tmp/ssb_compound_noise_*` 测试夹具和临时脚本／日志。删除前归档 65 个必要记录并逐项验证（`preparation_and_tests.tar.gz`，约 304 KiB），按 inode／硬链接估算净释放约 554 MiB；共享的最终资产不计为释放。最终包 377 个文件删除前后哈希一致，世界的全部运行资源仍位于包内。清单、归档哈希和范围见同名 evaluation 的 `cleanup.json`、`archive_hashes.json`；没有删除或去重实际原图／独立重成像，也没有改写首次报告。
+
 组合装配验收调整：按用户要求取消九组单项矩阵，删除 `mount_seed20261103/` 中从未采集的八套单项导出包及对应生成目录，释放约 13.62 GiB。生成配置、世界清单、标定夹具图片/结果和日志集中保存在 `local_data/evaluation/mount_cancelled_matrix_20261004/generation_and_calibration.tar.gz`（约 2.81 MiB），读取校验通过；`cleanup.json` 记录范围与归档哈希。该归档仅保留来源及标定证据，不能直接运行。名义包、新组合包以及所有已经采集的开发原图、独立重成像和评价均保留。
 
 组合验收的新采在 `sessions/mount_combined_holdout_20261004/{nominal,combined}/`，协议、独立网格评价和完整像素核验在同名 `local_data/evaluation/`。保留两组原图与实际独立重成像、公开 D1/D2/D3、组合的完整 3 m 优化图及来源清单；这是当前有用的成果，未作为“多余数组”清理。取消计划的旧单项资产与本轮临时测试夹具已删除。
