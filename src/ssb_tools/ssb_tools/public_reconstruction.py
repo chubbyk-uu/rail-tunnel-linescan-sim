@@ -46,23 +46,30 @@ def stage(unroll, observable, public, raw_root=None):
 
 
 def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
-        settings=GeometrySettings(attitude_spacing_m=.02, observed_knots=True), height=512, max_q_shift_mm=None):
+        settings=GeometrySettings(attitude_spacing_m=.02, observed_knots=True), height=512, max_q_shift_mm=None,
+        surface_relief=False):
     started = time.monotonic()
     workers = resolve_workers(workers)
     root = Path(root).resolve()
     record, matches, fit = root/'public_run', root/'matches', root/'fit'
-    if any(p.exists() for p in (record, matches, fit)):
+    pose = root/'pose' if surface_relief else fit
+    if type(surface_relief) is not bool:
+        raise ValueError('surface_relief must be Boolean')
+    if any(p.exists() for p in (record, matches, fit, pose)):
         raise ValueError('public reconstruction outputs must be fresh')
     if public_audit.private(root):
         raise ValueError('production outputs must be outside evaluation/')
     d1, config, raw, blocks = stage(unroll, observable, record/'public', raw_root)
     staged_s = time.monotonic()-started
     reads = set()
-    audit = public_audit.install(record/'public', raw, reads, recorded=[matches, fit])
+    audit = public_audit.install(record/'public', raw, reads, recorded=[matches, fit, pose])
     d2 = match(d1, matches, spacing_m, height, 1024, MatchSettings(max_q_shift_mm=max_q_shift_mm), .25, raw, workers)
     if d2['status'] == 'unmeasurable':
         raise ValueError('D2 found no usable matches')
-    d3 = optimize(d1, matches, config, fit, settings, raw)
+    d3 = optimize(d1, matches, config, pose, settings, raw)
+    if surface_relief:
+        from .surface_relief import run as estimate_relief
+        d3 = estimate_relief(d1, pose, fit, raw)
     outputs = {str(path): sha256_file(path) for directory in (matches, fit)
                for path in sorted(directory.iterdir()) if path.is_file()}
     states = public_audit.verified_states(audit, d2['worker_audits'])
@@ -70,9 +77,12 @@ def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
         public_raw_blocks=blocks, public_files_opened=sorted(reads), outputs=outputs,
         private_input_opens=sum(s['blocked_reads'] for s in states), audit_states=states,
         d2=dict(status=d2['status'], windows=d2['windows'], matches=d2['matches']['total']),
-        d3=dict(status=d3['status'], image_consistency_gate=d3['image_consistency_gate']['status']),
+        d3=dict(status=d3['status'], image_consistency_gate=d3['image_consistency_gate']['status'],
+                surface_relief=surface_relief),
         performance=dict(staging_s=staged_s, d2_wall_s=d2['performance']['wall_s'],
-                         d3_wall_s=d3['performance']['wall_s'], wall_s=time.monotonic()-started),
+                         d3_wall_s=d3['performance']['wall_s']+d3['performance'].get('relief_wall_s', 0.),
+                         surface_relief_wall_s=d3['performance'].get('relief_wall_s', 0.),
+                         wall_s=time.monotonic()-started),
         limitation='audit covers Python opens in this process and D2 workers; hard links retain raw contents')
     (record/'report.json').write_text(json.dumps(report, indent=2)+'\n')
     return report
@@ -90,10 +100,12 @@ def main():
     parser.add_argument('--attitude-spacing-m', type=float, default=.02)
     parser.add_argument('--adaptive-attitude', action='store_true',
                         help='training-only bounded local refinement; use --spacing-m .1 for finer supported nodes')
+    parser.add_argument('--surface-relief', action='store_true', help='estimate shared radial depth from public stereo images after the pose fit')
     args = parser.parse_args()
     report = run(args.unroll, args.observable, args.root, args.raw, args.workers, args.spacing_m,
                  GeometrySettings(attitude_spacing_m=args.attitude_spacing_m, observed_knots=True,
-                                  adaptive_attitude=args.adaptive_attitude), args.height, args.max_q_shift_mm)
+                                  adaptive_attitude=args.adaptive_attitude), args.height, args.max_q_shift_mm,
+                 args.surface_relief)
     print(json.dumps({k: report[k] for k in ('status', 'public_raw_blocks', 'd2', 'd3', 'performance')}))
 
 

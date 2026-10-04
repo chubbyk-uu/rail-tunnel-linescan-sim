@@ -24,6 +24,9 @@ refinement_args=()
 if [[ ${SSB_ADAPTIVE_ATTITUDE:-0} == 1 ]]; then
   refinement_args=(--adaptive-attitude)
 fi
+if [[ ${SSB_SURFACE_RELIEF:-0} == 1 ]]; then
+  refinement_args+=(--surface-relief)
+fi
 search_args=()
 if [[ -n ${SSB_D2_Q_SHIFT_MM:-} ]]; then
   search_args=(--max-q-shift-mm "$SSB_D2_Q_SHIFT_MM")
@@ -46,6 +49,9 @@ fi
 refinement_args=()
 if [[ ${SSB_ADAPTIVE_ATTITUDE:-0} == 1 ]]; then
   refinement_args=(--adaptive-attitude)
+fi
+if [[ ${SSB_SURFACE_RELIEF:-0} == 1 ]]; then
+  refinement_args+=(--surface-relief)
 fi
 search_args=()
 if [[ -n ${SSB_D2_Q_SHIFT_MM:-} ]]; then

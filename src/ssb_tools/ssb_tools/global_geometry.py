@@ -107,7 +107,7 @@ def in_chunks(function, count, factor=1.):
         return list(pool.map(lambda r: function(*r), ranges))
 
 
-def cylinder_points(axis, theta, tangent, correction, radius, height):
+def cylinder_points(axis, theta, tangent, correction, radius, height, radial_depth=0.):
     """Exact Ry(pitch) Rx(roll) rays, including rotation of the upright support.
 
     correction columns: carriage dx [m], scan phase dq [m], roll/pitch [rad],
@@ -133,7 +133,7 @@ def cylinder_points(axis, theta, tangent, correction, radius, height):
     oz = vertical+height*(cb*ca-1)
     aa = vy*vy+vz*vz
     bb = 2*(oy*vy+oz*vz)
-    cc = oy*oy+oz*oz-radius*radius
+    cc = oy*oy+oz*oz-(radius+radial_depth)**2
     discriminant = bb*bb-4*aa*cc
     if np.any(discriminant <= 0) or np.any(aa <= 0):
         raise ValueError('corrected ray does not intersect the nominal cylinder')
@@ -201,6 +201,7 @@ class Trajectory:
         if not np.isfinite([radius, height]).all() or radius <= 0 or height <= 0:
             raise ValueError('positive nominal radius and support height required')
         self.sampler, self.radius, self.height, self.settings = sampler, radius, height, settings
+        self.relief = None
         axis = sampler.projection['x_axis_m']
         self.domain = [float(axis.min()), float(axis.max())]
         if knots is None:
@@ -275,7 +276,7 @@ class Trajectory:
             raise ValueError('native sources disagree with D2 nominal coordinates')
         return RaySet(self, axis, theta, tangent, weights)
 
-    def forward(self, band, x, q, coefficients):
+    def forward(self, band, x, q, coefficients, radial_depth=None):
         """Map coordinates within recorded pixel footprints, not only row centres.
 
         Between contiguous rows the centre-ray interpolation stays unchanged.
@@ -293,7 +294,29 @@ class Trajectory:
             axis = p['x_axis_m']; theta = p['theta_rad']-2*math.pi*p['segment']
             theta = np.where(lo == hi, q.ravel()/self.radius, theta)
             tangent = (x.ravel()-axis)/self.radius
-            result += weight[:, None]*self.points(axis, theta, tangent, coefficients)
+            if radial_depth is not None:
+                local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
+                    extrapolate=False)(axis) for i, k in enumerate(self.knots)])
+                points = cylinder_points(axis, theta, tangent, local, self.radius, self.height,
+                                         np.broadcast_to(radial_depth, x.shape).ravel())
+            else:
+                points = self.points(axis, theta, tangent, coefficients)
+            if self.relief is not None and radial_depth is None:
+                depth = self.relief.depth(points[:, 0], points[:, 1])
+                affected = depth > 0
+                if affected.any():
+                    local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
+                        extrapolate=False)(axis[affected]) for i, k in enumerate(self.knots)])
+                    for _ in range(8):
+                        current = points[affected]
+                        depth = self.relief.depth(current[:, 0], current[:, 1])
+                        updated = cylinder_points(axis[affected], theta[affected], tangent[affected], local,
+                                                  self.radius, self.height, depth)
+                        change = np.max(abs(updated-current), initial=0.)
+                        points[affected] = updated
+                        if change < 1e-10:
+                            break
+            result += weight[:, None]*points
         return result.reshape(x.shape+(2,)), supported.reshape(x.shape)
 
     def serialize(self, coefficients):

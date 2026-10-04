@@ -23,7 +23,8 @@ def evaluation_path(path):
     return path
 
 
-def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attitude=False, height=512, max_q_shift_mm=None):
+def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attitude=False, height=512, max_q_shift_mm=None,
+            surface_relief=False):
     workspace, demo, output = Path(workspace).resolve(), Path(demo).resolve(), evaluation_path(output)
     state = subprocess.check_output(['sh', str(workspace/'src/ssb_core/cmake/source_state.sh'),
                                      str(workspace)], text=True).split()
@@ -48,7 +49,11 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
                 'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
                 'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py',
                 'validate_stage_b.py', 'validate_stage_a.py', 'ref_geometry.py', 'session.py')]
-    record = dict(schema='ssb.d3_holdout_protocol.v6',
+    if type(surface_relief) is not bool:
+        raise ValueError('surface_relief must be Boolean')
+    if surface_relief:
+        sources.append(workspace/'src/ssb_tools/ssb_tools/surface_relief.py')
+    record = dict(schema='ssb.d3_holdout_protocol.v7' if surface_relief else 'ssb.d3_holdout_protocol.v6',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
         d2=dict(spacing_m=spacing_m, height=height, max_width=1024, halo_m=.25, settings=asdict(match_settings)),
@@ -61,6 +66,9 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
         input_hashes={str(demo/name): sha256_file(demo/name)
                       for name in ('capture.yaml', 'calibration.json', 'bundle.json')},
         production_sources={str(p): sha256_file(p) for p in sources})
+    if surface_relief:
+        from .surface_relief import ReliefSettings
+        record['surface_relief'] = asdict(ReliefSettings())
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(record, indent=2)+'\n')
     return record
@@ -144,21 +152,24 @@ def verify(protocol_file, root, output):
         holdout_roi_correct=read_json(root/'unroll/report.json')['grid']['target_x_m'] == protocol['holdout_roi_m'],
         input_hashes_unchanged=hashes_match(protocol['input_hashes']),
         production_sources_unchanged=hashes_match(protocol['production_sources']))
-    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v6':
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         checks['d2_planning_unchanged'] = read_json(root/'matches/report.json').get('planning') == {
             k: protocol['d2'][k] for k in ('spacing_m', 'height', 'max_width', 'halo_m')}
-    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6'):
+    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v7':
+        checks['surface_relief_settings_unchanged'] = read_json(root/'fit/report.json').get(
+            'surface_relief', {}).get('settings') == protocol['surface_relief']
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         checks['public_only_production_run'] = public_run_valid(root,
             strong=protocol['schema'] != 'ssb.d3_holdout_protocol.v4')
     else:
         checks['public_replay_identical'] = read_json(root/'public_replay/report.json').get(
             'geometry_and_residuals_identical') is True
     checks.update(capture_checks(session, protocol['code_commit'],
-        require_report_identity=protocol.get('schema') in ('ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6')))
-    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v3', 'ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6'):
+        require_report_identity=protocol.get('schema') in ('ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7')))
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v3', 'ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         checks['sampling_protocol_unchanged'] = protocol['sampling'] == dict(
             schema=SAMPLING_SCHEMA, spacing_q_m=(protocol['d2']['spacing_m']
-                if protocol.get('schema') == 'ssb.d3_holdout_protocol.v6' else .2),
+                if protocol.get('schema') in ('ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7') else .2),
             phase_fractions=[.25, .75], samples_across=9,
             column_guard_pixels=2, original_nominal_probes_retained=True,
             outside_target_requires_observed_common_interval=True,
@@ -168,7 +179,7 @@ def verify(protocol_file, root, output):
         checks=checks, protocol_sha256=sha256_file(protocol_file),
         capture_build=provenance.get('build'), capture_source_at_run=source,
         interpretation='unchanged C++ code is explanatory evidence, not an exemption from build identity')
-    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6'):
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         from .validate_stage_b import identity_path
         report_file = session.root/'evaluation/reports/stage_b_smoke.json'
         identity_file = identity_path(report_file)
@@ -191,13 +202,14 @@ def main():
     declaration.add_argument('--height', type=int, default=512)
     declaration.add_argument('--max-q-shift-mm', type=float)
     declaration.add_argument('--adaptive-attitude', action='store_true')
+    declaration.add_argument('--surface-relief', action='store_true')
     verification = sub.add_parser('verify')
     for name in ('protocol', 'root', 'output'):
         verification.add_argument('--'+name, required=True)
     args = parser.parse_args()
     if args.action == 'declare':
         declare(args.workspace, args.demo, args.output, args.start, args.length,
-                args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm)
+                args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm, args.surface_relief)
         return 0
     report = verify(args.protocol, args.root, args.output)
     print(json.dumps(report))

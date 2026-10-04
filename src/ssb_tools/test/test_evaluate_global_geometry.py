@@ -81,6 +81,36 @@ def test_actual_seam_uses_inverse_native_footprints_and_recessed_optical_mesh(de
     if depth:assert abs(after[0])>.004
 
 
+def test_shared_radial_surface_removes_parallax_without_changing_pose_or_discarding_sources():
+    from ssb_tools.surface_relief import SurfaceRelief
+    model, c, rows, camera, truth, mesh = independent_fixture(.02)
+    original = c.copy()
+    model.relief = SurfaceRelief([dict(grid=[.25, -.1, .5, .2],
+                                      depth=np.full((2, 2), .02, np.float32))])
+    points = []
+    for band in (0, 1):
+        table, valid, _ = sources_at(model, c, band, np.array([.5]), np.array([0.]))
+        assert valid.all()
+        point, material = mesh_points(table, 'a', rows, camera, truth, mesh)
+        assert material[0] == 2
+        points.append(point[0])
+    np.testing.assert_allclose(points[1]-points[0], [0., 0.], atol=1e-9)
+    np.testing.assert_array_equal(c, original)
+
+
+def test_relief_is_used_even_for_zero_pose_coefficients_and_nominal_diagnostic_stays_unchanged():
+    from ssb_tools.surface_relief import SurfaceRelief
+    model, _, *_ = independent_fixture()
+    zero = np.zeros(model.size)
+    before = sources_at(model, zero, 0, np.array([.5]), np.array([0.]))[0]
+    model.relief = SurfaceRelief([dict(grid=[.25, -.1, .5, .2],
+                                      depth=np.full((2, 2), .02, np.float32))])
+    optimized = sources_at(model, zero, 0, np.array([.5]), np.array([0.]))[0]
+    nominal = sources_at(model, zero, 0, np.array([.5]), np.array([0.]), use_relief=False)[0]
+    np.testing.assert_array_equal(nominal, before)
+    assert optimized['a_lower_column'][0] != before['a_lower_column'][0]
+
+
 def test_drift_removes_translation_but_retains_scale_and_circumferential_shear():
     xs=np.linspace(3.,6.,33);qs=np.linspace(-1.,1.,49)
     xx,qq=np.meshgrid(xs,qs)

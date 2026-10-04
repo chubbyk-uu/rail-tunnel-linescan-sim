@@ -68,11 +68,13 @@ def column_clearances(model, coefficients, bands, x, q):
     lower = max(usable[0], model.sampler.offsets[0])
     upper = min(usable[-1], model.sampler.offsets[-1])
     result = np.full(x.shape+(2,), np.inf)
-    for c in (np.zeros(model.size), coefficients):
+    for c, use_relief in ((np.zeros(model.size), False), (coefficients, True)):
         for band in bands:
-            if np.any(c):
-                nx, nq, _ = inverse_points(model, c, band, x, q)
-                projected, _ = model.forward(band, nx, nq, c)
+            if np.any(c) or (use_relief and model.relief is not None):
+                nx, nq, _ = inverse_points(model, c, band, x, q, use_relief)
+                depth = model.relief.depth(x, q) if use_relief and model.relief is not None else None
+                kwargs = {'radial_depth': depth} if depth is not None else {}
+                projected, _ = model.forward(band, nx, nq, c, **kwargs)
                 converged = np.isfinite(projected).all(axis=-1) & (
                     np.max(abs(projected-np.stack((x, q), axis=-1)), axis=-1) < 1e-8)
             else:
@@ -122,9 +124,9 @@ def column_interval(model, coefficients, bands, q, bounds, guard):
 def geometry_supported(model, coefficients, bands, x, q):
     """Proof from public exposure rows and calibration only, never brightness."""
     q = np.full(len(x), q)
-    for c in (np.zeros(model.size), coefficients):
+    for c, use_relief in ((np.zeros(model.size), False), (coefficients, True)):
         for band in bands:
-            nx, nq, valid = inverse_points(model, c, band, x, q)
+            nx, nq, valid = inverse_points(model, c, band, x, q, use_relief)
             lo, hi, _, _ = model.sampler.row_sources(band, nq/model.radius)
             for ids in (lo, hi):
                 delta = nx-model.sampler.projection['x_axis_m'][ids]
@@ -184,13 +186,13 @@ def plan_window(window, model, coefficients, grid, guard):
     return window
 
 
-def sources_at(model, coefficients, band, x, q):
+def sources_at(model, coefficients, band, x, q, use_relief=True):
     """Production sampling identity only; truth is traced separately by mesh_points."""
     x, q = np.broadcast_arrays(np.asarray(x, float), np.asarray(q, float))
     if x.ndim != 1 or len(x) > 2048:
         raise ValueError('one-dimensional source batch of at most 2048 points required')
-    if np.any(coefficients):
-        nominal_x, nominal_q, inverse_ok = inverse_points(model, coefficients, band, x, q)
+    if np.any(coefficients) or (use_relief and model.relief is not None):
+        nominal_x, nominal_q, inverse_ok = inverse_points(model, coefficients, band, x, q, use_relief)
     else:
         nominal_x, nominal_q, inverse_ok = x, q, np.ones(len(x), bool)
     _, valid, score, sources = native_points(model.sampler, band, nominal_x, nominal_q, model.radius)
@@ -394,7 +396,7 @@ def score_window(window, model, coefficients, samples_across, training_windows, 
                   stratum_counts={s: int((labels == s).sum()) for s in strata})
     samples, missing = [], {}
     for name, c in (('nominal', np.zeros(model.size)), ('optimized', coefficients)):
-        tables = [sources_at(model, c, band, x, q) for band in window['bands']]
+        tables = [sources_at(model, c, band, x, q, use_relief=(name == 'optimized')) for band in window['bands']]
         valid = tables[0][1] & tables[1][1]
         if window['shared_support'] == 'unmeasurable':
             valid[:] = False

@@ -21,6 +21,8 @@ from .stage_b_scene import peak_rss_bytes
 def load_global(root, sampler, upstream, d1_root):
     root = Path(root).resolve()
     paths = [confined_file(root, name) for name in ('provenance.json', 'report.json', 'trajectory.json', 'windows.json')]
+    if (root/'surface_relief.npz').exists():
+        paths.append(confined_file(root, 'surface_relief.npz'))
     provenance = read_json(paths[0])
     if provenance.get('stage') != 'global_optimization':
         raise ValueError('verified D3 trajectory required')
@@ -53,6 +55,18 @@ def load_global(root, sampler, upstream, d1_root):
         raise ValueError('unsupported global trajectory geometry')
     model = Trajectory(sampler, record['radius_m'], record['support_height_m'],
                        settings, record['knots'])
+    if 'surface_relief' in report:
+        from .surface_relief import ReliefSettings, SurfaceRelief
+        if report['surface_relief'].get('schema') != 'ssb.stereo_radial_relief.v1':
+            raise ValueError('unsupported shared radial-relief model')
+        relief_settings = ReliefSettings(**report['surface_relief']['settings'])
+        relief_settings.validate()
+        if paths[-1].name != 'surface_relief.npz':
+            raise ValueError('declared relief product is absent')
+        model.relief = SurfaceRelief.load(paths[-1], relief_settings.max_depth_m,
+                                         relief_settings.archive_budget_bytes)
+    elif paths[-1].name == 'surface_relief.npz':
+        raise ValueError('undeclared relief product')
     coefficients = np.asarray(record['coefficients'], float)/model.scale
     if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all() or model.sizes != record['sizes']:
         raise ValueError('invalid global trajectory coefficients')
@@ -66,19 +80,24 @@ def load_global(root, sampler, upstream, d1_root):
     return model, coefficients, report, paths
 
 
-def inverse_points(model, coefficients, band, x, q):
+def inverse_points(model, coefficients, band, x, q, use_relief=True):
     x, q = np.broadcast_arrays(np.asarray(x, float), np.asarray(q, float))
     if x.size > 1 << 20 or not np.isfinite(x).all() or not np.isfinite(q).all():
         raise ValueError('nonfinite or excessive inverse mapping tile')
     target = np.stack((x, q), axis=-1)
+    # The output surface coordinate is known in inverse sampling. Its shared
+    # depth is fixed, so solve the ray direction directly rather than iterating
+    # a ray/surface intersection across a steep or discontinuous groove wall.
+    depth = (model.relief.depth(x, q) if use_relief else np.zeros(x.shape)) if getattr(model, 'relief', None) is not None else None
+    kwargs = {'radial_depth': depth} if depth is not None else {}
     nominal = target.copy()
     for _ in range(10):
-        projected, _ = model.forward(band, nominal[..., 0], nominal[..., 1], coefficients)
+        projected, _ = model.forward(band, nominal[..., 0], nominal[..., 1], coefficients, **kwargs)
         error = projected-target
         nominal -= error
         if np.max(abs(error), initial=0.) < 1e-9:
             break
-    projected, supported = model.forward(band, nominal[..., 0], nominal[..., 1], coefficients)
+    projected, supported = model.forward(band, nominal[..., 0], nominal[..., 1], coefficients, **kwargs)
     valid = supported & (np.max(abs(projected-target), axis=-1) < 1e-8)
     return nominal[..., 0], nominal[..., 1], valid
 

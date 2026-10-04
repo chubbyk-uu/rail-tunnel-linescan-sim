@@ -247,6 +247,20 @@ def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_cha
     result = review(d1, output, tmp_path/'review')
     assert len(result['crops']) >= 1 and (tmp_path/'review/review.html').is_file()
     assert (tmp_path/'review/nominal.png').is_file() and (tmp_path/'review/optimized.png').is_file()
+    from ssb_tools.surface_relief import run as estimate_relief
+    from ssb_tools.match_bands import verified_bands
+    from ssb_tools.global_resample import load_global
+    refined = tmp_path/'radial'
+    refined_report = estimate_relief(d1, output, refined)
+    assert refined_report['surface_relief']['pose_unchanged'] is True
+    assert (refined/'trajectory.json').read_bytes() == (output/'trajectory.json').read_bytes()
+    sampler, upstream, _ = verified_bands(d1)
+    loaded, _, _, _ = load_global(refined, sampler, upstream, d1)
+    assert loaded.relief is not None
+    with (refined/'surface_relief.npz').open('ab') as file:
+        file.write(b'changed depth product')
+    with pytest.raises(ValueError, match='D3 product hash'):
+        load_global(refined, sampler, upstream, d1)
     with (output/'trajectory.json').open('a') as file: file.write(' ')
     with pytest.raises(ValueError, match='D3 product hash'):
         review(d1, output, tmp_path/'rejected')
