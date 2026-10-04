@@ -27,6 +27,9 @@ struct SurfaceFixture : ::testing::Test {
     root=std::filesystem::temp_directory_path()/("ssb_surface_test_"+std::to_string(getpid()));
     std::filesystem::remove_all(root);std::filesystem::create_directories(root);
     c=Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_b.yaml");
+    // This fixture's tiles and defect index cover a fixed 23 m domain;
+    // their geometry is independent of the default demo's buffer length.
+    c.tunnel_x_min_m=-1.5;c.tunnel_x_max_m=21.5;
     c.optical_scene=root/"scene.json";c.debug_column_stride=256;
     std::ofstream mesh(root/"wall.obj");mesh.precision(10);
     for(int i=0;i<720;++i) {

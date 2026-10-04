@@ -47,13 +47,15 @@ source install/setup.bash
 python3 tools/build_demo_from_sources.py --runtime wsl \
   --sources local_data/stage_b/sources \
   --work local_data/stage_b/build_from_sources_NEW \
-  --output local_data/stage_b/contact_demo \
+  --output local_data/stage_b/contact_demo_buffered \
   > /tmp/ssb_asset_generation.log 2>&1
 ```
 
 原生 Linux 将 `--runtime wsl` 改为 `--runtime native`，其标靶直接运行已安装的 `ssb_probe`，使用系统驱动侧 OptiX 库。生成不需要 Gazebo/RViz GUI 或私有 Mesa，但需要 `libvips-tools`、ROS/Gazebo Python 绑定和真实可用的 OptiX 后端。原生主机整套部署验收尚未完成。
 
-`work`、`output` 必须是新目录且互不嵌套。已有默认演示时，可把输出改为 `local_data/stage_b/contact_demo_NEW`；工具拒绝覆盖。失败后查阅工作目录的 `generation.log` 和 `FAILED`，修复原因后用新工作目录重跑，下载原图可继续复用。
+`work`、`output` 必须是新目录且互不嵌套。已有默认演示时，可把输出改为 `local_data/stage_b/contact_demo_buffered_NEW`；工具拒绝覆盖。失败后查阅工作目录的 `generation.log` 和 `FAILED`，修复原因后用新工作目录重跑，下载原图可继续复用。
+
+默认有效区仍为 [0,20] m，物理内壁两端各延伸 2.5 m；新增包名为 `contact_demo_buffered`，已有旧包不覆盖。
 
 生成器调用现有模块，顺序如下：
 
@@ -77,7 +79,7 @@ local_data/stage_b/build_from_sources_NEW/
   surface/ filler/ cracks*/      纹理配方、砂浆与裂缝派生资产
   geometry/ optics/ gui/         隧道网格、光学场景和 GUI 预览
   catalogs/ demo/                本机裂缝目录、接触世界与标靶标定
-local_data/stage_b/contact_demo/
+local_data/stage_b/contact_demo_buffered/
   capture.yaml spec.yaml         成套的生成配置
   calibration.json gui.config   当前光学身份的图像标定与 GUI 配置
   assets/ world/ bundle.json     相对引用的全部运行依赖与哈希清单

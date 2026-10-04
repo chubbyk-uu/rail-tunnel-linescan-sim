@@ -1,8 +1,8 @@
 # 阶段 D：重建方法与操作
 
-综合装配与噪声场景采用匹配 0.1 m / 256 行、姿态 0.02 m、粗节点横向/升沉和共享表面深度；下文的 0.2 m 命令仍是名义基线。长距离新增的相对里程尺度、首尾支撑和采前容量检查见 [RELATIVE_SCALE](RELATIVE_SCALE.md)，首次 20 m 物理失败已定位并完成修复回归，独立成像验收尚待完成。
+综合装配与噪声场景采用匹配 0.1 m / 256 行、姿态 0.02 m、粗节点横向/升沉和共享表面深度；下文 0.2 m 命令仍是名义基线。
 
-更新：2026-10-04。D1 采后校正与展开、D2 重叠匹配、D3 连续轨迹优化和原图重采样已实现。接缝验收与当前证据见 [EVALUATION](EVALUATION.md)，未完成工作见 [ROADMAP](ROADMAP.md)。历次模型比较、失败、性能试验和旧门限保留在 [开发归档](history/STAGE_D_DEVLOG_2026-10-03.md)，不与现行结论混用。
+更新：2026-10-05。D1、D2、D3 已实现，3 m 及 20 m 综合新采均通过。最新 20 m 窗口内／间 P95 0.607／0.662 px、计划点零缺测、完整优化全图零缺口。相对尺度、支撑、物理修复及核验器勘误见 [RELATIVE_SCALE](RELATIVE_SCALE.md)，当前门限见 [EVALUATION](EVALUATION.md)。下一步先优化 D3 离线求解，再做亮度融合与最多 50 m 的分段扩展，见 [ROADMAP](ROADMAP.md)。旧模型、失败与门限保留在 [开发归档](history/STAGE_D_DEVLOG_2026-10-03.md)，不与现行结论混用。
 
 ## 输入与几何
 
@@ -22,7 +22,7 @@
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 python3 -m ssb_tools.initial_unroll --session SESSION \
-  --calibration local_data/stage_b/contact_demo/calibration.json \
+  --calibration local_data/stage_b/contact_demo_buffered/calibration.json \
   --backend cuda --output sessions/d1_NEW > /tmp/ssb_d1.log 2>&1
 python3 -m ssb_tools.match_bands --unroll sessions/d1_NEW \
   --spacing-m 0.2 --output sessions/d2_NEW > /tmp/ssb_d2.log 2>&1

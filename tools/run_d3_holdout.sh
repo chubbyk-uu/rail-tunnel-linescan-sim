@@ -5,7 +5,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 root=$(realpath -m "$1")
 evaluation=$(realpath -m "$2")
-demo=$(realpath "${5:-$repo/local_data/stage_b/contact_demo}")
+demo=$(realpath "${5:-$repo/local_data/stage_b/contact_demo_buffered}")
 [[ ! -e "$root" && ! -e "$evaluation" ]] || { echo 'use fresh output directories' >&2; exit 2; }
 cd "$repo"
 [[ -z $(git status --porcelain) ]] || { echo 'commit changes before holdout capture' >&2; exit 2; }

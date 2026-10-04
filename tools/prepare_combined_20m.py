@@ -100,7 +100,7 @@ def build(demo, sources, work, output, seed, reuse_lining=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--demo', type=Path, default=REPO/'local_data/stage_b/contact_demo')
+    parser.add_argument('--demo', type=Path, default=REPO/'local_data/stage_b/contact_demo_buffered')
     parser.add_argument('--sources', type=Path, default=REPO/'local_data/stage_b/sources')
     parser.add_argument('--work', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)

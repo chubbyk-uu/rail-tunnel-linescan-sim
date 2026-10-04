@@ -112,6 +112,6 @@ def run(demo, output, capture=False):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--demo',default=REPO/'local_data/stage_b/contact_demo')
+    parser.add_argument('--demo',default=REPO/'local_data/stage_b/contact_demo_buffered')
     parser.add_argument('--output',required=True);parser.add_argument('--capture',action='store_true')
     run(**vars(parser.parse_args()))

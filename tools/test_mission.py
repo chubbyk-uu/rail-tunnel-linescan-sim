@@ -192,7 +192,7 @@ def main():
             viewers = []; review = output/'rviz_review'
             if a.viewers in ('gz', 'both'):
                 viewers.append(spawn('wall_gz', ['gz', 'sim', '-g', '-v', '3', '--gui-config',
-                                                str(repo/'local_data/stage_b/contact_demo/gui.config')]))
+                                                str(repo/'local_data/stage_b/contact_demo_buffered/gui.config')]))
             if a.viewers in ('rviz', 'both'):
                 viewers.append(spawn('wall_rviz', ['rviz2', '-d', str(repo/'install/ssb_rviz/share/ssb_rviz/config/mission.rviz'),
                                                    '--ros-args', '-p', 'use_sim_time:=true'],
@@ -242,7 +242,7 @@ def main():
                 (output/'gui_frames.json').write_text(json.dumps(frames,indent=2)+'\n')
             (output/'resources.json').write_text(json.dumps(resources, indent=2)+'\n')
             from ssb_tools.wall_coverage import inspect_session
-            coverage = inspect_session(wall, repo/'local_data/stage_b/contact_demo/calibration.json',
+            coverage = inspect_session(wall, repo/'local_data/stage_b/contact_demo_buffered/calibration.json',
                                        wall/'reconstruction/coverage')
             report['checks']['nominal_coverage'] = {k: coverage[k] for k in
                 ('nominal_complete', 'recorded_rows', 'missing_pixels', 'missing_fraction', 'overlap_pixels')}
@@ -342,7 +342,7 @@ def main():
         assert latest['task']['target_x_m'] == [3., 6.]
         assert latest['task']['start_m'] < 3. and latest['task']['end_m'] > 6.
         from ssb_tools.wall_coverage import inspect_session
-        coverage = inspect_session(wall, repo/'local_data/stage_b/contact_demo/calibration.json',
+        coverage = inspect_session(wall, repo/'local_data/stage_b/contact_demo_buffered/calibration.json',
                                    wall/'reconstruction/coverage')
         assert coverage['nominal_complete'] and coverage['missing_pixels'] == 0
         report['checks']['wall_coverage'] = {k: coverage[k] for k in
@@ -353,7 +353,7 @@ def main():
                 viewers = []
                 if mode in ('gz', 'both'):
                     viewers.append(spawn(mode+'_gz', ['gz', 'sim', '-g', '-v', '3', '--gui-config',
-                                                      str(repo/'local_data/stage_b/contact_demo/gui.config')]))
+                                                      str(repo/'local_data/stage_b/contact_demo_buffered/gui.config')]))
                 if mode in ('rviz', 'both'):
                     review = output/(mode+'_review')
                     viewers.append(spawn(mode+'_rviz', ['rviz2', '-d', str(repo/'install/ssb_rviz/share/ssb_rviz/config/mission.rviz'),

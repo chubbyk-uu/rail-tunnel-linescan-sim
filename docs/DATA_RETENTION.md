@@ -1,6 +1,18 @@
 # 数据保留与清理
 
-更新：2026-10-04。大型本机资产和会话不进 Git。清理只针对已完成的重复计算、重放及界面测试；生成、采集、重建中的文件不能删除。
+## 20 m 综合验收与本轮清理（2026-10-05）
+
+| 用途 | 保留位置与范围 |
+|---|---|
+| 正式 20 m 综合新采 | `sessions/scale20_holdout_seed20261201_20261005/`；完整原图、实际独立重成像、曝光/编码器、D1、匹配、优化、共享深度及最终整图数组，均不删除或去重 |
+| 正式生成包和证据 | `local_data/stage_b/scale20_seed20261201_bundle/`；同名 `local_data/evaluation/` 的 `evidence_summary.json`、预先取点、首次报告、原协议核验失败与补充勘误全部保留 |
+| 新默认名义演示 | `local_data/stage_b/contact_demo_buffered/`；25 m 构造区、20 m 有效区，普通／相对尺度规划均通过；核验在 `default_buffered_20261005/` |
+| 历史默认包 | `local_data/stage_b/contact_demo/` 原位保留，不再是现行默认入口；历史采集引用及标定不改写 |
+| 本轮失败、开发与测试归档 | `local_data/evaluation/scale20_cleanup_20261005/`；归档报告、配置、日志和测试 XML，逐项回读验证 SHA-256，清理清单为 `cleanup.json` |
+
+仅删除本轮两个失败/停止的 20 m 原图目录、相对尺度及匹配开发重复产物、导出前中间资产、被正式新包替代的试验资产与四批测试临时夹具。失败报告仍保留，归档不含完整原图或大数组，不能当成完整可运行会话。删除逻辑体积约 **60.53 GiB**，按 inode 与剩余硬链接估算释放约 **36.59 GiB**；不是 WSL 虚拟磁盘自动缩小的保证。原有合格 3 m、新旧默认包、其他历史正式会话均未删除。
+
+更新：2026-10-05。大型本机资产和会话不进 Git。清理只针对已完成的重复计算、重放及界面测试；生成、采集、重建中的文件不能删除。
 
 综合误差 3 m 新采已完成：`sessions/compound81_noise_holdout_20261004/` 保留独立原图／重成像、公开 D1/D2/D3、完整优化图及复核页；同名 `local_data/evaluation/` 保留首次协议、几何评分、完整像素核验和性能汇总。最终可运行资产为 `local_data/stage_b/compound81_noise_seed20261117/bundle/`，含独立噪声标定的五靶图片与结果。
 
@@ -56,7 +68,7 @@
 | 新巡航余量 20 m 历史反例 | `sessions/d3_noise_20m_support_20261003/`、`local_data/evaluation/d3_noise_20m_support_20261003/` | 原模型已规划共同域无缺测、窗口间 P95 4.232 px 失败报告保留；同一原图的环缝与共享深度修复分别另存，不覆盖旧报告；该原模型没有整幅输出，后续共享深度整图已核验并保留预览与覆盖证明 |
 | README 未补偿螺旋对比 | `sessions/d3_noise_20m_v2_20261003/feature_review_rawleft/`、`local_data/readme_export_rawleft_20m_20261003/` | 旧采集原图和重建不变，`284e265` 生成原始左图、优化右图，逐像素与哈希核验通过；当前 8769 特征复核页 |
 | 双圈支撑回归证据 | `local_data/evaluation/double_support_fix_20261003/` | 日志归档、完整 XML、真实空隙/旧实现变异检查、导出像素校验及清理清单 |
-| 默认完整演示及标定 | `local_data/stage_b/contact_demo/` | Gazebo/RViz 默认入口；当前采集 250°、输出 240°、增益 2.4，带 2 mm 档轨道起伏。旧光学场景及 `*_baseline_240_20261003` 配置/标定保留，新旧会话不能混用标定 |
+| 历史完整演示及标定 | `local_data/stage_b/contact_demo/` | 历史会话引用保留；现行默认为 `contact_demo_buffered`；当前采集 250°、输出 240°、增益 2.4，带 2 mm 档轨道起伏。旧光学场景及 `*_baseline_240_20261003` 配置/标定保留，新旧会话不能混用标定 |
 | 三种公开素材原图 | `local_data/stage_b/sources/` | 从网站原图重新生成资产 |
 | 原生成链及旧演示配置 | `local_data/stage_b/` 下 c034、几何、缺陷、GUI、砂浆及 unbundled 目录 | 历史评价仍记录原资产身份和路径，暂不清理 |
 | 历史画质基线复核页 | `local_data/stage_b/final_review_20261001/` | 增益调整前已确认的背景、裂缝、填缝与照明局部图 |

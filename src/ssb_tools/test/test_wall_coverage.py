@@ -65,6 +65,18 @@ def test_relative_scale_planner_reserves_public_uncertainty_and_requires_real_bu
     assert wall_plan(changed, 0., 20., calibration, relative_encoder_scale=True)[1] == task
 
 
+def test_default_source_bounds_support_full_contact_wall_and_relative_scale(nominal):
+    import yaml
+    from ssb_tools.package_paths import share_file
+    source=yaml.safe_load(share_file('config/stage_b.yaml','ssb_core').read_text())
+    config,calibration=nominal
+    config['tunnel']=source['tunnel']
+    for relative in (False,True):
+        _,task=wall_plan(config,0.,20.,calibration,relative_encoder_scale=relative)
+        assert task['start_m']-.65>=config['tunnel']['x_min_m']
+        assert task['end_m']+.65<=config['tunnel']['x_max_m']
+
+
 @pytest.mark.parametrize('margin', [0., .5, 5., 10.])
 def test_capture_guard_keeps_the_full_fixed_wall_target(nominal, margin):
     config, calibration = nominal

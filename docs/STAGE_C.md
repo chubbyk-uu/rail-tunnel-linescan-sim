@@ -56,7 +56,7 @@ bash tools/run_wall_capture.sh sessions/wall_3m_NEW 3 3
 source install/setup.bash
 python3 -m ssb_tools.wall_coverage \
   --session sessions/wall_3m_NEW \
-  --calibration local_data/stage_b/contact_demo/calibration.json \
+  --calibration local_data/stage_b/contact_demo_buffered/calibration.json \
   --output sessions/wall_3m_NEW/reconstruction/coverage_NEW
 ```
 
@@ -86,7 +86,7 @@ python3 -m ssb_tools.wall_coverage \
 source install/setup.bash
 python3 tools/test_wall_coverage_scale.py \
   --reference sessions/wall_3m_NEW \
-  --calibration local_data/stage_b/contact_demo/calibration.json \
+  --calibration local_data/stage_b/contact_demo_buffered/calibration.json \
   --output /tmp/ssb_wall_scale_NEW
 ```
 

@@ -5,8 +5,8 @@ robot: {base_reference_z_m: 0.3, scan_axis_height_m: 1.715}
 tunnel:
   radius_m: 2.75
   axis_z_m: 2.015            # rail top z=0; tunnel bottom z=-0.735
-  x_min_m: -1.5
-  x_max_m: 21.5
+  x_min_m: -2.5            # source buffers for braking and relative-scale support
+  x_max_m: 22.5
 scan_encoder: {ppr: 2500, edges_per_cycle: 4}
 rescaler: {multiply: 128, divide: 15, max_period_s: 0.01}
 camera:

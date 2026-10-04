@@ -16,7 +16,7 @@ tools/run_gz_gui.sh sessions/my_run       # 指定会话目录（不得已存在
 tools/run_gz_gui.sh SESSION path/to/capture.yaml   # 其他演示目录，世界与标定取同目录
 ```
 
-演示资产是 `local_data/stage_b/contact_demo/`，现已直接采用可迁移的完整导出包，内含 `capture.yaml`（含私密光学密钥）、`assets/` 中的光学场景及依赖、`world/world.sdf`、`spec.yaml`、`calibration.json`、`gui.config` 和 `bundle.json`，几者成套使用。运行引用全部相对；`bundle.json.dependencies` 的 `source_file` 和配方 `input_channels` 只是历史来源记录。
+现行演示的有效区为 20 m，构造区为 [−2.5,22.5] m，满足提前减速后的采集余量；旧 `contact_demo` 保留供历史会话引用。演示资产是 `local_data/stage_b/contact_demo_buffered/`，现已直接采用可迁移的完整导出包，内含 `capture.yaml`（含私密光学密钥）、`assets/` 中的光学场景及依赖、`world/world.sdf`、`spec.yaml`、`calibration.json`、`gui.config` 和 `bundle.json`，几者成套使用。运行引用全部相对；`bundle.json.dependencies` 的 `source_file` 和配方 `input_channels` 只是历史来源记录。
 
 `capture.yaml` 的公开 `mission` 段声明有效范围、车体半包络、安全余量和最短距离；管理器校验后发布给 RViz。默认 [0,20] m、0.56 m 半包络加 0.09 m 余量、最短 1 m。扩大范围时必须同时生成足够长的隧道/轨道和光学资产；修改面板范围不等于完成长隧道验收。
 
@@ -35,14 +35,14 @@ tools/run_gz_gui.sh SESSION path/to/capture.yaml   # 其他演示目录，世界
 python3 tools/prepare_contact_demo.py --output local_data/stage_b/NEW_DEMO --calibrate
 ```
 
-默认输入是完整的 `contact_demo` 包，可用 `--demo /path/to/bundle` 指定迁移后的副本；不依赖 v10/v11 中间目录。脚本重新生成机器人和轨道，默认保留来源包的衬面网格，并自动复用匹配的标定；`--calibrate` 用于重新标定。派生目录还需要下述导出步骤才能再次独立迁移。
+默认输入是完整的 `contact_demo_buffered` 包，可用 `--demo /path/to/bundle` 指定迁移后的副本；不依赖 v10/v11 中间目录。脚本重新生成机器人和轨道，默认保留来源包的衬面网格，并自动复用匹配的标定；`--calibrate` 用于重新标定。派生目录还需要下述导出步骤才能再次独立迁移。
 
 轨道起伏与车轮柔性（§9）也在这里设定，二者都会写进配置的真值段并决定世界的生成：
 
 ```bash
 python3 tools/prepare_contact_demo.py --output local_data/stage_b/NEW_DEMO \
-  --config local_data/stage_b/contact_demo/capture.yaml \
-  --calibration local_data/stage_b/contact_demo/calibration.json \
+  --config local_data/stage_b/contact_demo_buffered/capture.yaml \
+  --calibration local_data/stage_b/contact_demo_buffered/calibration.json \
   --track-chord-mm 2 --wheel-deflection-mm 0.2
 ```
 
@@ -57,12 +57,12 @@ python3 tools/prepare_contact_demo.py --output local_data/stage_b/NEW_DEMO \
 ```bash
 source install/setup.bash
 python3 -m ssb_tools.demo_bundle \
-  --demo local_data/stage_b/contact_demo --output /tmp/subway_demo_bundle
+  --demo local_data/stage_b/contact_demo_buffered --output /tmp/subway_demo_bundle
 ```
 
 接触模式资产包同时导出 `spec.yaml` 和 `world/physical_manifest.json`，同步高度场改名后的引用并保留图像内容哈希；导出前后都检查物理世界与配置一致。缺少规格或物理清单的旧包需从完整演示重新导出。
 
-复制为新克隆的 `local_data/stage_b/contact_demo` 即可运行。资产包含有生成端真值（HMAC 密钥、畸变），只用于生成采集，不能作为盲重建评估的输入。2026-10-02 默认包已迁移并在隔离原 `stage_b` 目录后通过 344 个文件哈希、运行引用边界、物理世界、标定身份检查，并从迁移副本派生新演示。约 1.70 GiB 运行依赖（1,827,116,136 字节）。原默认目录保留为 `contact_demo_unbundled_20261002`，历史 `review_portable_relocated` 已删除，不作为现行入口。联合短程采集在本轮修复的集成验收中复核。
+下面为 2026-10-02 的历史迁移验证，首次部署应按 [ASSETS](ASSETS.md) 从公开网站下载并生成现行包。旧 `contact_demo` 保留用于历史会话，现行默认入口为 `contact_demo_buffered`。资产包含有生成端真值（HMAC 密钥、畸变），只用于生成采集，不能作为盲重建评估的输入。2026-10-02 默认包已迁移并在隔离原 `stage_b` 目录后通过 344 个文件哈希、运行引用边界、物理世界、标定身份检查，并从迁移副本派生新演示。约 1.70 GiB 运行依赖（1,827,116,136 字节）。原默认目录保留为 `contact_demo_unbundled_20261002`，历史 `review_portable_relocated` 已删除，不作为现行入口。联合短程采集在本轮修复的集成验收中复核。
 
 ## 3. 现行场景与成像配置
 
@@ -82,7 +82,7 @@ python3 -m ssb_tools.demo_bundle \
 | 纹理预算 | OptiX GPU 2 GiB、CPU 1 GiB；GUI 1280 MiB（现行 140 块约 746 MiB） | `stage_b_scene.yaml` 的 `resources` |
 | GUI 预览 | 同源 Concrete034 分块底色（x=3–6 m 处 1 mm，其余 2 mm），裂缝 4 倍子像素预览；环境散光 0.6；工作灯和条光见 DESIGN §7.5 | `gui_c034_v1`、`gui_strip_shadow_final_v10` |
 
-来源列中的 `c034_DC4`、`defects_dev_v5`、`gui_*` 是历史生成标签，不是新部署依赖。实际运行依赖封装在 contact_demo/assets 与 world 内，以 bundle.json 和成套配置为准。素材原图在 `local_data/stage_b/sources/`（concrete034、grey_plaster、painted_plaster_wall），各目录的 `downloads.json` 记录来源、许可和哈希。首次部署使用 `tools/download_demo_sources.py` 从公开网站下载并写入来源清单，然后用 `tools/build_demo_from_sources.py` 从零生成完整演示，见 [ASSETS.md](ASSETS.md)。
+来源列中的 `c034_DC4`、`defects_dev_v5`、`gui_*` 是历史生成标签，不是新部署依赖。实际运行依赖封装在 contact_demo_buffered/assets 与 world 内，以 bundle.json 和成套配置为准。素材原图在 `local_data/stage_b/sources/`（concrete034、grey_plaster、painted_plaster_wall），各目录的 `downloads.json` 记录来源、许可和哈希。首次部署使用 `tools/download_demo_sources.py` 从公开网站下载并写入来源清单，然后用 `tools/build_demo_from_sources.py` 从零生成完整演示，见 [ASSETS.md](ASSETS.md)。
 
 ## 4. 下载与生成资产
 
@@ -92,12 +92,12 @@ python3 -m ssb_tools.demo_bundle \
 
 ```bash
 # 无 GUI 采集（世界与配置成对）
-SSB_WORLD=$PWD/local_data/stage_b/contact_demo/world/world.sdf \
-  tools/run_gz.sh sessions/b_capture local_data/stage_b/contact_demo/capture.yaml
+SSB_WORLD=$PWD/local_data/stage_b/contact_demo_buffered/world/world.sdf \
+  tools/run_gz.sh sessions/b_capture local_data/stage_b/contact_demo_buffered/capture.yaml
 
 # 改变批大小离线重放，检查原始图像和元数据逐字节一致
 bash tools/with_optix_runtime.sh install/ssb_core/lib/ssb_core/ssb_render \
-  --config local_data/stage_b/contact_demo/capture.yaml --session sessions/b_replay \
+  --config local_data/stage_b/contact_demo_buffered/capture.yaml --session sessions/b_replay \
   --poses sessions/b_capture/evaluation/pose_stream.bin --batch-rows 333
 ros2 run ssb_tools validate_stage_b_smoke sessions/b_capture --compare sessions/b_replay
 
@@ -175,7 +175,7 @@ python3 -m ssb_tools.optical_calibration apply --session SESSION \
 tools/run_mission.sh             # RViz 显示，Gazebo 服务器按任务启动
 tools/run_mission.sh --gz-gui    # 同时显示 GZ GUI
 # 可指定成套的演示与会话根目录：
-tools/run_mission.sh --demo local_data/stage_b/contact_demo --output-root sessions/mission
+tools/run_mission.sh --demo local_data/stage_b/contact_demo_buffered --output-root sessions/mission
 ```
 
 现行默认头部从正下方 θ=180° 开始，先空转到 θ=235°（等价于 −125°）开门，经过顶部到 θ=485°（+125°）关门。门控 250°，底部 110° 不曝光；最终成果仍排除底部 120°。起始相位、标定和签名以该包配置为准，不沿用归档的配置哈希或首行角度。

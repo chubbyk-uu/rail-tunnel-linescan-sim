@@ -3,7 +3,7 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 session=$(realpath -m "${1:-$repo/sessions/gui_$(date +%Y%m%d_%H%M%S)}")
-demo="$repo/local_data/stage_b/contact_demo"
+demo="$repo/local_data/stage_b/contact_demo_buffered"
 config=$(realpath "${2:-$demo/capture.yaml}")
 world=$(realpath "${3:-$(dirname "$config")/world/world.sdf}")
 calibration=${SSB_OPTICAL_CALIBRATION:-$(dirname "$config")/calibration.json}

@@ -101,7 +101,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sources', type=Path, default=REPO/'local_data/stage_b/sources')
     parser.add_argument('--work', type=Path, required=True)
-    parser.add_argument('--output', type=Path, default=REPO/'local_data/stage_b/contact_demo')
+    parser.add_argument('--output', type=Path, default=REPO/'local_data/stage_b/contact_demo_buffered')
     parser.add_argument('--runtime', choices=('wsl', 'native'), required=True)
     args = parser.parse_args()
     build(args.sources, args.work, args.output, args.runtime)

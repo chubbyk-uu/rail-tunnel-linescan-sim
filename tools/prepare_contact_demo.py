@@ -22,7 +22,7 @@ from ssb_tools.stage_b_robot import WHEEL_MASS_KG, AXLE_MASS_KG, running_wheel_l
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--demo',type=Path,default=REPO/'local_data/stage_b/contact_demo',
+    p.add_argument('--demo',type=Path,default=REPO/'local_data/stage_b/contact_demo_buffered',
                    help='complete prepared input bundle; individual inputs may be overridden')
     p.add_argument('--world',type=Path)
     p.add_argument('--config',type=Path)

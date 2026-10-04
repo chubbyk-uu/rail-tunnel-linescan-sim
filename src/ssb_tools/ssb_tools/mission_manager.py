@@ -450,7 +450,7 @@ class MissionManager(Node):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--demo', default='local_data/stage_b/contact_demo')
+    p.add_argument('--demo', default='local_data/stage_b/contact_demo_buffered')
     p.add_argument('--output-root', default='sessions/mission')
     p.add_argument('--data-root', default='local_data', help='writable assets/cache/lock root; Linux filesystem preferred')
     p.add_argument('--gz-gui', action='store_true')

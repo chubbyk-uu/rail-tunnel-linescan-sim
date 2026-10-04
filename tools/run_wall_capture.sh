@@ -4,7 +4,7 @@ set -euo pipefail
 [[ $# -ge 3 && $# -le 4 ]] || { echo 'usage: run_wall_capture.sh SESSION TARGET_START_M TARGET_LENGTH_M [DEMO]' >&2; exit 2; }
 repo=$(cd "$(dirname "$0")/.." && pwd)
 session=$(realpath -m "$1")
-demo=$(realpath "${4:-$repo/local_data/stage_b/contact_demo}")
+demo=$(realpath "${4:-$repo/local_data/stage_b/contact_demo_buffered}")
 inputs="${session}_inputs"
 [[ ! -e "$session" && ! -e "$inputs" ]] || { echo 'capture and input directories must be fresh' >&2; exit 2; }
 mkdir -p "$(dirname "$session")"

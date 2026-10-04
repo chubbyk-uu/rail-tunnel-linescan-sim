@@ -32,7 +32,7 @@
 
 | 项目 | 设置 |
 |---|---|
-| 隧道 | 有效 20 m、半径 2.75 m，两端含缓冲 |
+| 隧道 | 有效 20 m、半径 2.75 m，两端各含 2.5 m 缓冲 |
 | 轨道车 | 约 120 kg；前轮驱动、后轮从动，双 80 mm 测量轮编码器 |
 | 相机 / 镜头 | Mono8、4096 像素、90 mm，0.6% 仿真畸变 |
 | 运动 / 触发 | 0.2 m/s，估计里程 0.6 m/圈；名义约 28.444 kHz |
@@ -40,7 +40,7 @@
 | 壁面 | Concrete034 背景、砂浆板缝、0.2–0.6 mm 裂缝 |
 | 误差与噪声 | 默认有轨道起伏；轮径＋偏移＋双轴倾斜＋噪声的综合 3 m 新采已通过，长距离组合待验收；噪声默认关闭 |
 
-真实轮径和标定轮径分开配置；默认均为 80 mm；另有 79、81 mm 受控场景。扫描与新任务停车跟随估计里程；轮径试验见 [WHEEL_ERROR](docs/WHEEL_ERROR.md)，固定装配组合见 [MOUNT_ERROR](docs/MOUNT_ERROR.md)。最新 [3 m 综合误差新采](docs/COMBINED_ERROR.md) 同时加入 81/80 mm 轮径、偏移、双轴倾斜、起伏及噪声，接缝 P95 **0.461／0.565 px**、整图零缺口；headless 成像实时率约 0.952，公开重建约 82 秒，无明显降速。20 m 综合场景先解决相对尺度与资源预算，见 [计划](docs/ROADMAP.md)。暂不加 IMU。
+真实轮径和标定轮径分开配置；默认均为 80 mm；另有 79、81 mm 受控场景。扫描与新任务停车跟随估计里程；轮径试验见 [WHEEL_ERROR](docs/WHEEL_ERROR.md)，固定装配组合见 [MOUNT_ERROR](docs/MOUNT_ERROR.md)。最新 [20 m 综合误差新采](docs/RELATIVE_SCALE.md#独立-20-m-综合验收2026-10-05) 同时加入 81/80 mm 轮径、偏移、双轴倾斜、起伏及噪声，接缝 P95 **0.607／0.662 px**、整图零缺口；headless 成像实时率约 0.986，公开重建约 603 秒，全图另需 368 秒。下一步先优化离线求解速度，见 [计划](docs/ROADMAP.md)。暂不加 IMU。
 
 ## 安装：WSL 与原生 Linux 分开选择
 
@@ -88,7 +88,7 @@ python3 tools/download_demo_sources.py --output local_data/stage_b/sources \
 python3 tools/build_demo_from_sources.py --runtime wsl \
   --sources local_data/stage_b/sources \
   --work local_data/stage_b/build_NEW \
-  --output local_data/stage_b/contact_demo > /tmp/ssb_assets.log 2>&1
+  --output local_data/stage_b/contact_demo_buffered > /tmp/ssb_assets.log 2>&1
 ```
 
 生成内容含隧道、材质、裂缝、轨道车、世界、独立标靶及图像标定。原生 Linux 将 `--runtime wsl` 改为 `--runtime native`，该路线尚未在独立主机完整验收。网站手动下载、输出结构和生成边界见 [ASSETS](docs/ASSETS.md)。生成成功后仍需短程采集验证。
@@ -118,7 +118,7 @@ bash tools/run_wall_capture.sh sessions/wall_NEW 12 3 \
 
 ```bash
 python3 -m ssb_tools.initial_unroll --session sessions/wall_NEW \
-  --calibration local_data/stage_b/contact_demo/calibration.json \
+  --calibration local_data/stage_b/contact_demo_buffered/calibration.json \
   --backend cuda --output sessions/d1_NEW > /tmp/ssb_d1.log 2>&1
 python3 -m ssb_tools.public_reconstruction \
   --unroll sessions/d1_NEW \

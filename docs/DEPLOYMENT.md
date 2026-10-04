@@ -238,7 +238,7 @@ rviz2 -d install/ssb_rviz/share/ssb_rviz/config/mission.rviz \
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 python3 -m ssb_tools.mission_plan \
-  --demo local_data/stage_b/contact_demo \
+  --demo local_data/stage_b/contact_demo_buffered \
   --output sessions/native_wall_3m_NEW_inputs \
   --target-start-m 3 --target-length-m 3 > /tmp/ssb_native_plan.log 2>&1
 
@@ -268,7 +268,7 @@ gz sim -s -r -v 3 --iterations "$ssb_iterations" "$SSB_WORLD" \
 python3 tools/check_session.py "$SSB_SESSION"
 python3 -m ssb_tools.wall_coverage \
   --session "$SSB_SESSION" \
-  --calibration local_data/stage_b/contact_demo/calibration.json \
+  --calibration local_data/stage_b/contact_demo_buffered/calibration.json \
   --output "$SSB_SESSION/reconstruction/coverage"
 ```
 
