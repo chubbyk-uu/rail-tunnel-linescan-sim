@@ -57,7 +57,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       if(std::filesystem::exists(log_root_))throw std::runtime_error("diagnostics already exist");
       std::filesystem::create_directories(log_root_+"/metadata");std::filesystem::create_directories(log_root_+"/evaluation");
       obs_.open(log_root_+"/metadata/encoders.csv");truth_.open(log_root_+"/evaluation/contact.csv");
-      obs_<<std::setprecision(17)<<"t,count_left,count_right,s_hat,theta_target,scan,scan_rate,torque_left,torque_right\n";
+      obs_<<std::setprecision(17)<<"t,count_left,count_right,s_hat,theta_target,scan,scan_rate,torque_left,torque_right,command_speed,encoder_speed\n";
       truth_<<std::setprecision(17)<<"t,x,y,z,roll,pitch,yaw,vx,vy,vz,left_angle,right_angle,left_rate,right_rate,scan,scan_rate,"
               "measure_slide_left,measure_slide_right"
             <<(springs_.empty()?"":",suspension_rear_left,suspension_front_left,suspension_rear_right,suspension_front_right")<<"\n";
@@ -97,10 +97,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}
       world_checked_=true;
     }
-    double factor=t>=0&&t<=c_.profile.back()[0]?ssb::EvaluateProfile(c_.profile,t).factor:0;
-    double speed=c_.advance_per_rev_m*c_.NominalOmega()/(2*M_PI)*factor;
-    if (!SetDriveSpeed(ecm,speed)) return;
-    if(t<0){scan_.SetVelocity(ecm,{0});return;}
+    if(t<0){SetDriveSpeed(ecm,0.);scan_.SetVelocity(ecm,{0});return;}
     if(!started_){
       for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!p||p->empty())return;zero_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_));}
       started_=true;
@@ -108,14 +105,37 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
         catch(const std::exception& e){std::cerr<<"[contact] "<<e.what()<<std::endl;std::_Exit(2);}}
     }
     double s=0;
-    for(int i=0;i<2;++i){auto p=enc_[i].Position(ecm);if(!HasValues(p)) {StopCapture("encoder position unavailable during acquisition");return;}
-      count_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_))-zero_[i];s+=.5*count_[i]/counts_per_rad_*diameter_[i]/2;}
+    encoder_speed_=0.;
+    for(int i=0;i<2;++i) {
+      const auto p=enc_[i].Position(ecm),v=enc_[i].Velocity(ecm);
+      if(!HasValues(p,v) || !std::isfinite(p->front()) || !std::isfinite(v->front())) {
+        StopCapture("encoder position or rate unavailable during acquisition");return;
+      }
+      count_[i]=static_cast<long long>(std::floor(p->front()*counts_per_rad_))-zero_[i];
+      s+=.5*count_[i]/counts_per_rad_*diameter_[i]/2;
+      encoder_speed_+=.5*v->front()*diameter_[i]/2;
+    }
     s_hat_=s;
     auto p=scan_.Position(ecm);if(p&&!p->empty()){
       const double command=servo_.Update(s_hat_,p->front(),dt,c_.start_theta_rad,c_.advance_per_rev_m);
       target_theta_=servo_.Target();
       scan_.SetVelocity(ecm,{command});
-    } else {StopCapture("scan position unavailable during acquisition");}
+    } else {StopCapture("scan position unavailable during acquisition");return;}
+    const double cruise=c_.advance_per_rev_m*c_.NominalOmega()/(2*M_PI);
+    if(c_.distance_stop.Enabled()) {
+      if(t>=c_.distance_stop.timeout_s) {
+        StopCapture("encoder distance task timed out before target and parking");return;
+      }
+      const auto rate=scan_.Velocity(ecm);
+      // The servo is forward-only. Keep its existing 12 mrad tracking tolerance;
+      // forcing exact angular equality at rest would require a reverse exposure.
+      const bool parked=HasValues(rate) && std::abs(target_theta_-p->front())<.012 &&
+                        std::abs(rate->front())<.01;
+      command_speed_=distance_controller_.Update(c_.distance_stop,cruise,t,s_hat_,encoder_speed_,dt,parked);
+    } else {
+      command_speed_=t<=c_.profile.back()[0] ? cruise*ssb::EvaluateProfile(c_.profile,t).factor : 0.;
+    }
+    SetDriveSpeed(ecm,command_speed_);
   }
   void PostUpdate(const gz::sim::UpdateInfo& info,const gz::sim::EntityComponentManager& ecm) override {
     PublishStatus(info, ecm);
@@ -138,7 +158,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
     for(const auto& j:springs_){auto q=j.Position(ecm);truth_<<','<<(q&&!q->empty()?q->front():std::nan(""));}
     truth_<<'\n';
     if(started_){
-      obs_<<t<<','<<count_[0]<<','<<count_[1]<<','<<s_hat_<<','<<target_theta_<<','<<th->front()<<','<<w->front()<<','<<torque_[0]<<','<<torque_[1]<<'\n';
+      obs_<<t<<','<<count_[0]<<','<<count_[1]<<','<<s_hat_<<','<<target_theta_<<','<<th->front()<<','<<w->front()<<','<<torque_[0]<<','<<torque_[1]<<','<<command_speed_<<','<<encoder_speed_<<'\n';
       if(pipeline_) {
         ssb::PoseSample sample{t,pose.Pos().X(),linear->X(),th->front(),w->front(),a->front(),av->front()};
         sample.body_valid=1;sample.y=pose.Pos().Y();sample.z=pose.Pos().Z();
@@ -151,13 +171,23 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
         pipeline_->Push(sample);
       }
     }
-    if(t>=c_.profile.back()[0]){
+    if(c_.distance_stop.Enabled() ? distance_controller_.Complete() : t>=c_.profile.back()[0]){
       finished_=true;obs_.close();truth_.close();
       nlohmann::json summary={{"complete",true},{"end_s",t},{"s_hat",s_hat_},{"end_x",pose.Pos().X()},{"start_x",c_.start_x_m},
         {"end_y",pose.Pos().Y()},{"end_z",pose.Pos().Z()},{"encoder_counts",{count_[0],count_[1]}},{"layout","front-drive/measuring-wheel-encoders"},
         {"config",ssb::FileIdentity(config_path_)},{"mode","rigid friction contact"}};
-      std::ofstream(log_root_+"/summary.json")<<summary.dump(2)<<'\n';
-      if(pipeline_){pipeline_->Finish();completion_=std::async(std::launch::async,[this]{return pipeline_->Wait();});}
+      summary["completion_basis"]=c_.distance_stop.Enabled()?"dual_encoder_distance_and_park":"timed_profile";
+      if(c_.distance_stop.Enabled()) {
+        summary["requested_estimated_m"]=c_.distance_stop.target_m;
+        summary["encoder_speed_m_s"]=encoder_speed_;
+        summary["command_speed_m_s"]=command_speed_;
+      }
+      ssb::WriteJsonAtomic(log_root_+"/summary.json",summary);
+      if(pipeline_) {
+        if(c_.distance_stop.Enabled()) pipeline_->FinishDistanceMotion(s_hat_,encoder_speed_);
+        else pipeline_->Finish();
+        completion_=std::async(std::launch::async,[this]{return pipeline_->Wait();});
+      }
       std::cout<<"[contact] motion complete "<<summary.dump()<<std::endl;
     }
   }
@@ -200,6 +230,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       {"sim_time", std::chrono::duration<double>(info.simTime).count()},
       {"paused", info.paused}, {"started", started_}, {"motion_complete", finished_ && runtime_error_.empty()},
       {"s_hat", s_hat_}, {"scan", position(scan_)},
+      {"estimated_speed_m_s",encoder_speed_},{"command_speed_m_s",command_speed_},
       {"scan_rate", rate && !rate->empty() ? rate->front() : 0.},
       {"speed", velocity ? velocity->X() : 0.},
       {"base_pose", {p.X(), p.Y(), p.Z(), q.X(), q.Y(), q.Z(), q.W()}},
@@ -228,7 +259,7 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
       rates[i]=velocity->front();
     }
     for (int i=0;i<2;++i) {
-      torque_[i]=DriveTorque(2*speed/drive_diameter_,rates[i]);
+      torque_[i]=drive_controller_[i].Update(2*speed/drive_diameter_,rates[i],c_.sample_period_s);
       drive_[i].SetForce(ecm,{torque_[i]});
     }
     return true;
@@ -251,6 +282,9 @@ class ContactSystem final : public gz::sim::System, public gz::sim::ISystemConfi
   std::unique_ptr<ssb::Pipeline> pipeline_;std::future<nlohmann::json> completion_;
   std::unique_ptr<CaptureProgress> capture_progress_;  // destroyed before pipeline_
   ScanServo servo_;
+  DistanceController distance_controller_;
+  DriveController drive_controller_[2];
+  double encoder_speed_=0.,command_speed_=0.;
   double diameter_[2]{},drive_diameter_=0,settle_=2,counts_per_rad_=0,torque_[2]{},s_hat_=0,target_theta_=0;
   long long count_[2]{},zero_[2]{};bool started_=false,finished_=false,dynamics_only_=false;
 };

@@ -198,6 +198,30 @@ TEST(Persistence, DurableCommitReportsWorkWhenSavedRowsDoNotChange) {
   std::filesystem::remove_all(root);
 }
 
+TEST(Pipeline, DistanceTaskDrainDoesNotImplyReachedTarget) {
+  for(bool reached:{false,true}) {
+    auto c=ssb::Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_a.yaml");
+    c.profile={{0.,1.},{.002,1.}};c.start_theta_rad=0.;
+    c.batch_rows=4096;c.debug_column_stride=0;c.contact_enabled=true;
+    c.odo_left_calibrated=c.odo_right_calibrated=c.odo_left_true=c.odo_right_true=.08;
+    c.distance_stop.target_m=3.;c.distance_stop.timeout_s=40.;
+    const auto root=std::filesystem::temp_directory_path()/
+      ("ssb_distance_motion_"+std::to_string(getpid())+std::to_string(reached));
+    std::filesystem::remove_all(root);
+    ssb::PipelineOptions options{root,{"test"},"gazebo_contact"};options.planned_end_s=.002;
+    ssb::Pipeline p(c,std::make_unique<FailingRenderer>(c.width),options);
+    for(const auto& sample:ssb::KinematicSource(c).Sample()) p.Push(sample);
+    EXPECT_THROW(p.FinishDistanceMotion(2.,0.),std::invalid_argument);
+    EXPECT_THROW(p.FinishDistanceMotion(3.,.2),std::invalid_argument);
+    if(reached) p.FinishDistanceMotion(3.,0.);else p.Finish();
+    const auto summary=p.Wait();
+    EXPECT_EQ(summary.at("status"),"complete");
+    EXPECT_EQ(summary.at("motion").at("complete"),reached);
+    EXPECT_EQ(summary.at("motion").at("completion_basis"),"dual_encoder_distance_and_park");
+    std::filesystem::remove_all(root);
+  }
+}
+
 TEST(Replay, ArchivedPlannedEndRequiresTheCompleteHashChain) {
   const auto root=std::filesystem::temp_directory_path()/("ssb_replay_chain_"+std::to_string(getpid()));
   std::filesystem::remove_all(root);std::filesystem::create_directories(root/"evaluation");

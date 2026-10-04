@@ -42,6 +42,9 @@ class Pipeline {
   void Push(const PoseSample& sample);
   // Producer failure drains accepted input and preserves indices, then marks failed.
   void Finish(const std::string& producer_error = "");
+  // Contact producer has observed target distance and parked; no world pose input.
+  // A plain Finish on a distance task drains data but leaves motion incomplete.
+  void FinishDistanceMotion(double estimated_distance_m, double estimated_speed_m_s);
   // Low-rate UI snapshot; does not expose truth or copy image buffers.
   nlohmann::json Progress() const;
   // Ends input (idempotent Finish), then blocks until everything is on disk. Rethrows the

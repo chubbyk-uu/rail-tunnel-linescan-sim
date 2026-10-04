@@ -18,6 +18,35 @@ from .validate_stage_a import (check,PASS,FAIL,UNMEASURABLE,verify_hashes,proven
                               advance_per_rev,compare_sessions)
 
 
+def distance_stop_check(session, cfg, poses):
+    """Independent encoder/rate check over the declared parking hold; no body x."""
+    stop=cfg['motion']['distance_stop'];motion=session.summary['motion']
+    if len(poses)<2:
+        return check('distance_target_and_parking',UNMEASURABLE,reason='too few encoder samples')
+    counts=cfg['odometer']['ppr']*cfg['odometer']['edges_per_cycle']*cfg['odometer']['gear_ratio']
+    dl,dr=(cfg['calibration'][f'odo_{side}_diameter_m'] for side in ('left','right'))
+    distance=np.zeros(len(poses));speed=np.zeros(len(poses))
+    for field,diameter in (('wheel',dl),('right_wheel',dr)):
+        indices=np.floor(poses[field]*counts/(2*np.pi))
+        distance+=(indices-indices[0])*np.pi*diameter/counts/2
+        rate='wheel_omega' if field=='wheel' else 'right_wheel_omega'
+        speed+=poses[rate]*diameter/4
+    held=poses['t']>=poses['t'][-1]-stop['hold_s']+cfg['motion']['sample_period_s']
+    # Initial producer zero is sampled immediately before the first archived pose.
+    quantum=np.pi*(dl+dr)/counts/2
+    error=float(np.max(abs(distance[held]-stop['target_m'])))
+    max_speed=float(np.max(abs(speed[held])))
+    ok=(held.sum()>=int(stop['hold_s']/cfg['motion']['sample_period_s'])-1 and
+        motion.get('completion_basis')=='dual_encoder_distance_and_park' and
+        motion.get('complete') is True and error<=stop['tolerance_m']+quantum and
+        max_speed<=stop['speed_tolerance_m_s'] and
+        abs(motion.get('estimated_distance_m',float('inf'))-distance[-1])<=quantum+1e-12)
+    return check('distance_target_and_parking',PASS if ok else FAIL,
+        target_m=stop['target_m'],recomputed_estimated_m=float(distance[-1]),
+        held_error_max_m=error,held_speed_max_m_s=max_speed,zero_quantization_bound_m=quantum,
+        hold_samples=int(held.sum()),hold_s=stop['hold_s'])
+
+
 def runtime_source_budget(scene, scene_path):
     return read_json(Path(scene_path).parent/scene['surface']['file'])['resources']['gpu_source_budget_bytes']
 
@@ -192,6 +221,8 @@ def main(argv=None):
         if prov.get('pose_source') in ('gazebo','gazebo_contact'):
             checks.extend(gazebo_world_checks(session, source, prov))
         poses=session.evaluation('pose_stream');row_truth=session.evaluation('row_truth')
+        if cfg['motion'].get('distance_stop') and prov.get('pose_source')=='gazebo_contact':
+            checks.append(distance_stop_check(session,cfg,poses))
         timing,rows,dropped=compare_timing(session,cfg,truth,poses);checks.extend(timing)
         checks.extend([accounting(rows,dropped),valid_region(source,poses,rows,row_truth,dropped),
                        gate_geometry(cfg,truth,rows,row_truth),advance_per_rev(cfg,row_truth,poses)])

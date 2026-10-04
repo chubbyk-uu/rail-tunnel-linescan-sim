@@ -88,7 +88,13 @@ def validate(root, config, spec=None, world=None):
     expected_pitch = c['motion']['advance_per_rev_m']/((dl/tl+dr/tr)/2)
     slip = np.maximum(axles['left']['slip'], axles['right']['slip'])
     vx = np.minimum(axles['left']['vx'], axles['right']['vx'])
-    commanded = speed_factor(c['motion']['profile'], a['t'])
+    if c['motion'].get('distance_stop'):
+        # Command log is public control evidence, not a profile inferred from truth.
+        cruise_speed=c['motion']['advance_per_rev_m']*c['motion']['line_rate_hz']/(c['scan_encoder']['ppr']*
+            c['scan_encoder']['edges_per_cycle']*c['rescaler']['multiply']/c['rescaler']['divide'])
+        commanded=np.interp(a['t'],b['t'],b['command_speed'])/cruise_speed
+    else:
+        commanded = speed_factor(c['motion']['profile'], a['t'])
     reverse = float(-np.clip(vx, None, 0).sum()*np.median(np.diff(a['t'])))
     compliance = c['truth'].get('wheel_compliance')
     deflection = compliance['static_deflection_m'] if compliance else 0.
@@ -108,7 +114,18 @@ def validate(root, config, spec=None, world=None):
         max_slip_speed_m_s=float(slip.max()), reverse_displacement_m=reverse,
         max_lateral_m=float(abs(a['y']).max()), max_scan_error_rad=float(abs(b['theta_target']-b['scan']).max()))
     # Encoder wheel surface travel minus axle travel, at cruise and elsewhere (start/stop/parked).
-    dt = np.gradient(a['t']); cruise = speed_factor(c['motion']['profile'], a['t']) >= .999
+    dt = np.gradient(a['t']); cruise = commanded >= .999
+    if stop := c['motion'].get('distance_stop'):
+        error=float(estimated[-1]-stop['target_m'])
+        held=b['t']>=b['t'][-1]-stop['hold_s']+c['motion']['sample_period_s']
+        checks['encoder_target_and_park']=bool(summary.get('completion_basis')=='dual_encoder_distance_and_park' and
+            held.sum()>1 and np.max(abs(estimated[held]-stop['target_m']))<=stop['tolerance_m'] and
+            np.max(abs(b['encoder_speed'][held]))<=stop['speed_tolerance_m_s'] and
+            np.max(abs(b['command_speed'][held]))==0.)
+        report.update(requested_estimated_m=stop['target_m'],estimated_stop_error_m=error,
+            expected_true_travel_m=stop['target_m']/((dl/tl+dr/tr)/2),
+            actual_end_position_error_m=float(summary['end_x']-summary['start_x']-stop['target_m']),
+            end_time_s=float(summary['end_s']), completion_basis=summary.get('completion_basis'))
     for side, diameter, rate in (('left', tl, a['left_rate']), ('right', tr, a['right_rate'])):
         excess = (rate*diameter/2-axles[side]['vx'])*dt
         report[f'encoder_{side}_excess_m'] = dict(cruise=float(excess[cruise].sum()), other=float(excess[~cruise].sum()))

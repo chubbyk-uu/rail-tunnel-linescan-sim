@@ -34,6 +34,12 @@ struct Config {
   double line_rate_hz = 0, advance_per_rev_m = 0;
   double start_theta_rad = 0, start_x_m = 0, sample_period_s = 0;
   std::vector<std::array<double, 2>> profile;  // [time_s, speed factor]
+  // Optional for historical captures. New contact missions stop on measured distance.
+  struct DistanceStop {
+    double target_m=0, ramp_s=1, brake_distance_m=.1, tolerance_m=.0001;
+    double speed_tolerance_m_s=.001, hold_s=.5, timeout_s=0;
+    bool Enabled() const { return target_m>0; }
+  } distance_stop;
   nlohmann::json mission; // optional on archived captures; required by task planning
   nlohmann::json inspection;  // requested wall target, public planning input; never true coverage
 

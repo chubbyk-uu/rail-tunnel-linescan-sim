@@ -72,6 +72,13 @@ def _travel_plan(config, start, distance, inspection_domain=True):
         profile.append([ramp+cruise, 1.])
     profile.extend([[2*ramp+cruise, 0.], [2*ramp+cruise+1., 0.]])
     m['profile'] = profile
+    if c.get('contact', {}).get('enabled'):
+        m['distance_stop'] = dict(target_m=distance, ramp_s=ramp,
+            brake_distance_m=speed*ramp/2, tolerance_m=.0001,
+            speed_tolerance_m_s=.001, hold_s=.5,
+            timeout_s=profile[-1][0]*1.5+10.)
+    else:
+        m.pop('distance_stop', None)
     pitch = m['advance_per_rev_m']
     gate = c['gate']
     open_deg = (gate['end_deg']-gate['start_deg']) % 360.
@@ -89,6 +96,8 @@ def _travel_plan(config, start, distance, inspection_domain=True):
     c['acceptance']['valid_x_m'] = valid
     return c, dict(start_m=start, distance_m=distance, end_m=start+distance,
                    speed_m_s=speed, duration_s=profile[-1][0],
+                   completion_basis=('dual_encoder_distance_and_park' if 'distance_stop' in m else 'timed_profile'),
+                   timeout_s=m.get('distance_stop', {}).get('timeout_s', profile[-1][0]),
                    exposure_acceptance_x_m=valid,
                    image_extent_m=[start-fov/2, start+distance+fov/2],
                    conservative_full_angle_m=([start+pitch, start+distance-pitch]

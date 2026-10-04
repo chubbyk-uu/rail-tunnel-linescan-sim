@@ -66,6 +66,7 @@ struct Pipeline::Impl {
   Clock::time_point start_wall, finish_called_wall;
   double pushed_at_finish = 0, written_at_finish = 0;
   bool finish_called = false;
+  nlohmann::json distance_motion;
 
   nlohmann::json metadata_tables, evaluation_tables, raw_index, timing_stats;
   double render_seconds = 0, write_seconds = 0;
@@ -158,6 +159,21 @@ void Pipeline::Push(const PoseSample& sample) {
   s.poses.push_back(sample);
   s.latest_pushed = sample.t;
   s.cv.notify_all();
+}
+
+void Pipeline::FinishDistanceMotion(double distance,double speed) {
+  auto& s=*impl_;
+  const auto& d=s.config.distance_stop;
+  if(!d.Enabled() || !std::isfinite(distance) || !std::isfinite(speed) ||
+     std::abs(distance-d.target_m)>d.tolerance_m || std::abs(speed)>d.speed_tolerance_m_s)
+    throw std::invalid_argument("distance motion cannot complete before target and parking");
+  {
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if(s.input_finished) throw std::logic_error("distance motion reported after Finish");
+    s.distance_motion={{"target_estimated_m",d.target_m},{"estimated_distance_m",distance},
+      {"estimated_speed_m_s",speed},{"completion_basis","dual_encoder_distance_and_park"}};
+  }
+  Finish();
 }
 
 void Pipeline::Finish(const std::string& producer_error) {
@@ -432,7 +448,12 @@ nlohmann::json Pipeline::Wait() {
     const double tolerance = 0.5 * s.config.sample_period_s;
     nlohmann::json motion = {{"first_sample_s", s.have_first ? nlohmann::json(sim_first) : nlohmann::json()},
                              {"last_sample_s", s.latest_pushed.load()}};
-    if (std::isfinite(planned)) {
+    if(s.config.distance_stop.Enabled() && s.options.pose_source=="gazebo_contact") {
+      motion["complete"]=!s.distance_motion.is_null();
+      motion["planned_end_s"]=s.latest_pushed.load(); // permits exact archived replay
+      motion["completion_basis"]="dual_encoder_distance_and_park";
+      if(!s.distance_motion.is_null()) motion.update(s.distance_motion);
+    } else if (std::isfinite(planned)) {
       motion["planned_end_s"] = planned;
       motion["complete"] = s.latest_pushed.load() >= planned - tolerance;
     } else {

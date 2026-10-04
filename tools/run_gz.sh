@@ -10,7 +10,7 @@ config=$(realpath "${1:-$repo/src/ssb_core/config/stage_a.yaml}"); [[ $# -ge 1 ]
 world=$(realpath "${SSB_WORLD:-$repo/install/ssb_gazebo/share/ssb_gazebo/worlds/stage_a.sdf}")
 # The plugin refuses a world whose physics step differs from motion.sample_period_s,
 # so the iteration count below always covers the planned motion.
-iterations=$(python3 -c "import yaml,sys,math; c=yaml.safe_load(open(sys.argv[1])); m=c['motion']; settle=c.get('contact',{}).get('settle_s',2) if c.get('contact',{}).get('enabled') else 0; print(math.ceil((m['profile'][-1][0]+settle)/m['sample_period_s']-1e-9)+2)" "$config")
+iterations=$(python3 -c "import yaml,sys,math; c=yaml.safe_load(open(sys.argv[1])); m=c['motion']; settle=c.get('contact',{}).get('settle_s',2) if c.get('contact',{}).get('enabled') else 0; end=m.get('distance_stop',{}).get('timeout_s',m['profile'][-1][0]); print(math.ceil((end+settle)/m['sample_period_s']-1e-9)+2)" "$config")
 exec bash "$repo/tools/with_optix_runtime.sh" bash -c '
   source /opt/ros/jazzy/setup.bash && source "$0/install/setup.bash"
   export GZ_SIM_SYSTEM_PLUGIN_PATH="$0/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"

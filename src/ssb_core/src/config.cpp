@@ -102,6 +102,17 @@ Config Config::Parse(const std::string& text) {
   c.start_theta_rad = Deg(Get<double>(motion, "start_theta_deg", "motion."));
   c.start_x_m = Get<double>(motion, "start_x_m", "motion.");
   c.sample_period_s = Get<double>(motion, "sample_period_s", "motion.");
+  if (const auto stop=motion["distance_stop"]) {
+    auto& d=c.distance_stop;
+    d.target_m=Get<double>(stop,"target_m","motion.distance_stop.");
+    Check(d.target_m>0,"distance stop target must be positive");
+    d.ramp_s=Get<double>(stop,"ramp_s","motion.distance_stop.");
+    d.brake_distance_m=Get<double>(stop,"brake_distance_m","motion.distance_stop.");
+    d.tolerance_m=Get<double>(stop,"tolerance_m","motion.distance_stop.");
+    d.speed_tolerance_m_s=Get<double>(stop,"speed_tolerance_m_s","motion.distance_stop.");
+    d.hold_s=Get<double>(stop,"hold_s","motion.distance_stop.");
+    d.timeout_s=Get<double>(stop,"timeout_s","motion.distance_stop.");
+  }
   for (const auto& knot : Require(motion, "profile", "motion.")) {
     Check(knot.IsSequence() && knot.size() == 2, "motion.profile entries must be [time_s, factor]");
     c.profile.push_back({knot[0].as<double>(), knot[1].as<double>()});
@@ -245,6 +256,13 @@ void Config::Validate() const {
   Check(batch_rows > 0 && batch_rows <= 16384, "render.batch_rows must be in [1, 16384]");
   if(contact_enabled)Check(Finite({odo_left_calibrated,odo_right_calibrated,odo_left_true,odo_right_true}) &&
     std::min({odo_left_calibrated,odo_right_calibrated,odo_left_true,odo_right_true})>0,"invalid dual odometer diameters");
+  const auto& d=distance_stop;
+  Check(Finite({d.target_m,d.ramp_s,d.brake_distance_m,d.tolerance_m,d.speed_tolerance_m_s,d.hold_s,d.timeout_s}) && d.target_m>=0,
+        "invalid distance stop parameters");
+  if(d.Enabled()) Check(contact_enabled && d.ramp_s>0 && d.brake_distance_m>0 &&
+    d.brake_distance_m<d.target_m && d.tolerance_m>0 && d.tolerance_m<d.brake_distance_m &&
+    d.speed_tolerance_m_s>0 && d.hold_s>0 && d.timeout_s>d.target_m/(advance_per_rev_m*NominalOmega()/(2*M_PI)),
+    "distance stop requires contact mode and positive, consistent limits");
   Check(debug_column_stride >= 0 && debug_column_stride < width, "invalid debug column stride (0 disables)");
   Check(debug_delay_per_batch_s >= 0, "negative debug delay");
   Check(max_queued_batches > 0, "render.max_queued_batches must be positive");
@@ -301,6 +319,12 @@ nlohmann::json Config::ObservableJson() const {
   j["odometer"] = {{"ppr", odo_ppr}, {"edges_per_cycle", odo_edges_per_cycle}, {"gear_ratio", odo_gear_ratio}};
   j["motion"] = {{"line_rate_hz", line_rate_hz}, {"advance_per_rev_m", advance_per_rev_m},
                  {"start_x_m", start_x_m}, {"sample_period_s", sample_period_s}, {"profile", profile}};
+  if(distance_stop.Enabled()) {
+    const auto& d=distance_stop;
+    j["motion"]["distance_stop"]={{"target_m",d.target_m},{"ramp_s",d.ramp_s},
+      {"brake_distance_m",d.brake_distance_m},{"tolerance_m",d.tolerance_m},
+      {"speed_tolerance_m_s",d.speed_tolerance_m_s},{"hold_s",d.hold_s},{"timeout_s",d.timeout_s}};
+  }
   j["calibration"] = {{"wheel_diameter_m", calibration.wheel_diameter_m}, {"radius_m", calibration.radius_m},
                       {"head_mount_x_m", calibration.head_mount_x_m}};
   j["render"] = {{"batch_rows", batch_rows}, {"debug_column_stride", debug_column_stride},

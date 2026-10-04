@@ -19,6 +19,20 @@ TEST(StageB, LensProjectionAndSynchronizedMotionUseUpdatedBaseline) {
   EXPECT_NEAR(c.NominalOmega() * 60 / (2 * M_PI), 20, 1e-12);
 }
 
+TEST(Config, DistanceStopIsPublicValidatedAndDoesNotAffectOpticalIdentity) {
+  auto c=Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_b.yaml");
+  c.contact_enabled=true;
+  c.odo_left_calibrated=c.odo_right_calibrated=c.odo_left_true=c.odo_right_true=.08;
+  const auto signature=c.OpticalSignature();
+  c.distance_stop.target_m=3.;c.distance_stop.timeout_s=40.;
+  EXPECT_NO_THROW(c.Validate());
+  EXPECT_DOUBLE_EQ(c.ObservableJson()["motion"]["distance_stop"]["target_m"],3.);
+  EXPECT_EQ(signature,c.OpticalSignature());
+  c.distance_stop.timeout_s=5.;EXPECT_THROW(c.Validate(),std::runtime_error);
+  c.distance_stop.timeout_s=40.;c.distance_stop.hold_s=0.;EXPECT_THROW(c.Validate(),std::runtime_error);
+  c.distance_stop.hold_s=.5;c.contact_enabled=false;EXPECT_THROW(c.Validate(),std::runtime_error);
+}
+
 TEST(StageC, WallTargetIsPublicAndDoesNotChangeOpticalIdentity) {
   auto c=Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_b.yaml");
   const auto signature=c.OpticalSignature();

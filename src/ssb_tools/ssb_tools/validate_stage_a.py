@@ -258,6 +258,7 @@ def observable_from_source(src):
         ('motion', 'advance_per_rev_m'): src['motion']['advance_per_rev_m'],
         ('motion', 'start_x_m'): src['motion']['start_x_m'],
         ('motion', 'sample_period_s'): src['motion']['sample_period_s'],
+        **{('motion','distance_stop',k):v for k,v in src['motion'].get('distance_stop',{}).items()},
         ('tunnel', 'x_min_m'): src['tunnel']['x_min_m'], ('tunnel', 'x_max_m'): src['tunnel']['x_max_m'],
     }
 

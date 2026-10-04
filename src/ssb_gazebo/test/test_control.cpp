@@ -243,6 +243,62 @@ TEST(Control, MissingOrEmptyJointVectorsAreRejected) {
   EXPECT_FALSE(ssb_gazebo::HasValues(empty,good));
 }
 
+TEST(Control, DistanceCompletionRequiresTargetRatesAndContinuousHold) {
+  ssb::Config::DistanceStop d;d.target_m=3.;d.timeout_s=40.;
+  ssb_gazebo::DistanceController controller;
+  // Past the former 17 s motion deadline, a lagging encoder still commands motion.
+  EXPECT_DOUBLE_EQ(controller.Update(d,.2,20.,2.,.2,.001,false),.2);
+  EXPECT_FALSE(controller.Complete());
+  for(int i=0;i<600;++i) controller.Update(d,.2,25.,3.,.01,.001,true);
+  EXPECT_FALSE(controller.Complete());
+  for(int i=0;i<400;++i) controller.Update(d,.2,25.,3.,0.,.001,true);
+  controller.Update(d,.2,25.,3.,0.,.001,false); // unsettled scanner resets hold
+  for(int i=0;i<400;++i) controller.Update(d,.2,25.,3.,0.,.001,true);
+  EXPECT_FALSE(controller.Complete());
+  for(int i=0;i<101;++i) controller.Update(d,.2,25.,3.,0.,.001,true);
+  EXPECT_TRUE(controller.Complete());
+}
+
+TEST(Control, BiasedQuantizedWheelDistanceSetsActualStoppingAndPitch) {
+  for(double diameter:{.079,.080,.081}) {
+    ssb::Config::DistanceStop d;d.target_m=3.;d.timeout_s=40.;
+    ssb_gazebo::DistanceController controller;
+    double travel=0.,speed=0.;
+    const double dt=.001,quantum=M_PI*.08/10000.;
+    for(int i=0;i<40000 && !controller.Complete();++i) {
+      const double estimate=std::floor(travel*.08/diameter/quantum)*quantum;
+      const double command=controller.Update(d,.2,i*dt,estimate,speed*.08/diameter,dt,true);
+      speed+=(command-speed)*dt/(.01+dt);
+      travel+=speed*dt;
+    }
+    ASSERT_TRUE(controller.Complete());
+    EXPECT_NEAR(travel,3.*diameter/.08,.00015);
+    EXPECT_NEAR(travel/5.,.6*diameter/.08,.00003);
+  }
+}
+
+TEST(Control, OvershootCannotBeDeclaredSuccessfulParking) {
+  ssb::Config::DistanceStop d;d.target_m=3.;d.timeout_s=40.;
+  ssb_gazebo::DistanceController controller;
+  for(int i=0;i<1000;++i) {
+    EXPECT_DOUBLE_EQ(controller.Update(d,.2,30.,3.002,0.,.001,true),0.);
+  }
+  EXPECT_FALSE(controller.Complete());
+}
+
+TEST(Control, DriveIntegralHoldsAgainstGradeAndDoesNotWindUp) {
+  ssb_gazebo::DriveController controller;
+  double rate=0.;
+  for(int i=0;i<10000;++i) {
+    const double torque=controller.Update(0.,rate,.001);
+    rate+=(torque+.12)*.001/.15; // independent wheel inertia + constant grade torque
+  }
+  EXPECT_NEAR(rate,0.,1e-8);
+  ssb_gazebo::DriveController saturated;
+  for(int i=0;i<10000;++i) EXPECT_DOUBLE_EQ(saturated.Update(100.,0.,.001),8.);
+  EXPECT_DOUBLE_EQ(saturated.Update(0.,0.,.001),0.);
+}
+
 TEST(Assembly, MissingRequiredLinksRejectTheModel) {
   gz::sim::EntityComponentManager ecm;
   auto model=ecm.CreateEntity();ecm.CreateComponent(model,gz::sim::components::Model());

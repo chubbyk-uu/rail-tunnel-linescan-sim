@@ -33,6 +33,46 @@ def test_distance_profile_integrates_to_requested_travel(config, distance):
     assert config == before
 
 
+@pytest.mark.parametrize('diameter', [.079, .08, .081])
+def test_contact_task_uses_public_distance_stop_independent_of_truth(config, diameter):
+    config['contact']={'enabled':True}
+    config['truth']={'odo_left_diameter_m':diameter,'odo_right_diameter_m':diameter}
+    c,task=plan(config,3.,3.)
+    stop=c['motion']['distance_stop']
+    assert stop['target_m']==3. and stop['brake_distance_m']==pytest.approx(.1)
+    assert stop['timeout_s']>task['duration_s']
+    assert task['completion_basis']=='dual_encoder_distance_and_park'
+    assert task['timeout_s']==stop['timeout_s']
+    assert c['truth']==config['truth']
+
+
+@pytest.mark.parametrize('fault', ['target', 'rate', 'reported_distance', 'completion'])
+def test_distance_acceptance_recomputes_encoder_hold_without_world_pose(fault):
+    from types import SimpleNamespace
+    from ssb_tools.validate_stage_b import distance_stop_check
+    poses=np.zeros(1001,dtype=[('t','f8'),('wheel','f8'),('right_wheel','f8'),
+        ('wheel_omega','f8'),('right_wheel_omega','f8'),('x','f8')])
+    poses['t']=np.arange(1001)*.001
+    target=3.;count=10000;indices=np.floor(target/(np.pi*.08/count))
+    # A moving prefix followed by a 0.6 s held, quantized final distance.
+    angles=indices*2*np.pi/count
+    poses['wheel']=poses['right_wheel']=np.minimum(poses['t']/.4,1.)*angles
+    achieved=indices*np.pi*.08/count
+    stop=dict(target_m=target,hold_s=.5,tolerance_m=.0001,speed_tolerance_m_s=.001)
+    cfg=dict(motion=dict(distance_stop=stop,sample_period_s=.001),
+        calibration=dict(odo_left_diameter_m=.08,odo_right_diameter_m=.08),
+        odometer=dict(ppr=2500,edges_per_cycle=4,gear_ratio=1.))
+    motion=dict(complete=True,completion_basis='dual_encoder_distance_and_park',estimated_distance_m=achieved)
+    session=SimpleNamespace(summary={'motion':motion})
+    poses['x']=1e9 # ignored: teleporting a body cannot prove encoder completion
+    assert distance_stop_check(session,cfg,poses)['state']=='pass'
+    if fault=='target':stop['target_m']+=.001
+    elif fault=='rate':poses['right_wheel_omega'][-100:]=1.
+    elif fault=='reported_distance':motion['estimated_distance_m']+=.001
+    else:motion['completion_basis']='timed_profile'
+    assert distance_stop_check(session,cfg,poses)['state']=='fail'
+
+
 @pytest.mark.parametrize('distance', [1., 1.2, 3., 20.])
 @pytest.mark.parametrize('phase', [180., -130., 0., 120.])
 def test_exposure_acceptance_is_inside_nominal_gate_span(config, distance, phase):

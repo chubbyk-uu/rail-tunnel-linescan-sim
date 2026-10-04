@@ -7,7 +7,7 @@ export SSB_SESSION=$(realpath -m "$1") SSB_CONFIG=$(realpath "$2") SSB_WORLD=$(r
 export SSB_DYNAMICS_ONLY=1 GZ_PARTITION="ssb_contact_$$"
 iterations=$(python3 - "$SSB_CONFIG" <<'PY'
 import sys,yaml,math
-c=yaml.safe_load(open(sys.argv[1]));print(math.ceil((c['contact'].get('settle_s',2)+c['motion']['profile'][-1][0])/c['motion']['sample_period_s'])+2)
+c=yaml.safe_load(open(sys.argv[1]));m=c['motion'];print(math.ceil((c['contact'].get('settle_s',2)+m.get('distance_stop',{}).get('timeout_s',m['profile'][-1][0]))/m['sample_period_s'])+2)
 PY
 )
 bash "$repo/tools/with_optix_runtime.sh" bash -c '
