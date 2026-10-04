@@ -34,4 +34,42 @@
 
 有界牛顿步改为求解耦合的盒约束二次问题；直接逐项截断无约束步不满足边界上的最优条件。外层 50 步上限、IRLS 次数、采样和接缝门限不变。独立穷举 KKT 活跃面测试用于核对边界解。法方程的数值累加采用不访问文件的 CPU 核心，仅输入公开 Jacobian/残差；固定行块、顺序归约，稠密核暂存限制 192 MiB，稀疏结果另计入 RSS。来源协议同时绑定该库的哈希。
 
-当前状态：装配与标定夹具已实现，真实 Gazebo 的 17 组插件回归和完整 780 项测试通过。加速版四个单项开发场景均通过接缝及四边支撑：横向/竖向 +20 mm、绕 y/z 各 +1 mrad 的窗口间 P95 分别为 0.777 / 0.794 / 0.812 / 0.827 px，计划点零缺测。它们是已见数据，不能代替冻结后的组合新采验收。名义对照与组合新采进行中。
+当前状态：装配与标定夹具已实现，真实 Gazebo 的 17 组插件回归和完整 780 项测试通过。加速版四个单项开发场景均通过接缝及四边支撑：横向/竖向 +20 mm、绕 y/z 各 +1 mrad 的窗口间 P95 分别为 0.777 / 0.794 / 0.812 / 0.827 px，计划点零缺测。它们是已见数据，不能代替冻结后的组合新采验收。名义对照与组合新采已通过，正式结果如下。
+
+
+## 两组新采结果
+
+代码 `a242518` 冻结后，以种子 20261103、[8,11] m 独立新采，两组各 25 项阶段 B、17 项协议核验（含数值核哈希）及公开输入审计通过。二进制与源码一致，实际独立重成像逐字节相同，私有输入读取为零。每组 1,238 个计划窗口、11,142 个接缝点，窗口内/间均零缺测。
+
+| 场景 | 名义展开 P95：窗口内 / 间 | 优化后 P95：窗口内 / 间 |
+|---|---|---|
+| 名义装配 + 起伏轨道 | 16.694 / 16.668 px | **0.510 / 0.573 px** |
+| 四项固定安装误差 + 起伏轨道 | 41.612 / 40.772 px | **0.394 / 0.428 px** |
+
+组合结果完整 240°、3 m 全图共 863,940,000 像素，覆盖缺口为零；完整保存值/覆盖游程一致，84 个 CPU 参考点（含 16 个非零深度探针）量化码差为零。位姿优化约 45.50 s、径向深度另计；完整 CUDA 成图约 57.26 s，进程峰值约 652 MiB。组合采集的动力学/成像进度实时率约 1.000 / 0.980，是 headless 实测，不是 GUI 性能证明。
+
+接缝 P95 通过不等于每点误差小于 1 px：组合窗口间 P99 约 3.45 px、最大约 5.04 px。绝对位置/姿态仍受坐标规范与先验约束，不宣称恢复了真实安装外参。当前结论限于上述组合、区段及轨道种子；轮径偏差、噪声与长距离组合仍待验证。
+
+证据：`sessions/mount_combined_holdout_20261004/{nominal,combined}/` 及同名 `local_data/evaluation/`。最新组合的原始图、独立重成像、完整优化图、公开复核页和首次评价报告保留；不用旧单项通过替代这两次新采。清理说明见 [DATA_RETENTION](DATA_RETENTION.md)。
+
+![组合偏移与倾斜：原始螺旋条带与优化结果](media/mount_combined_comparison.png)
+
+左侧未补偿螺旋、畸变和平场；右侧包含采后校正、展开、匹配、全局优化及共享深度。局部按公开图像的首个板缝/裂缝候选选择，未按真值误差挑图；源面板逐像素一致，无融合或锐化。定量基线是表中的名义展开，不把去螺旋效果全部归于优化。
+
+复现对应资产时，先按 [DEPLOYMENT](DEPLOYMENT.md) 从公开素材生成 `contact_demo`，然后生成并导出组合包。以下目录须为新的，源码须已提交，ROS 与工作区环境须已加载：
+
+```bash
+python3 tools/prepare_contact_demo.py --demo local_data/stage_b/contact_demo \
+  --output local_data/stage_b/COMBINED_PREPARED_NEW \
+  --mount-offset-mm 20 -20 --mount-tilt-mrad 1 -1 \
+  --track-chord-mm 2 --track-cross-level-mm 2 --track-seed 20261103 --calibrate
+python3 -m ssb_tools.demo_bundle --demo local_data/stage_b/COMBINED_PREPARED_NEW \
+  --output local_data/stage_b/COMBINED_BUNDLE_NEW
+SSB_OFFLINE_WORKERS=4 SSB_D2_SPACING_M=.1 SSB_D2_HEIGHT=256 \
+SSB_D2_Q_SHIFT_MM=10 SSB_ADAPTIVE_ATTITUDE=1 SSB_SURFACE_RELIEF=1 \
+SSB_SLOW_TRANSLATION=1 bash tools/run_d3_holdout.sh \
+  sessions/COMBINED_NEW local_data/evaluation/COMBINED_NEW \
+  8 3 local_data/stage_b/COMBINED_BUNDLE_NEW
+```
+
+同种子复跑属于复现；未来修改方法后，需要另选未参与调参的种子验收。

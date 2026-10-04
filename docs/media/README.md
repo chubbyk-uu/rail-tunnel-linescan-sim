@@ -84,3 +84,9 @@ python3 tools/export_readme_summary.py --features sessions/FEATURES_NEW \
 ```
 
 当前导出目录为 `local_data/boundary_readme_export_20261004`。历史 20261005 种子、带噪声对比与对应哈希保留于 Git 历史及 manifest 的 reconstruction_figures_history，不将旧图的噪声档位或精度沿用到新图。
+
+## 固定偏移＋倾斜组合（2026-10-04）
+
+[mount_combined_comparison.png](mount_combined_comparison.png) 来自 `a242518` 冻结后的独立种子 20261103、[8,11] m。固定横向 +20 mm、竖向 −20 mm、绕 y +1 mrad、绕 z −1 mrad 同时存在，叠加 2 mm 轨道起伏/水平差；测量轮真实/标定均 80 mm，噪声关闭、增益 2.4。窗口内/间 P95 为 0.394 / 0.428 px，计划点零缺测，完整 3 m 优化图零覆盖缺口。
+
+源复核页在 `sessions/mount_combined_holdout_20261004/combined/feature_review/`，导出记录在 `local_data/mount_combined_export_20261004/`。1048×1092 组合图保留源面板像素，首个目标内宽/细结构候选为 0/2；上部为顶部约 60° 概览，下部 1:1 局部。左侧不补偿螺旋、畸变和平场，右侧包含采后校正、展开与优化，无融合、锐化或调色。没有用真值误差挑图，也不把去螺旋全部归功于 D3。哈希与验证身份在 manifest 的 `mount_combined_figures`；[MOUNT_ERROR](../MOUNT_ERROR.md) 记录完整范围与尾部误差。

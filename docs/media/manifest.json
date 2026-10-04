@@ -898,5 +898,40 @@
     "exporter_commit": "7abfc5bf7c3740948f1552c1e26484e6ba5ac05c",
     "export_directory": "local_data/boundary_readme_export_20261004",
     "interpretation": "uncorrected raw helix vs calibrated globally optimized shared-depth reconstruction; no fusion, sharpening or automatic contrast; independent 3 m geometry P95 0.475/0.645 px"
+  },
+  "mount_combined_figures": {
+    "capture_commit": "a242518e76ec35856158acea469aa8e84ec46be7",
+    "seed": 20261103,
+    "target_x_m": [
+      8,
+      11
+    ],
+    "mount_offset_mm": [
+      20,
+      -20
+    ],
+    "mount_tilt_mrad": [
+      1,
+      -1
+    ],
+    "true_and_calibrated_odo_mm": [
+      80,
+      80
+    ],
+    "noise": false,
+    "source": "sessions/mount_combined_holdout_20261004/combined/feature_review",
+    "export": "local_data/mount_combined_export_20261004",
+    "figure_file": "docs/media/mount_combined_comparison.png",
+    "figure_sha256": "f3396952d28a90ae4c10575021c2dfb2a688ce7a6c644565e07cb0b44a818ad1",
+    "export_report_sha256": "cc35e3e1090058634e0e85397303ee056eeb82d17927d25d837fed357e729b67",
+    "source_pixels_identical": true,
+    "within_band_travel_compensation": false,
+    "seam_within_p95_px": 0.39403876919018604,
+    "seam_between_p95_px": 0.42799894268539035,
+    "planned_samples": 11142,
+    "missing_samples": 0,
+    "full_pixels": 863940000,
+    "missing_pixels": 0,
+    "limitation": "One combined mount, one independent track seed; not all mount signs/magnitudes or wheel/noise combinations."
   }
 }
