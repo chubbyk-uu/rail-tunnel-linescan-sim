@@ -11,6 +11,21 @@ from ssb_tools.native_rows import MemoryRows
 from ssb_tools.ref_mesh import OpticalMesh
 
 
+def test_cli_passes_the_frozen_seam_spacing_to_evaluation(monkeypatch):
+    import sys
+    import ssb_tools.evaluate_global_geometry as module
+    received = {}
+    def evaluate(*args, **kwargs):
+        received.update(kwargs)
+        return {k: {} for k in ('seam', 'seam_strata', 'mapping', 'boundary', 'gates', 'performance')}
+    monkeypatch.setattr(module, 'run', evaluate)
+    monkeypatch.setattr(sys, 'argv', ['evaluate_global_geometry', '--session', 'capture',
+        '--unroll', 'd1', '--trajectory', 'fit', '--output', 'evaluation/new',
+        '--spacing-m', '.1', '--workers', '3'])
+    module.main()
+    assert received['spacing_m'] == .1 and received['workers'] == 3
+
+
 def independent_fixture(depth=0.):
     phases = np.linspace(-.2, .2, 101)
     p = np.zeros(202, PROJECTION)

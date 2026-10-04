@@ -560,10 +560,12 @@ def main():
     for name in ('session','unroll','trajectory','output'):
         parser.add_argument('--'+name, required=True)
     parser.add_argument('--scene'); parser.add_argument('--raw')
+    parser.add_argument('--spacing-m', type=float, default=.2,
+                        help='predeclared fixed seam lattice spacing; use the frozen protocol value')
     parser.add_argument('--workers', type=int,
                         help='evaluation processes; default min(8, available CPUs)')
     args = parser.parse_args()
-    report = run(args.session,args.unroll,args.trajectory,args.output,args.scene,raw_root=args.raw,
+    report = run(args.session,args.unroll,args.trajectory,args.output,args.scene,spacing_m=args.spacing_m,raw_root=args.raw,
                  workers=args.workers)
     print(json.dumps({k:report[k] for k in ('seam','seam_strata','mapping','boundary','gates','performance')}))
 
