@@ -51,6 +51,22 @@ TEST(StageC, WallTargetIsPublicAndDoesNotChangeOpticalIdentity) {
   EXPECT_THROW(c.Validate(),std::runtime_error);
 }
 
+TEST(StageD, RelativeScaleSupportIsDeclaredPubliclyWithoutChangingOpticalIdentity) {
+  const auto base = Config::Load(std::string(SSB_CONFIG_DIR)+"/stage_b.yaml");
+  auto c = Config::Parse(base.source_text+
+    "\ninspection:\n  schema: ssb.wall_target.v1\n  target_x_m: [0, 20]\n"
+    "  theta_rad: [-2.0943951023931953, 2.0943951023931953]\n"
+    "  grid_pitch_m: 0.0002\n  guard_m: 0.01\n  relative_encoder_scale_bound_fraction: 0.03\n");
+  EXPECT_EQ(c.ObservableJson().at("inspection").at("relative_encoder_scale_bound_fraction"), .03);
+  // The unprepared template has no persisted HMAC key; parsing generates one.
+  // Compare inspection toggles on the same identity, not two random identities.
+  const auto signature = c.OpticalSignature();
+  c.inspection.erase("relative_encoder_scale_bound_fraction");
+  EXPECT_EQ(c.OpticalSignature(), signature);
+  c.inspection["relative_encoder_scale_bound_fraction"] = .031;
+  EXPECT_THROW(c.Validate(), std::runtime_error);
+}
+
 namespace {
 
 Config BaseConfig() { return Config::Load(std::string(SSB_CONFIG_DIR) + "/stage_a.yaml"); }

@@ -475,6 +475,31 @@ def test_defect_derivatives_use_snapshot_and_reject_changed_inputs(tmp_path,inpu
     with pytest.raises(ValueError,match='grid bounds changed'): regrid(source,tmp_path/'changed_domain',.01)
 
 
+def test_defect_regrid_extends_buffers_without_changing_metric_cracks(tmp_path,inputs):
+    from ssb_tools.stage_b_defects import snapshot_input, build_grid, write_index, regrid, source_bounds
+    config=copy.deepcopy(inputs[0]);config['tunnel'].update(radius_m=.1,x_min_m=0.,x_max_m=1.)
+    original=tmp_path/'config.yaml';original.write_text(yaml.safe_dump(config))
+    source=tmp_path/'source';source.mkdir();entry=snapshot_input(source,original,'config.yaml')
+    entry['file']='inputs/config.yaml'  # portable bundle input
+    instance=dict(paths_xq_m=[[[.2,0],[.3,.02]]],vertex_radius_m=[[.0002,.0003]],vertex_depth_m=[[.0005,.0007]])
+    packed,offsets,indices,grid,depths=build_grid([instance],[0,1,-math.pi*.1,math.pi*.1],with_depths=True)
+    files=write_index(source,packed,offsets,indices,depths)
+    (source/'defects.json').write_text(json.dumps(dict(inputs=dict(config=entry),instances=[instance],grid=grid,files=files)))
+    config['tunnel'].update(x_min_m=-.5,x_max_m=1.5)
+    extended=tmp_path/'extended.yaml';extended.write_text(yaml.safe_dump(config))
+    portable=source/'0001_defects.json'
+    portable.write_bytes((source/'defects.json').read_bytes())
+    result=regrid(portable,tmp_path/'extended',.01,extended)
+    assert result['instances']==[instance]
+    assert (source/'segments.bin').read_bytes()==(tmp_path/'extended/segments.bin').read_bytes()
+    assert (source/'depths.bin').read_bytes()==(tmp_path/'extended/depths.bin').read_bytes()
+    assert source_bounds(tmp_path/'extended',result)==[-.5,1.5,-math.pi*.1,math.pi*.1]
+    for key,value in (('x_min_m',.1),('radius_m',.11)):
+        bad=copy.deepcopy(config);bad['tunnel'][key]=value;extended.write_text(yaml.safe_dump(bad))
+        with pytest.raises(ValueError,match='only extend axial buffers'):
+            regrid(source,tmp_path/('bad_'+key),.01,extended)
+
+
 def test_shallower_depth_preserves_profile_exactly(inputs):
     from ssb_tools.stage_b_defects import depth_profile
     dep=copy.deepcopy(inputs[1]['cracks']['depth']);s=np.linspace(0,1,2001);r=np.full(len(s),.0002)

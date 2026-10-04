@@ -9,6 +9,38 @@ from ssb_tools.unroll_cuda import CudaRaster
 from ssb_tools.wall_coverage import target_grid
 
 
+@pytest.mark.parametrize('fraction', [-.03, .03])
+def test_global_scale_cuda_and_cpu_keep_remote_shifted_band_and_same_pixels(fraction):
+    from ssb_tools.global_geometry import GeometrySettings, Trajectory
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    from ssb_tools.global_resample import corrected_tile
+    from ssb_tools.initial_unroll import BandSampler
+    sampler = analytic_sampler(raw=True)
+    p = sampler.projection.copy()
+    p['x_axis_m'][p['segment'] == 4] += 20.
+    sampler = BandSampler(p, sampler.native, sampler.offsets, sampler.output_offsets,
+                          sampler.geometry_valid, sampler.footprint)
+    model = Trajectory(sampler, 1., .7, GeometrySettings(relative_encoder_scale=True))
+    c = np.zeros(model.size); c[-1] = fraction/model.scale
+    for k, value in enumerate([1.2, -.7, 1.3, -1.1]):
+        c[model.starts[k]:model.starts[k+1]] = value
+    nominal = .56
+    delta = fraction*(20.+nominal-model.scale_reference_m)
+    assert abs(delta) > .3
+    xs = 20.+nominal+delta+np.linspace(-.1, .1, 23)
+    qs = np.linspace(-.09, .09, 19)
+    expected, counts = corrected_tile(model, c, qs, xs)
+    raster = GlobalCudaRaster(model, c)
+    try:
+        assert 1 in raster.candidate_bands(xs)
+        actual, number, _ = raster.tile(qs, xs)
+        np.testing.assert_array_equal(number, counts)
+        np.testing.assert_allclose(actual, expected, atol=3e-5, rtol=0, equal_nan=True)
+        assert np.count_nonzero(number) > 100
+    finally:
+        raster.close()
+
+
 @pytest.mark.parametrize('missing', [False, True])
 @pytest.mark.parametrize('tile', [(1, 1), (7, 5), (32, 8192)])
 def test_cuda_matches_reference_with_missing_lines_and_native_saturation(tmp_path, missing, tile):

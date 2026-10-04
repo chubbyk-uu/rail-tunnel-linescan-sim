@@ -11,6 +11,7 @@ import numpy as np
 from scipy.interpolate import BSpline
 from scipy.sparse import csr_matrix, diags, hstack
 from .parallel_budget import resolve_workers
+from .reconstruction_support import RELATIVE_SCALE_BOUND
 
 
 @dataclass(frozen=True)
@@ -32,9 +33,13 @@ class GeometrySettings:
     observed_knots: bool = False
     adaptive_attitude: bool = False
     coarse_translation: bool = False
+    relative_encoder_scale: bool = False
+    relative_scale_prior_fraction: float = .01
+    relative_scale_bound_fraction: float = RELATIVE_SCALE_BOUND
 
     def validate(self):
-        switches = ('fit_translation', 'fit_heave', 'observed_knots', 'adaptive_attitude', 'coarse_translation')
+        switches = ('fit_translation', 'fit_heave', 'observed_knots', 'adaptive_attitude', 'coarse_translation',
+                    'relative_encoder_scale')
         numbers = [v for k, v in vars(self).items() if k not in ('max_irls', *switches)]
         if not all(math.isfinite(v) and v > 0 for v in numbers):
             raise ValueError('positive finite optimization settings required')
@@ -58,17 +63,22 @@ class GeometrySettings:
             raise ValueError('adaptive_attitude must be Boolean')
         if not isinstance(self.coarse_translation, bool) or (self.coarse_translation and not self.fit_translation):
             raise ValueError('coarse translation requires a Boolean switch and the lateral/heave model')
+        if type(self.relative_encoder_scale) is not bool:
+            raise ValueError('relative encoder scale switch must be Boolean')
+        if not self.relative_scale_prior_fraction <= self.relative_scale_bound_fraction <= RELATIVE_SCALE_BOUND:
+            raise ValueError('relative encoder scale prior/bound must be within 3 percent')
         if self.adaptive_attitude and (not self.observed_knots or self.fit_heave or
                                      (self.fit_translation and not self.coarse_translation)):
             raise ValueError('adaptive attitude requires the four-field observed-knot model')
 
 
-def reconstruction_settings(attitude_spacing_m=.02, adaptive_attitude=False, slow_translation=False):
+def reconstruction_settings(attitude_spacing_m=.02, adaptive_attitude=False, slow_translation=False,
+                            relative_encoder_scale=False):
     """Public, declared priors; no rig truth used to choose coefficients."""
     return GeometrySettings(attitude_spacing_m=attitude_spacing_m, observed_knots=True,
         adaptive_attitude=adaptive_attitude, fit_translation=slow_translation,
         coarse_translation=slow_translation, translation_bound_mm=30. if slow_translation else 5.,
-        translation_prior_mm=10. if slow_translation else 2.)
+        translation_prior_mm=10. if slow_translation else 2., relative_encoder_scale=relative_encoder_scale)
 
 
 def spline_knots(lower, upper, spacing):
@@ -238,23 +248,66 @@ class Trajectory:
         self.knots = [np.asarray(k, float) for k in knots]
         self.sizes = [len(k)-4 for k in self.knots]
         self.starts = np.r_[0, np.cumsum(self.sizes)]
-        self.size = int(self.starts[-1])
+        self.spline_size = int(self.starts[-1])
+        self.scale_index = self.spline_size if settings.relative_encoder_scale else None
+        self.scale_reference_m = sum(self.domain)/2
+        self.size = self.spline_size+int(settings.relative_encoder_scale)
         if self.size > 2048:
             raise ValueError('trajectory exceeds 2048-coefficient resource budget')
 
     def bases(self, axis):
         return [csr_matrix(BSpline.design_matrix(axis, k, 3, extrapolate=False)) for k in self.knots]
 
-    def parameters(self, coefficients, bases):
-        return np.column_stack([b @ coefficients[self.starts[k]:self.starts[k+1]]
-                                for k, b in enumerate(bases)])*self.scale
+    def apply_encoder_scale(self, local, axis, coefficients):
+        if self.scale_index is not None:
+            local[:, 0] += self.scale*coefficients[self.scale_index]*(np.asarray(axis)-self.scale_reference_m)
+        return local
+
+    def parameters(self, coefficients, bases, axis=None):
+        local = np.column_stack([b @ coefficients[self.starts[k]:self.starts[k+1]]
+                                 for k, b in enumerate(bases)])*self.scale
+        if self.scale_index is not None and axis is None:
+            raise ValueError('public exposure progress required for relative encoder scale')
+        return self.apply_encoder_scale(local, axis, coefficients)
+
+    def coefficient_bounds(self):
+        bounds = np.concatenate([np.full(size, 10. if k in (2, 3) else
+            self.settings.translation_bound_mm if k > 3 else 30.) for k, size in enumerate(self.sizes)])
+        if self.scale_index is not None:
+            bounds = np.r_[bounds, self.settings.relative_scale_bound_fraction/self.scale]
+        return bounds
+
+    def scale_margin_m(self):
+        return (self.settings.relative_scale_bound_fraction*(self.domain[1]-self.domain[0])/2
+                if self.scale_index is not None else 0.)
+
+    def source_reach_m(self):
+        from .reconstruction_support import correction_reach_m
+        return correction_reach_m(self.radius, self.height)+self.scale_margin_m()
+
+    def band_extents(self, coefficients):
+        """Nominal footprints translated by the fitted scale, not enlarged in q.
+
+        The local-motion margin is applied by the rasterizer. A verified global
+        scale moves each band's origin interval; expanding every band by the
+        whole-run worst case would load unnecessary source blocks on long runs.
+        """
+        extents = []
+        for (lo, hi), (a, b) in zip(self.sampler.band_x, self.sampler.bounds):
+            if self.scale_index is not None:
+                delta = coefficients[self.scale_index]*self.scale*(
+                    self.sampler.projection['x_axis_m'][a:b]-self.scale_reference_m)
+                lo, hi = lo+float(delta.min()), hi+float(delta.max())
+            extents.append((lo, hi))
+        return extents
 
     def points(self, axis, theta, tangent, coefficients, bases=None):
         if bases is None:
             local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
                                              extrapolate=False)(axis) for i, k in enumerate(self.knots)])
+            local = self.apply_encoder_scale(local, axis, coefficients)
         else:
-            local = self.parameters(coefficients, bases)
+            local = self.parameters(coefficients, bases, axis)
         return cylinder_points(axis, theta, tangent, local,
                                self.radius, self.height)
 
@@ -283,6 +336,7 @@ class Trajectory:
             sl = slice(first, first+CHUNK_RAYS)
             for field, spline in enumerate(splines):
                 table[sl, field] = spline(axis[sl])
+            self.apply_encoder_scale(table[sl], axis[sl], coefficients)
         saved_axis, saved_coefficients = axis.copy(), coefficients.copy()
         saved_knots = [k.copy() for k in self.knots]
         for array in (table, saved_axis, saved_coefficients, *saved_knots):
@@ -298,8 +352,9 @@ class Trajectory:
                 len(self.knots) == len(cached[3]) and
                 all(np.array_equal(k, old) for k, old in zip(self.knots, cached[3]))):
             return cached[0][ids]
-        return np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
-                                       extrapolate=False)(axis) for i, k in enumerate(self.knots)])
+        local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
+                                        extrapolate=False)(axis) for i, k in enumerate(self.knots)])
+        return self.apply_encoder_scale(local, axis, coefficients)
 
     def native_side(self, table, side):
         """Four measured native pixel centres and their interpolation weights."""
@@ -373,13 +428,20 @@ class Trajectory:
 
     def serialize(self, coefficients):
         extended = self.settings.fit_translation or self.settings.fit_heave
-        return dict(schema='ssb.global_trajectory.v2' if extended else 'ssb.global_trajectory.v1',
+        result = dict(schema=('ssb.global_trajectory.v3' if self.scale_index is not None else
+                              'ssb.global_trajectory.v2' if extended else 'ssb.global_trajectory.v1'),
                     radius_m=self.radius, support_height_m=self.height,
                     progress_domain_m=self.domain, degree=3, knots=[k.tolist() for k in self.knots],
-                    coefficients=(np.asarray(coefficients)*self.scale).tolist(),
+                    coefficients=(np.asarray(coefficients)[:self.spline_size]*self.scale).tolist(),
                     fields=self.fields, sizes=self.sizes,
                     model=('Ry(pitch) Rx(roll), upright support, '+('lateral/heave' if self.settings.fit_translation else 'heave')+' and nominal cylinder'
                            if extended else 'Ry(pitch) Rx(roll), upright support and nominal cylinder'))
+        if self.scale_index is not None:
+            result['relative_encoder_scale'] = dict(reference_m=self.scale_reference_m,
+                correction_fraction=float(coefficients[self.scale_index]*self.scale),
+                convention='x = encoder_x + fraction*(encoder_x-reference) + bounded local dx',
+                interpretation='image-constrained relative scale with fixed radius/lens priors; not a true wheel diameter')
+        return result
 
 
 class RaySet:
@@ -394,7 +456,7 @@ class RaySet:
 
     def hits(self, coefficients):
         model = self.model
-        local = model.parameters(coefficients, self.bases)
+        local = model.parameters(coefficients, self.bases, self.axis)
         # Elementwise per ray: chunking leaves every hit bit-identical.
         points = np.concatenate(in_chunks(lambda a, b: cylinder_points(
             self.axis[a:b], self.theta[a:b], self.tangent[a:b], local[a:b], model.radius, model.height),
@@ -404,7 +466,7 @@ class RaySet:
     def derivatives(self, coefficients):
         """Analytic d(x, q)/d(local correction field) of every native centre ray."""
         model = self.model
-        local = model.parameters(coefficients, self.bases)
+        local = model.parameters(coefficients, self.bases, self.axis)
         return np.concatenate(in_chunks(lambda a, b: cylinder_derivatives(
             self.axis[a:b], self.theta[a:b], self.tangent[a:b], local[a:b], model.radius, model.height),
             len(self.axis)))
@@ -420,4 +482,8 @@ class RaySet:
                 weighted = diags(derivative[:, direction]*self.weights.ravel()*model.scale) @ basis
                 # Sum each consecutive group of four native centre rays.
                 matrices[direction].append(self.reducer @ weighted)
+        if model.scale_index is not None:
+            dx = np.sum((self.axis.reshape(-1, 4)-model.scale_reference_m)*self.weights, axis=1)*model.scale
+            matrices[0].append(csr_matrix(dx[:, None]))
+            matrices[1].append(csr_matrix((len(dx), 1)))
         return [hstack(parts, format='csr') for parts in matrices]

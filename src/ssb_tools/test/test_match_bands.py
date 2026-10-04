@@ -125,6 +125,19 @@ def test_window_resource_budget_is_checked_before_large_plan_allocation(tmp_path
         plan_windows(sampler, report['grid'], .000001, 128, 256, MatchSettings(max_shift_mm=4.))
 
 
+def test_diagnostic_descriptors_do_not_allocate_pixel_budget_but_live_windows_stay_capped(tmp_path, monkeypatch):
+    import ssb_tools.match_bands as module
+    root = tmp_path/'d1'; bands_fixture(root)
+    sampler, report, _ = verified_bands(root)
+    monkeypatch.setattr(module, 'WINDOW_BUDGET', 1)
+    monkeypatch.setattr(module, 'DIAGNOSTIC_WINDOW_BUDGET', 1000)
+    outside = dict(report['grid'], target_x_m=[100., 101.])
+    windows = plan_windows(sampler, outside, .04, 128, 256, MatchSettings(max_shift_mm=4.))
+    assert len(windows) > 1 and all(w['status'] == 'unmeasurable' for w in windows)
+    with pytest.raises(ValueError, match='1-window'):
+        plan_windows(sampler, report['grid'], .04, 128, 256, MatchSettings(max_shift_mm=4.))
+
+
 def raw_bands_fixture(root, session):
     """The same scene as bands_fixture, stored as D1 v2: uint8 raw blocks + flat params."""
     projection, offsets = bands_fixture(root)

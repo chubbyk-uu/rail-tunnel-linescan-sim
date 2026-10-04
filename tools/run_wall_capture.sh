@@ -12,8 +12,12 @@ set +u # ROS setup scripts inspect optional environment variables.
 source /opt/ros/jazzy/setup.bash
 source "$repo/install/setup.bash"
 set -u
+scale_args=()
+if [[ ${SSB_RELATIVE_ENCODER_SCALE:-0} == 1 ]]; then
+  scale_args=(--relative-encoder-scale)
+fi
 python3 -m ssb_tools.mission_plan --demo "$demo" --output "$inputs" \
-  --target-start-m "$2" --target-length-m "$3" > "${session}_plan.log" 2>&1
+  --target-start-m "$2" --target-length-m "$3" "${scale_args[@]}" > "${session}_plan.log" 2>&1
 SSB_WORLD="$inputs/world.sdf" bash "$repo/tools/run_gz.sh" "$session" "$inputs/capture.yaml"
 python3 -m ssb_tools.wall_coverage --session "$session" --calibration "$demo/calibration.json" \
   --output "$session/reconstruction/coverage"

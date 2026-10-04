@@ -24,6 +24,9 @@ from .session import read_json, sha256_file
 from .stage_b_scene import peak_rss_bytes
 
 WINDOW_BUDGET = 4096
+# Rejected source-geometry descriptors carry no image work. Bound them separately
+# while retaining every diagnostic rather than allocating their pixel windows.
+DIAGNOSTIC_WINDOW_BUDGET = 8192
 
 MATCH = np.dtype([('window', '<i4'), ('band_a', '<i2'), ('band_b', '<i2'),
     ('x_a_m', '<f8'), ('q_a_m', '<f8'), ('x_b_m', '<f8'), ('q_b_m', '<f8'),
@@ -81,10 +84,11 @@ def plan_windows(sampler, grid, spacing_m, height, max_width, settings, halo_m=.
     half = (height-1)*dq/2
     lower, upper = np.asarray(grid['theta_rad'])*radius
     count = max(0, math.ceil((upper-lower-2*half)/spacing_m))
-    if count*max(0, len(sampler.segments)-1) > WINDOW_BUDGET:
-        raise ValueError(f'matching plan exceeds {WINDOW_BUDGET}-window resource budget')
+    if count*max(0, len(sampler.segments)-1) > DIAGNOSTIC_WINDOW_BUDGET:
+        raise ValueError(f'matching descriptors exceed {DIAGNOSTIC_WINDOW_BUDGET}; '
+                         f'image work remains bounded by {WINDOW_BUDGET}-window resource budget')
     usable = sampler.output_offsets[sampler.geometry_valid]
-    windows = []
+    windows = []; image_windows = 0
     for band in range(len(sampler.segments)-1):
         if sampler.segments[band+1] != sampler.segments[band]+1: continue
         for centre in np.arange(lower+half+dq, upper-half-dq, spacing_m):
@@ -106,6 +110,9 @@ def plan_windows(sampler, grid, spacing_m, height, max_width, settings, halo_m=.
                 if width < minimum:
                     item.update(status='unmeasurable', reason='overlap too narrow for configured search range')
                 else:
+                    image_windows += 1
+                    if image_windows > WINDOW_BUDGET:
+                        raise ValueError(f'matching image plan exceeds {WINDOW_BUDGET}-window resource budget')
                     item.update(status='planned', shape=[height, width],
                         x_first_m=float((left+right)/2-(width-1)*dx/2),
                         q_first_m=float(centre-half))
@@ -302,6 +309,8 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
         status=('unmeasurable' if not accepted else 'partial' if len(components) > 1 else 'complete'),
         upstream_grid=grid, settings=asdict(settings), optical_signature=upstream['optical_signature'],
         planning=dict(spacing_m=spacing_m, height=height, max_width=max_width, halo_m=halo_m),
+        resources=dict(image_window_limit=WINDOW_BUDGET, diagnostic_descriptor_limit=DIAGNOSTIC_WINDOW_BUDGET,
+                       image_windows=sum('shape' in w for w in windows), descriptors=len(windows)),
         structure_model=dict(**STRUCTURE_MODEL, lk_radius_px=LK_STRUCTURE_RADIUS,
             scope='image-derived matching exclusion only; raw/geometry/evaluation masks unchanged'),
         source_observation_hashes=upstream['source_observation_hashes'],

@@ -192,6 +192,12 @@ Config Config::Parse(const std::string& text) {
                   {"theta_rad",{target["theta_rad"][0].as<double>(),target["theta_rad"][1].as<double>()}},
                   {"grid_pitch_m",Get<double>(target,"grid_pitch_m","inspection.")},
                   {"guard_m",Get<double>(target,"guard_m","inspection.")}};
+    if (target["relative_encoder_scale_bound_fraction"]) {
+      const double bound = target["relative_encoder_scale_bound_fraction"].as<double>();
+      Check(std::isfinite(bound) && bound >= 0. && bound <= .03,
+            "inspection relative encoder scale bound must be within 3 percent");
+      c.inspection["relative_encoder_scale_bound_fraction"] = bound;
+    }
   }
 
   c.Validate();
@@ -214,6 +220,9 @@ void Config::Validate() const {
     Check(Finite({x0,x1,a,b,pitch,guard})&&x0<x1&&a<b&&b-a<=2*kPi&&pitch>0&&guard>0,
           "invalid public wall target");
     Check(x0>=tunnel_x_min_m&&x1<=tunnel_x_max_m,"wall target outside tunnel bounds");
+    const double bound = inspection.value("relative_encoder_scale_bound_fraction", 0.);
+    Check(std::isfinite(bound) && bound >= 0. && bound <= .03,
+          "inspection relative encoder scale bound must be within 3 percent");
   }
   Check(Finite({base_reference_z_m,scan_axis_height_m}) && base_reference_z_m>0 && scan_axis_height_m>0,
         "invalid robot base reference or scan axis height");

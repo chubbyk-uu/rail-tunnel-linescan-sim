@@ -21,7 +21,7 @@ from .session import sha256_file
 from .wall_coverage import target_grid, RUN_DTYPE
 from .native_rows import NativeRows, FloatRows
 from .stage_b_scene import peak_rss_bytes
-from .reconstruction_support import correction_reach_m
+from .reconstruction_support import correction_reach_m, relative_scale_reach_m
 
 PROJECTION = np.dtype([('sequence', '<i8'), ('lattice_row', '<i8'), ('segment', '<i8'),
                        ('x_axis_m', '<f8'), ('theta_rad', '<f8')])
@@ -158,6 +158,8 @@ def prepare_sensor(capture, output, target, chunk_rows=256):
     usable = corrected_offsets[geometry_valid]
     reach = correction_reach_m(capture.config['calibration']['radius_m'],
                                capture.config['robot']['scan_axis_height_m'])
+    bound = capture.config.get('inspection', {}).get('relative_encoder_scale_bound_fraction', 0.)
+    reach += relative_scale_reach_m([float(capture.x_axis.min()), float(capture.x_axis.max())], bound)
     selected = retained_band_rows(capture.rows, capture.x_axis, usable, target, reach)
     projection = np.zeros(len(selected), PROJECTION)
     for name, field in [('sequence', 'sequence'), ('lattice_row', 'row'), ('segment', 'segment')]:

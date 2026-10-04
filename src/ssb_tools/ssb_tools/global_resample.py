@@ -36,20 +36,22 @@ def load_global(root, sampler, upstream, d1_root):
         if len(hashes) != 1 or hashes[0] != sha256_file(Path(d1_root)/name):
             raise ValueError('trajectory belongs to different D1 geometry')
     report, record = read_json(paths[1]), read_json(paths[2])
-    if (report.get('schema') not in ('ssb.global_optimization.v1', 'ssb.global_optimization.v2') or report.get('grid') != upstream['grid'] or
+    if (report.get('schema') not in ('ssb.global_optimization.v1', 'ssb.global_optimization.v2', 'ssb.global_optimization.v3') or report.get('grid') != upstream['grid'] or
             report.get('optical_signature') != upstream['optical_signature'] or
             report.get('source_observation_hashes') != upstream['source_observation_hashes']):
         raise ValueError('D3 public observation identity mismatch')
     settings = GeometrySettings(**report['settings'])
     extended = settings.fit_translation or settings.fit_heave
-    if report['schema'] != ('ssb.global_optimization.v2' if extended else 'ssb.global_optimization.v1'):
+    if report['schema'] != ('ssb.global_optimization.v3' if settings.relative_encoder_scale else
+                           'ssb.global_optimization.v2' if extended else 'ssb.global_optimization.v1'):
         raise ValueError('optimization schema differs from configured rigid-body model')
     expected_fields = ['carriage_dx_m', 'scan_phase_dq_m', 'roll_rad', 'pitch_rad']
     if settings.fit_translation:
         expected_fields += ['carriage_lateral_m', 'carriage_vertical_m']
     elif settings.fit_heave:
         expected_fields += ['carriage_vertical_m']
-    expected_schema = 'ssb.global_trajectory.v2' if extended else 'ssb.global_trajectory.v1'
+    expected_schema = ('ssb.global_trajectory.v3' if settings.relative_encoder_scale else
+                       'ssb.global_trajectory.v2' if extended else 'ssb.global_trajectory.v1')
     if (record.get('schema') != expected_schema or record.get('degree') != 3 or
             record.get('radius_m') != upstream['grid']['radius_m'] or
             record.get('fields') != expected_fields):
@@ -69,15 +71,22 @@ def load_global(root, sampler, upstream, d1_root):
     elif paths[-1].name == 'surface_relief.npz':
         raise ValueError('undeclared relief product')
     coefficients = np.asarray(record['coefficients'], float)/model.scale
+    if settings.relative_encoder_scale:
+        scale = record.get('relative_encoder_scale', {})
+        if (scale.get('reference_m') != model.scale_reference_m or
+                scale != report.get('relative_encoder_scale') or coefficients.shape != (model.spline_size,)):
+            raise ValueError('relative encoder scale identity/domain differs from declared model')
+        coefficients = np.r_[coefficients, float(scale['correction_fraction'])/model.scale]
+    elif 'relative_encoder_scale' in record or 'relative_encoder_scale' in report:
+        raise ValueError('undeclared relative encoder scale')
     if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all() or model.sizes != record['sizes']:
         raise ValueError('invalid global trajectory coefficients')
     for field, knot in enumerate(model.knots):
         if (not np.isfinite(knot).all() or np.any(np.diff(knot) < 0) or
                 knot[3] != model.domain[0] or knot[-4] != model.domain[1]):
             raise ValueError('global trajectory knot domain differs from source progress')
-        bound = 10. if field in (2, 3) else settings.translation_bound_mm if field > 3 else 30.
-        if np.any(abs(coefficients[model.starts[field]:model.starts[field+1]]) > bound+1e-7):
-            raise ValueError('global trajectory exceeds declared physical bounds')
+    if np.any(abs(coefficients) > model.coefficient_bounds()+1e-7):
+        raise ValueError('global trajectory exceeds declared physical bounds')
     model.prepare_ray_cache(coefficients)
     return model, coefficients, report, paths
 
@@ -150,7 +159,7 @@ def corrected_tile(model, coefficients, qs, xs):
     best = np.full(values.shape, -np.inf, np.float32); count = np.zeros(values.shape, np.uint16)
     # Conservative margin from the declared 30 mm / 10 mrad parameter bounds.
     margin = correction_reach_m(model.radius, model.height)
-    for band, (lo, hi) in enumerate(model.sampler.band_x):
+    for band, (lo, hi) in enumerate(model.band_extents(coefficients)):
         begin = np.searchsorted(xs, lo-margin); end = np.searchsorted(xs, hi+margin, side='right')
         if end <= begin:
             continue

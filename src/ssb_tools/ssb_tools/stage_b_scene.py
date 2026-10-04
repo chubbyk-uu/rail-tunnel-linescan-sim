@@ -129,10 +129,19 @@ class Mesh:
         self.out.write('# Stage B metric geometry, inward tunnel surfaces\n')
 
     def quad(self, points):
-        if self.counters['vertices'] + 4 > self.limits['max_scene_vertices'] or self.counters['triangles'] + 2 > self.limits['max_mesh_triangles']:
+        same = lambda a, b: all(abs(points[a][k]-points[b][k]) < 1e-12 for k in range(3))
+        corners = [k for k in range(4) if not same(k, (k+1) % 4)]
+        faces = [(0, 1, 2), (0, 2, 3)] if len(corners) == 4 else [(0, 1, 2)] if len(corners) == 3 else []
+        if not faces:
+            raise ValueError('degenerate mesh quad')
+        # Triangle patches arrived with a repeated fourth corner. It was never
+        # used by a face but still consumed the scene vertex budget and OBJ I/O.
+        selected = [points[k] for k in corners]
+        if (self.counters['vertices'] + len(selected) > self.limits['max_scene_vertices'] or
+                self.counters['triangles'] + len(faces) > self.limits['max_mesh_triangles']):
             raise ValueError('scene geometry resource budget exceeded')
         first = self.vertices + 1
-        for point in points:
+        for point in selected:
             self.out.write('v %.9f %.9f %.9f\n' % tuple(point))
         # Ogre2 needs explicit normals to construct a textured HLMS material.
         # OptiX still derives face normals from these same triangle positions.
@@ -140,7 +149,7 @@ class Mesh:
         length = math.sqrt(sum(n*n for n in normal))
         if length == 0:
             raise ValueError('degenerate mesh quad')
-        for _ in points:
+        for _ in selected:
             self.out.write('vn %.9f %.9f %.9f\n' % tuple(n/length for n in normal))
         if self.uv_domain:
             lo,hi,zc=self.uv_domain[:3]
@@ -148,19 +157,17 @@ class Mesh:
             a0,b0=self.uv_domain[3:] if len(self.uv_domain)==5 else (-math.pi,math.pi)
             anchor=(a0+b0)/2 if len(self.uv_domain)==5 else angles[0]
             angles=[a+2*math.pi*round((anchor-a)/(2*math.pi)) for a in angles]
-            for p,a in zip(points,angles):
+            for k in corners:
+                p, a = points[k], angles[k]
                 self.out.write('vt %.9f %.9f\n' % ((p[0]-lo)/(hi-lo),(a-a0)/(b0-a0)))
         # Winding chosen by the caller; explicit inward winding on cylindrical faces.
         # A quad with one zero-length edge is written as its single non-degenerate triangle.
         index=lambda i:f'{i}/{i}/{i}' if self.uv_domain else f'{i}//{i}'
-        same=lambda a,b:all(abs(points[a][k]-points[b][k])<1e-12 for k in range(3))
-        corners=[k for k in range(4) if not same(k,(k+1)%4)]
-        faces=[(0,1,2),(0,2,3)] if len(corners)==4 else [tuple(corners)] if len(corners)==3 else []
         for f in faces:
             self.out.write('f '+' '.join(index(first+k) for k in f)+'\n')
-        self.vertices += 4
+        self.vertices += len(selected)
         self.faces += len(faces)
-        self.counters['vertices'] += 4
+        self.counters['vertices'] += len(selected)
         self.counters['triangles'] += len(faces)
 
     def close(self):

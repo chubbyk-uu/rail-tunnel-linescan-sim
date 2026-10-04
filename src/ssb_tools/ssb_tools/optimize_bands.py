@@ -157,10 +157,15 @@ class FixedJacobian:
                 first = [g[0] for g in groups]
                 self.blocks.append([sign, side, k, groups, values[:, first]*model.scale])
                 keys.append((np.arange(n)[:, None, None]*model.size+model.starts[k]+columns[:, first]).ravel())
+        if model.scale_index is not None:
+            keys.append(np.arange(n)*model.size+model.scale_index)
         sizes = [len(k) for k in keys]
         keys, inverse = np.unique(np.concatenate(keys), return_inverse=True)
         for block, part in zip(self.blocks, np.split(inverse, np.cumsum(sizes)[:-1])):
             block.append(part.reshape(n, -1))
+        self.scale_positions = np.split(inverse, np.cumsum(sizes)[:-1])[-1] if model.scale_index is not None else None
+        self.scale_derivative = ((b.axis.reshape(n, 4)*b.weights).sum(1)-
+                                 (a.axis.reshape(n, 4)*a.weights).sum(1))*model.scale
         self.nnz = len(keys)
         rows, columns = keys//model.size, keys % model.size
         counts = np.bincount(rows, minlength=n)
@@ -181,7 +186,7 @@ class FixedJacobian:
 
     def __call__(self, coefficients, current, pitch):
         model = self.model
-        local = [model.parameters(coefficients, rays.bases) for rays in self.sides]
+        local = [model.parameters(coefficients, rays.bases, rays.axis) for rays in self.sides]
         data = np.empty(2*self.nnz)
 
         def fill(first, last):
@@ -203,6 +208,9 @@ class FixedJacobian:
                                              minlength=hi-lo)
             for d in range(2):
                 data[self.positions[d][lo:hi]] = values[d]
+            if self.scale_positions is not None:
+                positions = self.scale_positions[first:last]
+                data[self.positions[0][positions]] = self.scale_derivative[first:last]*scale[:, 0]
 
         in_chunks(fill, self.n, .25)  # four native rays per match
         return csr_matrix((np.r_[data, self.prior], self.indices, self.indptr), shape=self.shape)
@@ -251,6 +259,16 @@ def regularizer(model):
         if k < 2:
             rows.extend([row]*size); cols.extend(range(start, start+size))
             values.extend([1e4/size]*size); row += 1
+    if model.scale_index is not None:
+        # Remove the affine component of local dx: it would duplicate the single
+        # global scale. Greville abscissae reproduce linear cubic splines exactly.
+        g = np.array([model.knots[0][i+1:i+4].mean() for i in range(model.sizes[0])])
+        slope = g-g.mean()
+        slope /= np.linalg.norm(slope)
+        rows.extend([row]*len(slope)); cols.extend(range(model.sizes[0]))
+        values.extend(1e4*slope); row += 1
+        rows.append(row); cols.append(model.scale_index)
+        values.append(model.scale/settings.relative_scale_prior_fraction); row += 1
     if settings.coarse_translation:
         # On a cylinder, a common roll can be exchanged for common lateral/
         # vertical offsets and a rotation of output q. Fix the public midpoint
@@ -398,8 +416,7 @@ def fit(model, table, grid):
         def jac(c):
             return assembly(c, current, pitch)
 
-        bounds = np.concatenate([np.full(size, 10. if k in (2, 3) else
-            model.settings.translation_bound_mm if k > 3 else 30.) for k, size in enumerate(model.sizes)])
+        bounds = model.coefficient_bounds()
         coefficients, solver = damped_solve(fun, jac, coefficients, bounds, native=model.settings.coarse_translation)
         delta = (b.hits(coefficients)-a.hits(coefficients))/pitch
         robust = np.ones(len(training))
@@ -540,7 +557,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                 [upstream['grid']['dx_m'], upstream['grid']['dq_m']])))
         (output/'windows.json').write_text(json.dumps(per_window, indent=2)+'\n')
         extended = settings.fit_translation or settings.fit_heave
-        report = dict(schema='ssb.global_optimization.v2' if extended else 'ssb.global_optimization.v1',
+        report = dict(schema=('ssb.global_optimization.v3' if settings.relative_encoder_scale else
+                              'ssb.global_optimization.v2' if extended else 'ssb.global_optimization.v1'),
             stage='D3', status='complete',
             optical_signature=upstream['optical_signature'], source_observation_hashes=upstream['source_observation_hashes'],
             grid=upstream['grid'], bands=len(sampler.segments), coefficients=model.size, settings=asdict(settings),
@@ -554,15 +572,19 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                 'no IMU; fitted attitudes and positions are prior-dependent image corrections, not measured body poses',
                 'absolute scale, common deformation and photometric matching bias are not recovered from truth',
                 'cubic trajectory cannot recover unobserved bottom-sector or high-frequency motion',
-                ('yaw, mounting errors and wheel scale are not independently fitted; absolute translation modes remain prior-dependent'
+                ('yaw and fixed mounting parameters are not independently recovered; relative encoder scale is prior-dependent'
+                 if settings.relative_encoder_scale else 'yaw, mounting errors and wheel scale are not independently fitted; absolute translation modes remain prior-dependent'
                  if extended else 'yaw, lateral motion, heave, mounting errors and wheel scale are not independently fitted in this first model'),
-                'no seam blending and no noisy-image robustness acceptance yet'],
+                'no seam blending; geometry, coverage and noisy-image robustness require independent acceptance'],
             performance=dict(input_check_s=check_s, wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
         if refinement is not None:
             report['attitude_refinement'] = refinement
         if settings.coarse_translation:
             from .fast_normal import backend
             report['normal_backend']=backend()[1]
+        if settings.relative_encoder_scale:
+            report['relative_encoder_scale'] = model.serialize(coefficients)['relative_encoder_scale']
+            report['gauge'] += '; local dx linear mode anchored; global scale is relative to fixed radius/lens priors'
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
         provenance = stage_record('global_optimization', inputs+match_inputs+[observable_path], sorted(output.iterdir()),
                                   dict(settings=asdict(settings)))
@@ -581,6 +603,7 @@ def main():
     parser.add_argument('--attitude-spacing-m', type=float, default=.05)
     parser.add_argument('--observed-knots', action='store_true', help='fine pose knots only in recorded exposure spans')
     parser.add_argument('--adaptive-attitude', action='store_true', help='one training-only, observation-supported local attitude refinement')
+    parser.add_argument('--relative-encoder-scale', action='store_true')
     translation = parser.add_mutually_exclusive_group()
     translation.add_argument('--fit-translation', action='store_true', help='image-derived continuous lateral/heave corrections; no pose truth')
     translation.add_argument('--fit-heave', action='store_true', help='image-derived continuous vertical correction only; no pose truth')
@@ -588,7 +611,8 @@ def main():
     report = run(args.unroll, args.matches, args.observable, args.output,
                  GeometrySettings(attitude_spacing_m=args.attitude_spacing_m, fit_translation=args.fit_translation,
                                   fit_heave=args.fit_heave, observed_knots=args.observed_knots,
-                                  adaptive_attitude=args.adaptive_attitude), args.raw)
+                                  adaptive_attitude=args.adaptive_attitude,
+                                  relative_encoder_scale=args.relative_encoder_scale), args.raw)
     print(json.dumps({k: report[k] for k in ('status', 'coefficients', 'image_consistency', 'performance')}))
 
 

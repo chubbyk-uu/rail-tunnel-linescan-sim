@@ -7,7 +7,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import yaml
-from .reconstruction_support import correction_reach_m
+from .reconstruction_support import correction_reach_m, RELATIVE_SCALE_BOUND
 
 
 def start_values(command):
@@ -111,7 +111,7 @@ def plan(config, start, distance):
     return _travel_plan(config, start, distance)
 
 
-def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
+def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002, relative_encoder_scale=False):
     """Plan a wall target using nominal pitch, calibrated usable FOV and ramp margins.
 
     Cover the target at every scan phase, and keep any exposure whose calibrated
@@ -149,6 +149,14 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     # advance. Partial first/last scans must be provably outside the target;
     # one-band pixel coverage alone is not sufficient for seam acceptance.
     correction_reach = correction_reach_m(radius, height)
+    if type(relative_encoder_scale) is not bool:
+        raise ValueError('relative encoder scale planning switch must be Boolean')
+    scale_bound = RELATIVE_SCALE_BOUND if relative_encoder_scale else 0.
+    # Bound half of the eventual capture span, including both endpoint buffers.
+    # Solve the bound with its own extra margin; no actual wheel radius is read.
+    scale_margin = scale_bound*(length/2+pitch+max(abs(left), abs(right))+abs(mount)+
+                                ramp_margin+2*guard+correction_reach)/(1-scale_bound)
+    correction_reach += scale_margin
     seam_margin = correction_reach+pitch*correction_reach/(2*math.pi*radius)+2*guard
     vehicle_start = min(start-pitch-left, start-right)-mount-ramp_margin-guard-seam_margin
     vehicle_end = max(start+length+pitch-right, start+length-left)-mount+ramp_margin+guard+seam_margin
@@ -165,6 +173,8 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     c['inspection'] = dict(schema='ssb.wall_target.v1', target_x_m=[start, start+length],
                            theta_rad=[theta_start, theta_start+math.radians(arc)],
                            grid_pitch_m=grid_pitch, guard_m=guard)
+    if relative_encoder_scale:
+        c['inspection']['relative_encoder_scale_bound_fraction'] = scale_bound
     task.update(mode='wall', target_x_m=[start, start+length], target_length_m=length,
                 capture_gate_deg=[gate['start_deg'], gate['end_deg']], output_arc_deg=arc,
                 nominal_usable_span_m=[left, right], ramp_margin_m=ramp_margin, guard_m=guard,
@@ -174,10 +184,12 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
                 minimum_row_footprint_m=footprint*config['calibration']['radius_m'],
                 coverage_note='Nominal full-angle target; acceptance uses recorded encoders and measured calibration. '
                               'Actual body motion and wheel scale errors are not known to this planner.')
+    if relative_encoder_scale:
+        task.update(relative_encoder_scale_bound_fraction=scale_bound, relative_scale_margin_m=scale_margin)
     return c, task
 
 
-def prepare(template, output, start, distance, mode='travel'):
+def prepare(template, output, start, distance, mode='travel', relative_encoder_scale=False):
     template, output = Path(template).resolve(), Path(output).resolve()
     if output.exists():
         raise ValueError('Mission input directory already exists')
@@ -187,7 +199,8 @@ def prepare(template, output, start, distance, mode='travel'):
         from .optical_identity import check_calibration
         check_calibration(source, template/'calibration.json')
     config = yaml.safe_load(source.read_text())
-    c, task = (wall_plan(config, start, distance, json.loads((template/'calibration.json').read_text()))
+    c, task = (wall_plan(config, start, distance, json.loads((template/'calibration.json').read_text()),
+                         relative_encoder_scale=relative_encoder_scale)
                if mode == 'wall' else plan(config, start, distance))
     scene = Path(c['render']['optical_scene'])
     c['render']['optical_scene'] = str((source.parent/scene).resolve())
@@ -218,8 +231,10 @@ def main():
     parser.add_argument('--demo', required=True); parser.add_argument('--output', required=True)
     parser.add_argument('--target-start-m', type=float, required=True)
     parser.add_argument('--target-length-m', type=float, required=True)
+    parser.add_argument('--relative-encoder-scale', action='store_true')
     args = parser.parse_args()
-    _, task = prepare(args.demo, args.output, args.target_start_m, args.target_length_m, mode='wall')
+    _, task = prepare(args.demo, args.output, args.target_start_m, args.target_length_m, mode='wall',
+                      relative_encoder_scale=args.relative_encoder_scale)
     print(json.dumps(task, indent=2))
 
 

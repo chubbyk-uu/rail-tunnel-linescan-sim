@@ -30,10 +30,16 @@ fi
 if [[ ${SSB_SLOW_TRANSLATION:-0} == 1 ]]; then
   refinement_args+=(--slow-translation)
 fi
+if [[ ${SSB_RELATIVE_ENCODER_SCALE:-0} == 1 ]]; then
+  refinement_args+=(--relative-encoder-scale)
+fi
 search_args=()
 if [[ -n ${SSB_D2_Q_SHIFT_MM:-} ]]; then
   search_args=(--max-q-shift-mm "$SSB_D2_Q_SHIFT_MM")
 fi
+python3 -m ssb_tools.reconstruction_budget --demo "$demo" --start "${3:-12}" --length "${4:-3}" \
+  --output "$evaluation/resource_plan.json" --spacing-m "${SSB_D2_SPACING_M:-.2}" \
+  --height "${SSB_D2_HEIGHT:-512}" "${refinement_args[@]}" "${search_args[@]}" > "$evaluation/resource_plan.log" 2>&1
 python3 -m ssb_tools.holdout_protocol declare --workspace "$repo" --demo "$demo" \
   --start "${3:-12}" --length "${4:-3}" --output "$evaluation/protocol.json" \
   --spacing-m "${SSB_D2_SPACING_M:-.2}" --height "${SSB_D2_HEIGHT:-512}" "${refinement_args[@]}" "${search_args[@]}"
@@ -58,6 +64,9 @@ if [[ ${SSB_SURFACE_RELIEF:-0} == 1 ]]; then
 fi
 if [[ ${SSB_SLOW_TRANSLATION:-0} == 1 ]]; then
   refinement_args+=(--slow-translation)
+fi
+if [[ ${SSB_RELATIVE_ENCODER_SCALE:-0} == 1 ]]; then
+  refinement_args+=(--relative-encoder-scale)
 fi
 search_args=()
 if [[ -n ${SSB_D2_Q_SHIFT_MM:-} ]]; then

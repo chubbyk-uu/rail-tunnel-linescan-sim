@@ -154,7 +154,8 @@ def shared_seam_plan(model, coefficients, grid, spacing_m=.2, workers=1):
     coefficients = np.asarray(coefficients, float)
     if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all():
         raise ValueError('finite verified trajectory required for a public seam plan')
-    plan = seam_plan(model.sampler, grid, spacing_m, reach_margin=correction_reach_m(model.radius, model.height))
+    plan = seam_plan(model.sampler, grid, spacing_m, reach_margin=correction_reach_m(model.radius, model.height),
+                     axial_scale_margin=model.scale_margin_m())
     planned = [index for index, window in enumerate(plan) if window['status'] == 'planned']
     shared = dict(model=model, coefficients=coefficients, grid=grid, guard=2*grid['dx_m'])
     for index, window in zip(planned, parallel_map(plan_window, [plan[i] for i in planned], shared, workers)):
@@ -267,7 +268,7 @@ def boundary_chunk(chunk, model, coefficients, use_relief=True):
     for band in range(len(model.sampler.segments)):
         # Skip bands whose declared correction bounds cannot reach this x.
         lo, hi = model.sampler.band_x[band]
-        margin = correction_reach_m(model.radius, model.height)
+        margin = model.source_reach_m()
         if np.max(x) < lo-margin or np.min(x) > hi+margin:
             continue
         supported |= sources_at(model, coefficients, band, x, q, use_relief)[1]
@@ -325,14 +326,15 @@ def missing_angle_envelope(sampler, band, angle, radius, reach_margin, usable):
             float(axes.max()+usable[-1]+reach_margin)], rule
 
 
-def seam_plan(sampler, grid, spacing_m=.2, reach_margin=0.):
+def seam_plan(sampler, grid, spacing_m=.2, reach_margin=0., axial_scale_margin=0.):
     """Two fixed interleaved lattices, independent of matches, fit and truth.
 
     At the frozen 0.2 m spacing the phases are 0.05 and 0.15 m from the
     output's lower q boundary. All exclusions are retained, never selected
     using a score. Axial points cover a bounded nominal overlap at that q.
     """
-    if not np.isfinite(spacing_m) or spacing_m < .09 or not np.isfinite(reach_margin) or reach_margin < 0:
+    if (not np.isfinite(spacing_m) or spacing_m < .09 or not np.isfinite(reach_margin) or reach_margin < 0 or
+            not np.isfinite(axial_scale_margin) or axial_scale_margin < 0):
         raise ValueError('bounded fixed seam sampling plan required')
     lower, upper = np.asarray(grid['theta_rad'])*grid['radius_m']
     usable = sampler.output_offsets[sampler.geometry_valid]
@@ -360,6 +362,9 @@ def seam_plan(sampler, grid, spacing_m=.2, reach_margin=0.):
                                  ([sampler.band_x[k][0]-reach_margin, sampler.band_x[k][1]+reach_margin],
                                   'whole_supported_band') for k, supported in zip(item['bands'], supported_bands)]
                     envelopes = [v[0] for v in witnesses]
+                    if axial_scale_margin:
+                        envelopes = [[lo-axial_scale_margin, hi+axial_scale_margin] for lo, hi in envelopes]
+                        item['relative_encoder_scale_axial_margin_m'] = axial_scale_margin
                     left = max(grid['target_x_m'][0], *(r[0] for r in envelopes))
                     right = min(grid['target_x_m'][1], *(r[1] for r in envelopes))
                     item['nominal_exposure_supported'] = supported_bands

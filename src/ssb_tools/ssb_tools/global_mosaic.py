@@ -22,9 +22,10 @@ class CpuGlobalRaster:
     def __init__(self, model, coefficients):
         self.model, self.coefficients = model, coefficients
         self.margin = correction_reach_m(model.radius, model.height)
+        self.band_x = model.band_extents(coefficients)
 
     def candidate_bands(self, xs):
-        return [i for i, (lo, hi) in enumerate(self.model.sampler.band_x)
+        return [i for i, (lo, hi) in enumerate(self.band_x)
                 if hi+self.margin >= xs[0] and lo-self.margin <= xs[-1]]
 
     def tile(self, angles, xs, bands=None):

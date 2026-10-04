@@ -360,19 +360,42 @@ def add_depth(source,output,spec_path):
     return result
 
 
-def regrid(source,output,cell_m):
-    """Same crack instances, new spatial index cell size (renderer lookup cost only)."""
+def regrid(source,output,cell_m,config_path=None):
+    """Keep crack instances; optionally extend empty axial buffers, never crop them."""
     source=Path(source).resolve();output=Path(output).resolve()
+    source_file=source if source.is_file() else source/'defects.json'
+    source=source_file.parent
     if output.exists(): raise ValueError('defect output already exists')
-    old=json.loads((source/'defects.json').read_text())
+    old=json.loads(source_file.read_text())
     bounds=source_bounds(source,old)
+    original_bounds=list(bounds)
+    if config_path is not None:
+        config_path=Path(config_path).resolve()
+        tunnel=yaml.safe_load(config_path.read_text())['tunnel']
+        extended=[tunnel['x_min_m'],tunnel['x_max_m'],-math.pi*tunnel['radius_m'],math.pi*tunnel['radius_m']]
+        if (not np.isfinite(extended).all() or extended[0]>bounds[0] or extended[1]<bounds[1] or
+                not np.allclose(extended[2:],bounds[2:],rtol=0,atol=1e-12)):
+            raise ValueError('crack regrid may only extend axial buffers with the same radius')
+        bounds=extended
+    # A portable source has relative provenance dependencies. Resolve them
+    # before moving its metadata into the new output directory.
+    def resolve(node):
+        if isinstance(node,dict):
+            if isinstance(node.get('file'),str): node['file']=str((source/node['file']).resolve())
+            for value in node.values(): resolve(value)
+        elif isinstance(node,list):
+            for value in node: resolve(value)
+    resolve(old)
     g=old['grid']
     with_depths='vertex_depth_m' in old['instances'][0]
     packed,offsets,indices,grid,*depths=build_grid(old['instances'],bounds,cell_m,with_depths=with_depths)
     output.mkdir(parents=True)
     result=dict(old,grid=grid,files=write_index(output,packed,offsets,indices,*depths),
-                regridded_from=dict(file=str(source/'defects.json'),sha256=digest(source/'defects.json'),cell_m=g['cell_m']),
+                regridded_from=dict(file=str(source_file),sha256=digest(source_file),cell_m=g['cell_m']),
                 preparation_peak_rss_bytes=peak_rss_bytes())
+    if config_path is not None:
+        result['inputs']=dict(old['inputs'],config=snapshot_input(output,config_path,'config.yaml'))
+        result['regridded_from']['original_bounds_xq_m']=original_bounds
     (output/'defects.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps(dict(grid=grid)))
     return result
@@ -389,7 +412,7 @@ def main():
     a=p.parse_args()
     if a.refine: refine(a.refine,a.output,a.spec)
     elif a.depth: add_depth(a.depth,a.output,a.spec)
-    elif a.regrid: regrid(a.regrid,a.output,a.cell_m)
+    elif a.regrid: regrid(a.regrid,a.output,a.cell_m,a.config)
     else: prepare(a.config,a.spec,a.long_catalog,a.short_catalog,a.output,a.count)
 
 

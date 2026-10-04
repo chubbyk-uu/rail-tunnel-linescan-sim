@@ -245,6 +245,9 @@ def test_d2_hash_chain_and_d1_identity_are_checked(tmp_path, kind):
     GeometrySettings(attitude_spacing_m=.1, fit_translation=True),
     GeometrySettings(attitude_spacing_m=.1,fit_translation=True,coarse_translation=True,
                      observed_knots=True,adaptive_attitude=True,translation_bound_mm=30.,translation_prior_mm=10.),
+    GeometrySettings(attitude_spacing_m=.1,fit_translation=True,coarse_translation=True,
+                     observed_knots=True,adaptive_attitude=True,translation_bound_mm=30.,translation_prior_mm=10.,
+                     relative_encoder_scale=True),
     GeometrySettings(attitude_spacing_m=.1, fit_heave=True)])
 def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_chain(tmp_path, settings):
     from test_match_bands import bands_fixture

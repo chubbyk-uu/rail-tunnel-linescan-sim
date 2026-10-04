@@ -24,7 +24,7 @@ def evaluation_path(path):
 
 
 def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attitude=False, height=512, max_q_shift_mm=None,
-            surface_relief=False, slow_translation=False):
+            surface_relief=False, slow_translation=False, relative_encoder_scale=False):
     workspace, demo, output = Path(workspace).resolve(), Path(demo).resolve(), evaluation_path(output)
     state = subprocess.check_output(['sh', str(workspace/'src/ssb_core/cmake/source_state.sh'),
                                      str(workspace)], text=True).split()
@@ -34,9 +34,9 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
         raise ValueError('a protocol cannot be redeclared or overwritten')
     from .mission_plan import wall_plan
     config = yaml.safe_load((demo/'capture.yaml').read_text())
-    wall_plan(config, start, length, read_json(demo/'calibration.json'))
+    wall_plan(config, start, length, read_json(demo/'calibration.json'), relative_encoder_scale=relative_encoder_scale)
     check_calibration(demo/'capture.yaml', demo/'calibration.json')
-    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation)
+    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation, relative_encoder_scale)
     settings.validate()
     if not isinstance(spacing_m, (int, float)) or not 0 < spacing_m <= .4:
         raise ValueError('holdout matching spacing must be positive and at most 0.4 m')
@@ -46,6 +46,7 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
                ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py',
                 'global_geometry.py', 'initial_unroll.py', 'global_resample.py', 'reconstruction_support.py',
+                'reconstruction_budget.py', 'mission_plan.py', 'global_cuda.py', 'global_mosaic.py',
                 'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py',
                 'validate_stage_b.py', 'validate_stage_a.py', 'ref_geometry.py', 'session.py')]
     if type(surface_relief) is not bool:
@@ -246,6 +247,7 @@ def main():
     declaration.add_argument('--adaptive-attitude', action='store_true')
     declaration.add_argument('--surface-relief', action='store_true')
     declaration.add_argument('--slow-translation', action='store_true')
+    declaration.add_argument('--relative-encoder-scale', action='store_true')
     verification = sub.add_parser('verify')
     for name in ('protocol', 'root', 'output'):
         verification.add_argument('--'+name, required=True)
@@ -257,7 +259,7 @@ def main():
     if args.action == 'declare':
         declare(args.workspace, args.demo, args.output, args.start, args.length,
                 args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm, args.surface_relief,
-                args.slow_translation)
+                args.slow_translation, args.relative_encoder_scale)
         return 0
     if args.action == 'audit-public':
         output = evaluation_path(args.output)

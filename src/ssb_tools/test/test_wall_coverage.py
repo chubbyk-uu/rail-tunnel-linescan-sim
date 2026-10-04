@@ -49,6 +49,21 @@ def nominal_lines(config, task):
     return x[selected], theta[selected]
 
 
+def test_relative_scale_planner_reserves_public_uncertainty_and_requires_real_buffer(nominal):
+    config, calibration = nominal
+    with pytest.raises(ValueError, match='margin'):
+        wall_plan(config, 0., 20., calibration, relative_encoder_scale=True)
+    config['tunnel'].update(x_min_m=-2.5, x_max_m=22.5)
+    plain, old = wall_plan(config, 0., 20., calibration)
+    planned, task = wall_plan(config, 0., 20., calibration, relative_encoder_scale=True)
+    assert planned['inspection']['relative_encoder_scale_bound_fraction'] == .03
+    assert 'relative_encoder_scale_bound_fraction' not in plain['inspection']
+    assert task['start_m'] < old['start_m'] and task['end_m'] > old['end_m']
+    assert task['relative_scale_margin_m'] > .03*task['distance_m']/2
+    changed = copy.deepcopy(config); changed['truth'] = dict(odo_left_diameter_m=.079, odo_right_diameter_m=.081)
+    assert wall_plan(changed, 0., 20., calibration, relative_encoder_scale=True)[1] == task
+
+
 @pytest.mark.parametrize('margin', [0., .5, 5., 10.])
 def test_capture_guard_keeps_the_full_fixed_wall_target(nominal, margin):
     config, calibration = nominal

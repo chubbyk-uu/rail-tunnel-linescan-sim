@@ -1,7 +1,6 @@
 """CUDA D3 inverse rays and native resampling; public fitted trajectory only."""
 import ctypes as ct
 import numpy as np
-from scipy.interpolate import BSpline
 from .reconstruction_support import correction_reach_m
 from .unroll_cuda import CudaRaster, pointer
 
@@ -12,8 +11,7 @@ RAY = np.dtype([(name, '<f8') for name in
 def row_rays(model, coefficients):
     p = model.sampler.projection
     axis = p['x_axis_m']
-    local = np.column_stack([BSpline(k, coefficients[model.starts[i]:model.starts[i+1]]*model.scale,
-                                    3, extrapolate=False)(axis) for i, k in enumerate(model.knots)])
+    local = model.ray_parameters(np.arange(len(p)), coefficients)
     dx, dq, roll, pitch = local[:, :4].T
     ca, sa, cb, sb = np.cos(roll), np.sin(roll), np.cos(pitch), np.sin(pitch)
     rays = np.empty(len(p), RAY)
@@ -37,12 +35,11 @@ class GlobalCudaRaster(CudaRaster):
         coefficients = np.asarray(coefficients, float)
         if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all():
             raise ValueError('finite fitted trajectory coefficients required')
-        for field in range(len(model.fields)):
-            bound = 10. if field in (2, 3) else model.settings.translation_bound_mm if field > 3 else 30.
-            if np.any(abs(coefficients[model.starts[field]:model.starts[field+1]]) > bound+1e-7):
-                raise ValueError('trajectory exceeds declared physical bounds')
+        if np.any(abs(coefficients) > model.coefficient_bounds()+1e-7):
+            raise ValueError('trajectory exceeds declared physical bounds')
         # Match the CPU's conservative band selection; this is not an image warp.
         self.margin = correction_reach_m(model.radius, model.height)
+        self.band_x = model.band_extents(coefficients)
         self.rays = row_rays(model, coefficients)
         super().__init__(model.sampler)
         try:
@@ -60,7 +57,7 @@ class GlobalCudaRaster(CudaRaster):
             raise
 
     def candidate_bands(self, xs):
-        return [i for i, (lo, hi) in enumerate(self.sampler.band_x)
+        return [i for i, (lo, hi) in enumerate(self.band_x)
                 if hi+self.margin >= xs[0] and lo-self.margin <= xs[-1]]
 
     def describe(self):
@@ -81,7 +78,7 @@ class GlobalCudaRaster(CudaRaster):
                 raise ValueError('shared radial depth must match the CUDA output tile')
             self.check(self.lib.ssb_unroll_global_depth(self.handle, pointer(depth)))
         for band in (self.candidate_bands(xs) if bands is None else bands):
-            lo, hi = self.sampler.band_x[band]
+            lo, hi = self.band_x[band]
             left = int(np.searchsorted(xs, lo-self.margin))
             right = int(np.searchsorted(xs, hi+self.margin, side='right'))
             if right <= left:
