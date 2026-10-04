@@ -30,9 +30,11 @@ class GeometrySettings:
     translation_curvature_mm: float = .5
     translation_bound_mm: float = 5.
     observed_knots: bool = False
+    adaptive_attitude: bool = False
 
     def validate(self):
-        numbers = [v for k, v in vars(self).items() if k not in ('max_irls', 'fit_translation', 'fit_heave', 'observed_knots')]
+        switches = ('fit_translation', 'fit_heave', 'observed_knots', 'adaptive_attitude')
+        numbers = [v for k, v in vars(self).items() if k not in ('max_irls', *switches)]
         if not all(math.isfinite(v) and v > 0 for v in numbers):
             raise ValueError('positive finite optimization settings required')
         if not .01 <= self.attitude_spacing_m <= .6:
@@ -51,6 +53,10 @@ class GeometrySettings:
             raise ValueError('dynamic translation prior/bounds exceed the supported small-motion model')
         if not isinstance(self.observed_knots, bool):
             raise ValueError('observed_knots must be Boolean')
+        if not isinstance(self.adaptive_attitude, bool):
+            raise ValueError('adaptive_attitude must be Boolean')
+        if self.adaptive_attitude and (not self.observed_knots or self.fit_translation or self.fit_heave):
+            raise ValueError('adaptive attitude requires the four-field observed-knot model')
 
 
 def spline_knots(lower, upper, spacing):

@@ -46,7 +46,7 @@ def stage(unroll, observable, public, raw_root=None):
 
 
 def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
-        settings=GeometrySettings(attitude_spacing_m=.02, observed_knots=True)):
+        settings=GeometrySettings(attitude_spacing_m=.02, observed_knots=True), height=512, max_q_shift_mm=None):
     started = time.monotonic()
     workers = resolve_workers(workers)
     root = Path(root).resolve()
@@ -59,7 +59,7 @@ def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
     staged_s = time.monotonic()-started
     reads = set()
     audit = public_audit.install(record/'public', raw, reads, recorded=[matches, fit])
-    d2 = match(d1, matches, spacing_m, 512, 1024, MatchSettings(), .25, raw, workers)
+    d2 = match(d1, matches, spacing_m, height, 1024, MatchSettings(max_q_shift_mm=max_q_shift_mm), .25, raw, workers)
     if d2['status'] == 'unmeasurable':
         raise ValueError('D2 found no usable matches')
     d3 = optimize(d1, matches, config, fit, settings, raw)
@@ -85,10 +85,15 @@ def main():
     parser.add_argument('--raw', help='relocated public raw directory of the source capture (hash-checked)')
     parser.add_argument('--workers', type=int, help='default min(8, available CPUs)')
     parser.add_argument('--spacing-m', type=float, default=.2)
+    parser.add_argument('--height', type=int, default=512, help='matching window height; 256 with 0.1 m spacing keeps angular gaps')
+    parser.add_argument('--max-q-shift-mm', type=float, help='explicit circumferential search prior; otherwise inherits 40 mm axial prior')
     parser.add_argument('--attitude-spacing-m', type=float, default=.02)
+    parser.add_argument('--adaptive-attitude', action='store_true',
+                        help='training-only bounded local refinement; use --spacing-m .1 for finer supported nodes')
     args = parser.parse_args()
     report = run(args.unroll, args.observable, args.root, args.raw, args.workers, args.spacing_m,
-                 GeometrySettings(attitude_spacing_m=args.attitude_spacing_m, observed_knots=True))
+                 GeometrySettings(attitude_spacing_m=args.attitude_spacing_m, observed_knots=True,
+                                  adaptive_attitude=args.adaptive_attitude), args.height, args.max_q_shift_mm)
     print(json.dumps({k: report[k] for k in ('status', 'public_raw_blocks', 'd2', 'd3', 'performance')}))
 
 

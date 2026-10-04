@@ -73,7 +73,8 @@ def test_missing_or_incomplete_stage_b_evidence_is_rejected(tmp_path, change):
 
 
 @pytest.mark.parametrize('start,length,valid', [(12., 3., True), (19., 3., False), (12., .5, False)])
-def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp_path, monkeypatch, nominal, start, length, valid):
+@pytest.mark.parametrize('spacing,adaptive,height', [(.2, False, 512), (.1, True, 256)])
+def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp_path, monkeypatch, nominal, start, length, valid, spacing, adaptive, height):
     import ssb_tools.holdout_protocol as module
     config, calibration = nominal
     demo = tmp_path/'demo'
@@ -92,18 +93,24 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
     monkeypatch.setattr(module, 'check_calibration', lambda *a: 'measured-rig')
     output = tmp_path/'evaluation/protocol.json'
     if valid:
-        record = module.declare(tmp_path, demo, output, start, length)
+        record = module.declare(tmp_path, demo, output, start, length, spacing, adaptive, height,
+                                10. if adaptive else None)
         assert record['holdout_roi_m'] == [12., 15.]
         assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance',
                                                'stage_b_report_hash_valid', 'public_only_production_run']
-        assert record['schema'] == 'ssb.d3_holdout_protocol.v5'
+        assert record['schema'] == 'ssb.d3_holdout_protocol.v6'
+        assert record['d2']['spacing_m'] == spacing
+        assert record['d2']['height'] == height
+        assert record['d2']['settings']['max_q_shift_mm'] == (10. if adaptive else None)
+        assert record['sampling']['spacing_q_m'] == spacing
+        assert record['d3']['adaptive_attitude'] is adaptive
         assert record['code_commit'] == 'frozen' and output.exists()
         assert record['sampling']['schema'] == 'ssb.public_common_overlap.v2'
         assert record['sampling']['exact_plan_saved_before_truth'] is True
         assert any(name.endswith('evaluate_global_geometry.py') for name in record['production_sources'])
     else:
         with pytest.raises(ValueError):
-            module.declare(tmp_path, demo, output, start, length)
+            module.declare(tmp_path, demo, output, start, length, spacing, adaptive, height)
         assert not output.exists()
 
 
@@ -140,3 +147,40 @@ def test_scored_products_must_be_those_of_the_audited_public_run(tmp_path, chang
         (tmp_path/'public_run/report.json').write_text(json.dumps(report))
         if change == 'legacy': assert public_run_valid(tmp_path, strong=False)
     assert public_run_valid(tmp_path) is (change is None)
+
+
+@pytest.mark.parametrize('change', [None, 'spacing_m', 'height', 'max_width', 'halo_m', 'missing'])
+def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_path, monkeypatch, change):
+    import ssb_tools.holdout_protocol as module
+    root = tmp_path/'run'
+    source = dict(git_head='frozen', git_dirty=False)
+    planning = dict(spacing_m=.1, height=512, max_width=1024, halo_m=.25)
+    sampling = dict(schema=module.SAMPLING_SCHEMA, spacing_q_m=.1, phase_fractions=[.25, .75],
+        samples_across=9, column_guard_pixels=2, original_nominal_probes_retained=True,
+        outside_target_requires_observed_common_interval=True, angular_gaps_not_trimmed=True,
+        exact_plan_saved_before_truth=True)
+    protocol = dict(schema='ssb.d3_holdout_protocol.v6', code_commit='frozen', holdout_roi_m=[12.,15.],
+        d2=dict(planning, settings={}), d3=dict(adaptive_attitude=True), sampling=sampling)
+    marker = tmp_path/'marker'; marker.write_text('unchanged input and source')
+    protocol['input_hashes'] = protocol['production_sources'] = {str(marker): sha256_file(marker)}
+    for name in ('unroll', 'matches', 'fit'):
+        (root/name).mkdir(parents=True)
+        (root/name/'provenance.json').write_text(json.dumps(dict(source=source)))
+    (root/'unroll/report.json').write_text(json.dumps(dict(grid=dict(target_x_m=[12.,15.]))))
+    report = dict(settings={}, planning=planning.copy())
+    if change == 'missing': report.pop('planning')
+    elif change is not None: report['planning'][change] *= 2
+    (root/'matches/report.json').write_text(json.dumps(report))
+    (root/'fit/report.json').write_text(json.dumps(dict(settings=protocol['d3'])))
+    (root/'capture/config').mkdir(parents=True)
+    (root/'capture/config/provenance.json').write_text(json.dumps(dict(source_at_run=source)))
+    protocol_file = tmp_path/'evaluation/protocol.json'; protocol_file.parent.mkdir()
+    protocol_file.write_text(json.dumps(protocol))
+    # Other identity checks have their own tests above; exercise the actual
+    # verifier here, so a planning check omitted from it cannot silently pass.
+    monkeypatch.setattr(module, 'Session', lambda path: SimpleNamespace(root=path, summary=dict(status='complete')))
+    monkeypatch.setattr(module, 'capture_checks', lambda *a, **k: dict(binary_matches_source=True))
+    monkeypatch.setattr(module, 'public_run_valid', lambda *a, **k: True)
+    result = module.verify(protocol_file, root, tmp_path/'evaluation/verification.json')
+    assert result['checks']['d2_planning_unchanged'] is (change is None)
+    assert result['status'] == ('pass' if change is None else 'fail')

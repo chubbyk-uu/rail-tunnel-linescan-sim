@@ -51,6 +51,19 @@ bash tools/with_optix_runtime.sh python3 tools/test_distance_stop.py \
 
 ## 单独运行重建与评价
 
+81 mm 缺口的公开输入诊断和候选对照保留在 `sessions/wheel_model_study_20261004/`。升沉、位置节点加密与局部亮度归一化没有足够改善，不替换正式方法。0.1 m 匹配、训练残差驱动的单次局部姿态加密，在初步 512 行窗口对照中将留出 P99 从 1.318 降至 0.960 px。为保留窗口间角向留出，最终候选改为 256 行、周向搜索 10 mm：在同一组对应点上，加密前/后的留出 P99 为 1.322 / 1.075 px，最大值 4.532 / 2.575 px，系数 314 / 374；均为公开开发数据的图像诊断，不是新场景接缝验收。规则见 [STAGE_D](STAGE_D.md)，冻结后以新轨道种子 20261009、[12,15] m、真实 81 mm / 标定 80 mm 开展独立采集验证，原 1.015 px 失败记录不覆盖。
+
+新场景的完整验证入口（先生成对应轮径与轨道世界，再导出可迁移资产包）：
+
+```bash
+SSB_D2_SPACING_M=.1 SSB_D2_HEIGHT=256 SSB_D2_Q_SHIFT_MM=10 SSB_ADAPTIVE_ATTITUDE=1 \
+  bash tools/run_d3_holdout.sh sessions/wheel81_holdout_NEW \
+  local_data/evaluation/wheel81_holdout_NEW 12 3 \
+  local_data/stage_b/wheel81_seed20261009_bundle
+```
+
+入口重新构建，再声明协议、采集、独立重成像、阶段 B 验收和公共输入重建，最后作真实网格评价。协议 v6 增加匹配窗口规划核对，防止只冻结匹配器阈值却漏掉窗口间距、尺寸和余量；新协议共 15 项，历史 v5 报告保持原义。
+
 ```bash
 # 已完成 --capture 后，以 81 mm 档为例；三档保持相同参数。
 bash tools/with_optix_runtime.sh bash -c '

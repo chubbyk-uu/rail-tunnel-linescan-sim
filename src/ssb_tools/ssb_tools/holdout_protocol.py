@@ -23,7 +23,7 @@ def evaluation_path(path):
     return path
 
 
-def declare(workspace, demo, output, start, length):
+def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attitude=False, height=512, max_q_shift_mm=None):
     workspace, demo, output = Path(workspace).resolve(), Path(demo).resolve(), evaluation_path(output)
     state = subprocess.check_output(['sh', str(workspace/'src/ssb_core/cmake/source_state.sh'),
                                      str(workspace)], text=True).split()
@@ -35,17 +35,24 @@ def declare(workspace, demo, output, start, length):
     config = yaml.safe_load((demo/'capture.yaml').read_text())
     wall_plan(config, start, length, read_json(demo/'calibration.json'))
     check_calibration(demo/'capture.yaml', demo/'calibration.json')
-    settings = GeometrySettings(attitude_spacing_m=.02, observed_knots=True)
+    settings = GeometrySettings(attitude_spacing_m=.02, observed_knots=True,
+                                adaptive_attitude=adaptive_attitude)
+    settings.validate()
+    if not isinstance(spacing_m, (int, float)) or not 0 < spacing_m <= .4:
+        raise ValueError('holdout matching spacing must be positive and at most 0.4 m')
+    if type(height) is not int or height not in (256, 512):
+        raise ValueError('holdout matching height must be 256 or 512 pixels')
+    match_settings = MatchSettings(max_q_shift_mm=max_q_shift_mm)
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
                ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py',
                 'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
                 'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py',
                 'validate_stage_b.py', 'validate_stage_a.py', 'ref_geometry.py', 'session.py')]
-    record = dict(schema='ssb.d3_holdout_protocol.v5',
+    record = dict(schema='ssb.d3_holdout_protocol.v6',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
-        d2=dict(spacing_m=.2, height=512, max_width=1024, halo_m=.25, settings=asdict(MatchSettings())),
-        d3=asdict(settings), sampling=dict(schema=SAMPLING_SCHEMA, spacing_q_m=.2,
+        d2=dict(spacing_m=spacing_m, height=height, max_width=1024, halo_m=.25, settings=asdict(match_settings)),
+        d3=asdict(settings), sampling=dict(schema=SAMPLING_SCHEMA, spacing_q_m=spacing_m,
             phase_fractions=[.25, .75], samples_across=9, column_guard_pixels=2,
             original_nominal_probes_retained=True, angular_gaps_not_trimmed=True,
             outside_target_requires_observed_common_interval=True,
@@ -137,17 +144,22 @@ def verify(protocol_file, root, output):
         holdout_roi_correct=read_json(root/'unroll/report.json')['grid']['target_x_m'] == protocol['holdout_roi_m'],
         input_hashes_unchanged=hashes_match(protocol['input_hashes']),
         production_sources_unchanged=hashes_match(protocol['production_sources']))
-    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5'):
+    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v6':
+        checks['d2_planning_unchanged'] = read_json(root/'matches/report.json').get('planning') == {
+            k: protocol['d2'][k] for k in ('spacing_m', 'height', 'max_width', 'halo_m')}
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6'):
         checks['public_only_production_run'] = public_run_valid(root,
-            strong=protocol['schema'] == 'ssb.d3_holdout_protocol.v5')
+            strong=protocol['schema'] != 'ssb.d3_holdout_protocol.v4')
     else:
         checks['public_replay_identical'] = read_json(root/'public_replay/report.json').get(
             'geometry_and_residuals_identical') is True
     checks.update(capture_checks(session, protocol['code_commit'],
-        require_report_identity=protocol.get('schema') == 'ssb.d3_holdout_protocol.v5'))
-    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v3', 'ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5'):
+        require_report_identity=protocol.get('schema') in ('ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6')))
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v3', 'ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6'):
         checks['sampling_protocol_unchanged'] = protocol['sampling'] == dict(
-            schema=SAMPLING_SCHEMA, spacing_q_m=.2, phase_fractions=[.25, .75], samples_across=9,
+            schema=SAMPLING_SCHEMA, spacing_q_m=(protocol['d2']['spacing_m']
+                if protocol.get('schema') == 'ssb.d3_holdout_protocol.v6' else .2),
+            phase_fractions=[.25, .75], samples_across=9,
             column_guard_pixels=2, original_nominal_probes_retained=True,
             outside_target_requires_observed_common_interval=True,
             angular_gaps_not_trimmed=True, exact_plan_saved_before_truth=True)
@@ -156,7 +168,7 @@ def verify(protocol_file, root, output):
         checks=checks, protocol_sha256=sha256_file(protocol_file),
         capture_build=provenance.get('build'), capture_source_at_run=source,
         interpretation='unchanged C++ code is explanatory evidence, not an exemption from build identity')
-    if protocol.get('schema') == 'ssb.d3_holdout_protocol.v5':
+    if protocol.get('schema') in ('ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6'):
         from .validate_stage_b import identity_path
         report_file = session.root/'evaluation/reports/stage_b_smoke.json'
         identity_file = identity_path(report_file)
@@ -175,12 +187,17 @@ def main():
         declaration.add_argument('--'+name, required=True)
     declaration.add_argument('--start', type=float, required=True)
     declaration.add_argument('--length', type=float, required=True)
+    declaration.add_argument('--spacing-m', type=float, default=.2)
+    declaration.add_argument('--height', type=int, default=512)
+    declaration.add_argument('--max-q-shift-mm', type=float)
+    declaration.add_argument('--adaptive-attitude', action='store_true')
     verification = sub.add_parser('verify')
     for name in ('protocol', 'root', 'output'):
         verification.add_argument('--'+name, required=True)
     args = parser.parse_args()
     if args.action == 'declare':
-        declare(args.workspace, args.demo, args.output, args.start, args.length)
+        declare(args.workspace, args.demo, args.output, args.start, args.length,
+                args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm)
         return 0
     report = verify(args.protocol, args.root, args.output)
     print(json.dumps(report))

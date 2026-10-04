@@ -215,6 +215,7 @@ def test_d2_hash_chain_and_d1_identity_are_checked(tmp_path, kind):
 
 @pytest.mark.parametrize('settings', [GeometrySettings(attitude_spacing_m=.1),
     GeometrySettings(attitude_spacing_m=.1, observed_knots=True),
+    GeometrySettings(attitude_spacing_m=.1, observed_knots=True, adaptive_attitude=True),
     GeometrySettings(attitude_spacing_m=.1, fit_translation=True),
     GeometrySettings(attitude_spacing_m=.1, fit_heave=True)])
 def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_chain(tmp_path, settings):
@@ -232,6 +233,9 @@ def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_cha
     before = {str(p): sha256_file(p) for folder in (d1, d2) for p in folder.iterdir()}
     report = run(d1, d2, observable, output, settings)
     assert report['status'] == 'complete' and report['bands'] == 2
+    if settings.adaptive_attitude:
+        assert report['attitude_refinement']['training_only'] is True
+        assert report['attitude_refinement']['after_coefficients'] == report['coefficients']
     assert report['image_consistency']['heldout_after']['norm_px']['p95'] < .5
     assert not (tmp_path/'evaluation').exists()
     provenance = json.loads((output/'provenance.json').read_text())

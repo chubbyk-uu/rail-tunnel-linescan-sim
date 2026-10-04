@@ -13,6 +13,7 @@ from .matching_structures import (long_dark_mask, masked_coarse_shift, unsafe_st
 @dataclass(frozen=True)
 class MatchSettings:
     max_shift_mm: float = 40.
+    max_q_shift_mm: float | None = None  # None keeps the historical equal-axis search.
     coarse_factor: int = 4
     min_texture_dn: float = .8
     min_coarse_ncc: float = .30
@@ -30,6 +31,10 @@ class MatchSettings:
         values = [self.max_shift_mm, self.min_texture_dn, self.min_coarse_ncc,
                   self.min_peak_gap, self.max_fb_px, self.min_patch_ncc,
                   self.ransac_px, self.max_jacobian_change, self.max_holdout_p95_px]
+        if self.max_q_shift_mm is not None:
+            values.append(self.max_q_shift_mm)
+            if self.max_q_shift_mm <= 0:
+                raise ValueError('positive circumferential shift prior required')
         if (type(self.exclude_long_structures) is not bool or not np.isfinite(values).all() or self.max_shift_mm <= 0 or self.min_texture_dn < 0 or
             not -1 <= self.min_coarse_ncc <= 1 or not 0 < self.min_peak_gap <= 2 or
             not -1 <= self.min_patch_ncc <= 1 or min(self.max_fb_px, self.ransac_px, self.max_holdout_p95_px) <= 0 or
@@ -56,9 +61,11 @@ def coarse_shift(a, b, valid_a, valid_b, max_shift, settings):
         highpass = image-cv2.GaussianBlur(image, (0, 0), 4.)
         highpass[~cv2.erode(valid.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)] = 0
         images.append(cv2.resize(highpass, shape, interpolation=cv2.INTER_AREA))
-    margin = int(np.ceil(max_shift/factor))+2
-    if min(shape)-2*margin < 16: return None, dict(reason='search range exceeds window support')
-    template = images[0][margin:-margin, margin:-margin]
+    margin = np.ceil(np.broadcast_to(max_shift, (2,))/factor).astype(int)+2
+    if np.any(np.asarray(shape)-2*margin < 16):
+        return None, dict(reason='search range exceeds window support')
+    mx, my = margin
+    template = images[0][my:-my, mx:-mx]
     if np.std(template) < .2: return None, dict(reason='weak coarse texture')
     response = cv2.matchTemplate(images[1], template, cv2.TM_CCOEFF_NORMED)
     _, peak, _, position = cv2.minMaxLoc(response)
@@ -70,7 +77,7 @@ def coarse_shift(a, b, valid_a, valid_b, max_shift, settings):
     if peak < settings.min_coarse_ncc or peak-second < settings.min_peak_gap:
         return None, dict(diagnostic, reason='weak or ambiguous coarse peak')
     shift = (np.asarray(position, float)-margin)*factor
-    if np.max(abs(shift)) > max_shift: return None, dict(diagnostic, reason='coarse shift exceeds prior')
+    if np.any(abs(shift) > max_shift): return None, dict(diagnostic, reason='coarse shift exceeds prior')
     return shift, diagnostic
 
 
@@ -125,10 +132,12 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
             min(np.std(a[valid_a]), np.std(b[valid_b])) < settings.min_texture_dn):
         return rejected('weak nonstructure background', structure_masks=structure_reports)
     image_a, image_b = matching_image(a, valid_a), matching_image(b, valid_b)
-    max_shift = settings.max_shift_mm/(1000*pitch_m)
+    max_shift = np.array([settings.max_shift_mm, settings.max_q_shift_mm
+        if settings.max_q_shift_mm is not None else settings.max_shift_mm])/(1000*pitch_m)
     shift, diagnostic = (masked_coarse_shift if structured else coarse_shift)(
         image_a, image_b, valid_a, valid_b, max_shift, settings)
-    diagnostic.update(structure_masks=structure_reports, structure_lk_radius_px=LK_STRUCTURE_RADIUS)
+    diagnostic.update(structure_masks=structure_reports, structure_lk_radius_px=LK_STRUCTURE_RADIUS,
+                      search_limit_xq_px=max_shift.tolist())
     if shift is None: return rejected(**diagnostic)
     feature_mask = cv2.erode(valid_a.astype(np.uint8), np.ones((25, 25), np.uint8))
     feature_mask[:16] = 0; feature_mask[-16:] = 0; feature_mask[:, :16] = 0; feature_mask[:, -16:] = 0
@@ -152,7 +161,7 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
     fb = np.linalg.norm(reverse[:, 0]-pa, axis=1)
     usable = reverse_ok[:, 0].astype(bool)
     usable &= np.isfinite(pb).all(axis=1) & (fb <= settings.max_fb_px)
-    usable &= np.max(abs(pb-pa), axis=1) <= max_shift
+    usable &= np.all(abs(pb-pa) <= max_shift, axis=1)
     if structured:
         usable &= safe_structure_points(unsafe_structure_footprint(joint_b), pb)
     pa, pb, fb = pa[usable], pb[usable], fb[usable]
@@ -190,7 +199,7 @@ def match_window(a, b, valid_a, valid_b, pitch_m, settings=MatchSettings()):
         return rejected('independent holdout or inlier support failed', **diagnostic)
     centre = np.array([(a.shape[1]-1)/2, (a.shape[0]-1)/2])
     centre_shift = affine[:, :2]@centre+affine[:, 2]-centre
-    if np.max(abs(centre_shift)) > max_shift: return rejected('affine shift exceeds prior', **diagnostic)
+    if np.any(abs(centre_shift) > max_shift): return rejected('affine shift exceeds prior', **diagnostic)
     diagnostic.update(status='accepted', candidates=len(pa), inliers=int(inlier.sum()),
         heldout=len(held), holdout_p95_px=float(np.percentile(held, 95)),
         nominal_displacement_p95_px=float(np.percentile(np.linalg.norm(pb-pa, axis=1), 95)),

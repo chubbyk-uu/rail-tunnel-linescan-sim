@@ -368,6 +368,68 @@ def fit(model, table, grid):
     return coefficients, scores, descriptions, history, before, after, evidence
 
 
+def refine_attitude_knots(model, table, residual_m, grid, minimum_step_m):
+    """One bounded refinement from coherent TRAINING residuals, never holdout/truth.
+
+    Split a supported interval only when both halves have at least two independent
+    accepted windows. Keep the observation-spacing guard and the 2048 coefficient
+    cap; rank scarce knots by training median error and report unallocated nodes.
+    Position knots, raw pixels and geometry acceptance samples are unchanged.
+    """
+    train = table['inlier'].astype(bool) & ~table['holdout'].astype(bool)
+    residual = np.asarray(residual_m) / [grid['dx_m'], grid['dq_m']]
+    if (residual.shape != (len(table), 2) or not np.isfinite(residual[train]).all()
+            or not np.isfinite(minimum_step_m) or minimum_step_m <= 0):
+        raise ValueError('finite training residuals and positive observation spacing required')
+    threshold = SEAM_P95_PX / 2
+    centres, bad = {}, []
+    p = model.sampler.projection
+    for window in np.unique(table['window'][train]):
+        ids = np.flatnonzero(train & (table['window'] == window))
+        axes = []
+        for side in ('a', 'b'):
+            sequences = table[side+'_lower_sequence'][ids]
+            rows = np.searchsorted(p['sequence'], sequences)
+            if np.any(rows >= len(p)) or not np.array_equal(p['sequence'][rows], sequences):
+                raise ValueError('refinement source exposure missing from D1')
+            axes.append(float(np.median(p['x_axis_m'][rows])))
+        centres[int(window)] = axes
+        score = float(np.linalg.norm(np.median(residual[ids], axis=0)))
+        if score > threshold:
+            bad.append((score, int(window)))
+    if not np.array_equal(model.knots[2], model.knots[3]):
+        raise ValueError('paired attitude knots required for refinement')
+    breaks = np.unique(model.knots[2])
+    candidates = {}
+    for score, window in bad:
+        for axis in centres[window]:
+            index = int(np.searchsorted(breaks, axis, side='right')-1)
+            if not 0 <= index < len(breaks)-1:
+                continue
+            left, right = breaks[index:index+2]
+            mid = (left+right)/2
+            if min(mid-left, right-mid) < minimum_step_m:
+                continue
+            counts = [sum(any(lo <= x < hi for x in axes) for axes in centres.values())
+                      for lo, hi in ((left, mid), (mid, right))]
+            if min(counts) < 2:
+                continue
+            candidates[mid] = max(candidates.get(mid, 0.), score)
+    capacity = max(0, (2048-model.size)//2)
+    priority = sorted(candidates, key=lambda x: (-candidates[x], x))
+    selected = priority[:capacity]
+    knots = [k.copy() for k in model.knots]
+    for field in (2, 3):
+        knots[field] = np.sort(np.r_[knots[field], selected])
+    report = dict(model='training_median_attitude_split_v1', passes=1, training_only=True,
+        trigger_median_px=threshold, minimum_child_step_m=float(minimum_step_m),
+        windows_per_child=2, triggered_windows=[w for _, w in bad],
+        inserted_progress_m=sorted(selected), candidate_nodes=len(priority),
+        budget_deferred_progress_m=sorted(priority[capacity:]), coefficient_limit=2048,
+        before_coefficients=model.size, after_coefficients=model.size+2*len(selected))
+    return knots, report
+
+
 def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_root=None):
     started = time.monotonic()
     settings.validate()
@@ -390,6 +452,14 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
         model = Trajectory(sampler, upstream['grid']['radius_m'], height, settings)
         check_s = time.monotonic()-started
         coefficients, scores, noise, history, before, after, evidence = fit(model, table, upstream['grid'])
+        refinement = None
+        if settings.adaptive_attitude:
+            knots, refinement = refine_attitude_knots(model, table, after, upstream['grid'],
+                                                      2*spacing*progress_per_q)
+            refinement['initial_image_consistency'] = scores
+            if refinement['after_coefficients'] > model.size:
+                model = Trajectory(sampler, upstream['grid']['radius_m'], height, settings, knots)
+                coefficients, scores, noise, history, before, after, evidence = fit(model, table, upstream['grid'])
         output.mkdir(parents=True, exist_ok=False)
         (output/'trajectory.json').write_text(json.dumps(model.serialize(coefficients), indent=2)+'\n')
         np.savez(output/'match_residuals.npz', before_m=before, after_m=after,
@@ -428,6 +498,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                  if extended else 'yaw, lateral motion, heave, mounting errors and wheel scale are not independently fitted in this first model'),
                 'no seam blending and no noisy-image robustness acceptance yet'],
             performance=dict(input_check_s=check_s, wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
+        if refinement is not None:
+            report['attitude_refinement'] = refinement
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
         provenance = stage_record('global_optimization', inputs+match_inputs+[observable_path], sorted(output.iterdir()),
                                   dict(settings=asdict(settings)))
@@ -445,13 +517,15 @@ def main():
     parser.add_argument('--raw', help='relocated public raw directory')
     parser.add_argument('--attitude-spacing-m', type=float, default=.05)
     parser.add_argument('--observed-knots', action='store_true', help='fine pose knots only in recorded exposure spans')
+    parser.add_argument('--adaptive-attitude', action='store_true', help='one training-only, observation-supported local attitude refinement')
     translation = parser.add_mutually_exclusive_group()
     translation.add_argument('--fit-translation', action='store_true', help='image-derived continuous lateral/heave corrections; no pose truth')
     translation.add_argument('--fit-heave', action='store_true', help='image-derived continuous vertical correction only; no pose truth')
     args = parser.parse_args()
     report = run(args.unroll, args.matches, args.observable, args.output,
                  GeometrySettings(attitude_spacing_m=args.attitude_spacing_m, fit_translation=args.fit_translation,
-                                  fit_heave=args.fit_heave, observed_knots=args.observed_knots), args.raw)
+                                  fit_heave=args.fit_heave, observed_knots=args.observed_knots,
+                                  adaptive_attitude=args.adaptive_attitude), args.raw)
     print(json.dumps({k: report[k] for k in ('status', 'coefficients', 'image_consistency', 'performance')}))
 
 

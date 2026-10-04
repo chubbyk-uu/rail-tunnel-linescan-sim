@@ -94,6 +94,42 @@ def test_invalid_window_settings_are_rejected():
     with pytest.raises(ValueError): MatchSettings(max_shift_mm=float('nan'))
 
 
+@pytest.mark.parametrize('recessed', [False, True])
+def test_short_windows_keep_large_axial_search_with_explicit_smaller_angular_prior(recessed):
+    a = texture(seed=31, shape=(256, 1024))
+    if recessed:
+        a[:, 470:550] = 75+(a[:, 470:550]-135)*.5
+    affine = np.array([[1., 0., 103.3], [0., 1., -7.6]])
+    b = cv2.warpAffine(a, affine, (1024, 256), flags=cv2.INTER_LINEAR)*1.08+3
+    valid = np.ones(a.shape, bool)
+    mb = cv2.warpAffine(valid.astype(np.uint8), affine, (1024, 256), flags=cv2.INTER_NEAREST).astype(bool)
+    unsupported, _ = match_window(a, b, valid, mb, .0002)
+    assert unsupported['status'] == 'unmeasurable'
+    assert unsupported['reason'] == 'search range exceeds window support'
+    report, matches = match_window(a, b, valid, mb, .0002, MatchSettings(max_q_shift_mm=10.))
+    assert report['status'] == 'accepted', report
+    assert report['search_limit_xq_px'] == [200., 50.]
+    good = matches['inlier']
+    expected = matches['points_a'][good]@affine[:, :2].T+affine[:, 2]
+    assert np.percentile(np.linalg.norm(expected-matches['points_b'][good], axis=1),95) < .35
+
+
+def test_separate_angular_prior_is_enforced_even_when_axial_search_allows_the_shift():
+    a = texture(seed=17, shape=(512, 1024))
+    affine = np.array([[1., 0., 11.3], [0., 1., 45.]])
+    b = cv2.warpAffine(a, affine, (1024, 512), flags=cv2.INTER_LINEAR)
+    valid = np.ones(a.shape, bool)
+    mb = cv2.warpAffine(valid.astype(np.uint8), affine, (1024, 512), flags=cv2.INTER_NEAREST).astype(bool)
+    report, matches = match_window(a, b, valid, mb, .0002, MatchSettings(max_q_shift_mm=8.))
+    assert report['status'] == 'unmeasurable' and not len(matches['points_a'])
+
+
+@pytest.mark.parametrize('limit', [0., -1., np.nan, np.inf])
+def test_invalid_separate_angular_prior_is_rejected(limit):
+    with pytest.raises(ValueError):
+        MatchSettings(max_q_shift_mm=limit)
+
+
 def test_holdout_residual_failure_is_distinguished_from_insufficient_points():
     a = texture(shape=(512, 768))
     affine = np.array([[1., 0., 11.3], [0., 1., -7.6]])

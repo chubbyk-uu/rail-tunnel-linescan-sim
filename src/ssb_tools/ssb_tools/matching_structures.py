@@ -106,10 +106,11 @@ def masked_coarse_shift(a, b, valid_a, valid_b, max_shift, settings):
         interior = cv2.erode(weight, np.ones((9, 9), np.uint8))
         images.append(cv2.resize((image-local)*interior, shape, interpolation=cv2.INTER_AREA))
         masks.append((cv2.resize(interior, shape, interpolation=cv2.INTER_AREA) >= 1-1e-6).astype(np.float32))
-    margin = int(np.ceil(max_shift/factor))+2
-    if min(shape)-2*margin < 16:
+    margin = np.ceil(np.broadcast_to(max_shift, (2,))/factor).astype(int)+2
+    if np.any(np.asarray(shape)-2*margin < 16):
         return None, dict(reason='search range exceeds window support')
-    template, tm = images[0][margin:-margin, margin:-margin], masks[0][margin:-margin, margin:-margin]
+    mx, my = margin
+    template, tm = images[0][my:-my, mx:-mx], masks[0][my:-my, mx:-mx]
     search, sm = images[1], masks[1]
     if tm.sum() < 256 or np.std(template[tm.astype(bool)]) < .2:
         return None, dict(reason='weak masked coarse texture or support')
@@ -135,6 +136,6 @@ def masked_coarse_shift(a, b, valid_a, valid_b, max_shift, settings):
     if peak < settings.min_coarse_ncc or peak-second < settings.min_peak_gap:
         return None, dict(diagnostic, reason='weak or ambiguous coarse peak')
     shift = (np.asarray(position, float)-margin)*factor
-    if np.max(abs(shift)) > max_shift:
+    if np.any(abs(shift) > max_shift):
         return None, dict(diagnostic, reason='coarse shift exceeds prior')
     return shift, diagnostic

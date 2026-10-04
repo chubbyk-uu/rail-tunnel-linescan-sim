@@ -301,6 +301,7 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
     report = dict(schema='ssb.band_matches.v1', stage='D2',
         status=('unmeasurable' if not accepted else 'partial' if len(components) > 1 else 'complete'),
         upstream_grid=grid, settings=asdict(settings), optical_signature=upstream['optical_signature'],
+        planning=dict(spacing_m=spacing_m, height=height, max_width=max_width, halo_m=halo_m),
         structure_model=dict(**STRUCTURE_MODEL, lk_radius_px=LK_STRUCTURE_RADIUS,
             scope='image-derived matching exclusion only; raw/geometry/evaluation masks unchanged'),
         source_observation_hashes=upstream['source_observation_hashes'],
