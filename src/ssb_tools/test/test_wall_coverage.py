@@ -19,6 +19,7 @@ def nominal():
     config = dict(camera=dict(width=width, fov_at_nominal_m=fov, nominal_distance_m=2.75,
                               optical_signature='measured-rig'),
                   tunnel=dict(x_min_m=-1.5, x_max_m=21.5),
+                  robot=dict(scan_axis_height_m=1.715),
                   mission=dict(inspection_x_m=[0.,20.],vehicle_half_length_m=.56,safety_margin_m=.09,minimum_distance_m=1.),
                   motion=dict(start_x_m=3., start_theta_deg=180., advance_per_rev_m=.6,
                               line_rate_hz=10000*128/15/3),
@@ -95,6 +96,32 @@ def test_wall_plan_ignores_private_truth_and_rejects_bad_margins(nominal):
     with pytest.raises(ValueError, match='margin'): wall_plan(config, 0., 20., calibration)
     config['camera']['nominal_distance_m'] *= 2
     with pytest.raises(ValueError, match='narrow'): wall_plan(config, 3., 3., calibration)
+
+
+@pytest.mark.parametrize('start,length', [(0., 1.), (3., 3.), (0., 20.)])
+@pytest.mark.parametrize('phase', [180., -130., 0., 120.])
+def test_partial_first_and_last_turns_have_public_outside_target_proofs(nominal, start, length, phase):
+    from ssb_tools.initial_unroll import BandSampler, PROJECTION
+    from ssb_tools.evaluate_global_geometry import seam_plan
+    config, calibration = nominal; config['motion']['start_theta_deg'] = phase
+    c, task = wall_plan(config, start, length, calibration)
+    # Independent nominal spatial encoder trajectory, with ramps omitted. Use
+    # a coarse analytic row lattice; no rendered pixels or simulated poses.
+    x, theta = nominal_lines(c, task); x, theta = x[::100], theta[::100]
+    projection = np.zeros(len(x), PROJECTION)
+    projection['sequence'] = np.arange(len(x)); projection['lattice_row'] = np.arange(len(x))
+    projection['x_axis_m'] = x
+    projection['theta_rad'] = theta
+    projection['segment'] = np.floor((theta+math.pi)/(2*math.pi)).astype(int)
+    offsets = np.array(task['nominal_usable_span_m'])
+    sampler = BandSampler(projection, np.zeros((len(x), 2), np.float32), offsets, offsets,
+                          np.ones(2, bool), .02)
+    grid = dict(theta_rad=[-2*math.pi/3, 2*math.pi/3], radius_m=2.75,
+                target_x_m=[start, start+length], dx_m=.0002)
+    windows = seam_plan(sampler, grid, .2, task['correction_reach_m'])
+    assert any(w['status'] == 'planned' for w in windows)
+    assert not any(w['status'] == 'unmeasurable' for w in windows)
+    assert task['seam_margin_m'] > task['correction_reach_m']
 
 
 @pytest.mark.parametrize('start,length', [(0., 1.), (3., 3.), (0., 20.)])

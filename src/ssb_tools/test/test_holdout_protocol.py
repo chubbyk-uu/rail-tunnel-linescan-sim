@@ -112,7 +112,7 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
         assert record['sampling']['spacing_q_m'] == spacing
         assert record['d3']['adaptive_attitude'] is adaptive
         assert record['code_commit'] == 'frozen' and output.exists()
-        assert record['sampling']['schema'] == 'ssb.public_common_overlap.v3'
+        assert record['sampling']['schema'] == 'ssb.public_common_overlap.v4'
         assert record['sampling']['exact_plan_saved_before_truth'] is True
         assert any(name.endswith('evaluate_global_geometry.py') for name in record['production_sources'])
     else:
@@ -198,7 +198,7 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
     planning = dict(spacing_m=.1, height=512, max_width=1024, halo_m=.25)
     sampling = dict(schema=module.SAMPLING_SCHEMA, spacing_q_m=.1, phase_fractions=[.25, .75],
         samples_across=9, column_guard_pixels=2, original_nominal_probes_retained=True,
-        outside_target_requires_observed_common_interval=True, angular_gaps_not_trimmed=True,
+        outside_target_requires_public_footprint_proof=True, angular_gaps_not_trimmed=True,
         exact_plan_saved_before_truth=True)
     protocol = dict(schema='ssb.d3_holdout_protocol.v6', code_commit='frozen', holdout_roi_m=[12.,15.],
         d2=dict(planning, settings={}), d3=dict(adaptive_attitude=True), sampling=sampling)

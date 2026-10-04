@@ -26,7 +26,7 @@ from .session import Session, read_json, sha256_file
 from .parallel_budget import resolve_workers
 from .stage_b_scene import peak_rss_bytes
 
-SAMPLING_SCHEMA = 'ssb.public_common_overlap.v3'
+SAMPLING_SCHEMA = 'ssb.public_common_overlap.v4'
 _SHARED = None
 
 
@@ -299,6 +299,30 @@ def verify_session(session, upstream):
             raise ValueError('evaluation archived identity mismatch: '+name)
 
 
+def missing_angle_envelope(sampler, band, angle, radius, reach_margin, usable):
+    """Bound recorded source footprints near a prefix/suffix, not a whole turn.
+
+    Interior gaps retain the full envelope and must fail when inside the target.
+    Edge proofs include all rows reachable under the declared angular correction,
+    plus the closest endpoint when there are none. This creates no missing pixel.
+    """
+    phases = sampler.phases[band]
+    begin, end = sampler.bounds[band]
+    angular = reach_margin/radius+sampler.footprint/2
+    if angle < phases[0]-sampler.footprint/2:
+        stop = max(1, int(np.searchsorted(phases, angle+angular, side='right')))
+        ids = slice(begin, begin+stop); rule = 'recorded_prefix_with_correction_bound'
+    elif angle > phases[-1]+sampler.footprint/2:
+        first = min(len(phases)-1, int(np.searchsorted(phases, angle-angular)))
+        ids = slice(begin+first, end); rule = 'recorded_suffix_with_correction_bound'
+    else:
+        return [sampler.band_x[band][0]-reach_margin,
+                sampler.band_x[band][1]+reach_margin], 'whole_band_internal_gap'
+    axes = sampler.projection['x_axis_m'][ids]
+    return [float(axes.min()+usable[0]-reach_margin),
+            float(axes.max()+usable[-1]+reach_margin)], rule
+
+
 def seam_plan(sampler, grid, spacing_m=.2, reach_margin=0.):
     """Two fixed interleaved lattices, independent of matches, fit and truth.
 
@@ -325,18 +349,23 @@ def seam_plan(sampler, grid, spacing_m=.2, reach_margin=0.):
                     axis = sampler.projection['x_axis_m'][np.r_[lo, hi]]
                     ranges.append((float(axis.max()+usable[0]), float(axis.min()+usable[-1])))
                 if not all(supported_bands):
-                    # Whole-band public footprint envelopes can prove irrelevance,
+                    # Bounded public source envelopes can prove irrelevance,
                     # even when the requested angle has no recorded exposure.
                     # Otherwise retain a fixed diagnostic interval and count its
                     # missing samples; nearest rows never supply valid gap pixels.
-                    envelopes = [(sampler.band_x[k][0]-reach_margin, sampler.band_x[k][1]+reach_margin)
-                                 for k in item['bands']]
+                    witnesses = [missing_angle_envelope(sampler, k, q/grid['radius_m'],
+                                 grid['radius_m'], reach_margin, usable) if not supported else
+                                 ([sampler.band_x[k][0]-reach_margin, sampler.band_x[k][1]+reach_margin],
+                                  'whole_supported_band') for k, supported in zip(item['bands'], supported_bands)]
+                    envelopes = [v[0] for v in witnesses]
                     left = max(grid['target_x_m'][0], *(r[0] for r in envelopes))
                     right = min(grid['target_x_m'][1], *(r[1] for r in envelopes))
                     item['nominal_exposure_supported'] = supported_bands
                     if right <= left:
                         item.update(status='excluded', reason='public band envelopes have no overlap inside target',
-                                    outside_target_band_envelopes=envelopes)
+                                    outside_target_band_envelopes=envelopes,
+                                    outside_target_envelope_rules=[v[1] for v in witnesses],
+                                    correction_reach_m=reach_margin)
                     else:
                         guard = min(2*grid['dx_m'], (right-left)/4)
                         left += guard; right -= guard
@@ -529,7 +558,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         seam_gate = stratum_gate(strata, SEAM_P95_PX)
         controlled_gate = stratum_gate(strata, CONTROLLED_SEAM_P95_PX)
         perimeter_missing = sum(v['missing_pixels'] for v in boundaries['optimized'].values())
-        report = dict(schema='ssb.global_geometry_evaluation.v4', evaluation_only=True, grid=grid,
+        report = dict(schema='ssb.global_geometry_evaluation.v5', evaluation_only=True, grid=grid,
             seam=statistics, seam_strata=strata, windows=per_window, mapping=maps, boundary=boundaries,
             gates=dict(strict_seam=seam_gate, controlled_seam=controlled_gate,
                        perimeter=dict(status='fail' if perimeter_missing else 'pass',

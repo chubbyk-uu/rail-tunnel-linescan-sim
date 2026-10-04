@@ -140,8 +140,17 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     # At most one second ramps, so this upper bound also works for short/faster tasks.
     ramp_margin = speed/2
     mount = config['calibration']['head_mount_x_m']
-    vehicle_start = min(start-pitch-left, start-right)-mount-ramp_margin-guard
-    vehicle_end = max(start+length+pitch-right, start+length-left)-mount+ramp_margin+guard
+    radius = float(config['calibration']['radius_m'])
+    height = float(config['robot']['scan_axis_height_m'])
+    if not math.isfinite(height) or height <= 0:
+        raise ValueError('positive public scan-axis support height required')
+    # Reserve bounded reconstruction motion plus the corresponding encoder
+    # advance. Partial first/last scans must be provably outside the target;
+    # one-band pixel coverage alone is not sufficient for seam acceptance.
+    correction_reach = .03+.04*(radius+height)
+    seam_margin = correction_reach+pitch*correction_reach/(2*math.pi*radius)+2*guard
+    vehicle_start = min(start-pitch-left, start-right)-mount-ramp_margin-guard-seam_margin
+    vehicle_end = max(start+length+pitch-right, start+length-left)-mount+ramp_margin+guard+seam_margin
     c, task = _travel_plan(config, vehicle_start, vehicle_end-vehicle_start, inspection_domain=False)
     gate = config['gate']
     # The requested wall stays fixed in tunnel coordinates even when the head
@@ -158,6 +167,7 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     task.update(mode='wall', target_x_m=[start, start+length], target_length_m=length,
                 capture_gate_deg=[gate['start_deg'], gate['end_deg']], output_arc_deg=arc,
                 nominal_usable_span_m=[left, right], ramp_margin_m=ramp_margin, guard_m=guard,
+                seam_margin_m=seam_margin, correction_reach_m=correction_reach,
                 ramp_policy='all nominal target-intersecting calibrated exposures inside cruise',
                 nominal_row_step_m=row_step*config['calibration']['radius_m'],
                 minimum_row_footprint_m=footprint*config['calibration']['radius_m'],

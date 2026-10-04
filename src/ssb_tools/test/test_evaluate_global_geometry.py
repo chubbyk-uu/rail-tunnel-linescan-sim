@@ -185,6 +185,24 @@ def test_raw_exposure_gap_remains_in_real_mesh_scoring_and_fails_gate():
     assert all(w['status'] == 'excluded' for w in outside)
 
 
+def test_partial_band_proof_uses_all_reachable_recorded_rows_not_a_single_endpoint():
+    from ssb_tools.evaluate_global_geometry import missing_angle_envelope
+    model, *_ = independent_fixture()
+    sampler = model.sampler; usable = sampler.output_offsets
+    reach = .04
+    envelope, rule = missing_angle_envelope(sampler, 0, -.205, 1., reach, usable)
+    assert rule == 'recorded_prefix_with_correction_bound'
+    a, b = sampler.bounds[0]
+    phases = sampler.phases[0]
+    axes = sampler.projection['x_axis_m'][a:b]
+    eligible = phases <= -.205+reach+sampler.footprint/2
+    assert envelope[1] == pytest.approx(axes[eligible].max()+usable[-1]+reach)
+    assert envelope[1] > axes[0]+usable[-1]+reach
+    whole, rule = missing_angle_envelope(sampler, 0, 0., 1., reach, usable)
+    assert rule == 'whole_band_internal_gap'
+    assert whole == [sampler.band_x[0][0]-reach, sampler.band_x[0][1]+reach]
+
+
 def test_drift_removes_translation_but_retains_scale_and_circumferential_shear():
     xs=np.linspace(3.,6.,33);qs=np.linspace(-1.,1.,49)
     xx,qq=np.meshgrid(xs,qs)
