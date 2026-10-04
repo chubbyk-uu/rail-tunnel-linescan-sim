@@ -40,7 +40,7 @@
 | 壁面 | Concrete034 背景、砂浆板缝、0.2–0.6 mm 裂缝 |
 | 误差与噪声 | 默认有轨道起伏；固定安装和轮径偏差尚待端到端验证，噪声默认关闭 |
 
-真实轮径和标定轮径分开配置；当前均为 80 mm。扫描与新任务停车跟随估计里程；轮径试验见 [WHEEL_ERROR](docs/WHEEL_ERROR.md)，扫描轴误差与组合验收见 [后续计划](docs/ROADMAP.md)。暂不加 IMU。
+真实轮径和标定轮径分开配置；默认均为 80 mm；另有 79、81 mm 受控场景。扫描与新任务停车跟随估计里程；轮径试验见 [WHEEL_ERROR](docs/WHEEL_ERROR.md)，扫描轴误差与组合验收见 [后续计划](docs/ROADMAP.md)。暂不加 IMU。
 
 ## 安装：WSL 与原生 Linux 分开选择
 
@@ -144,7 +144,7 @@ python3 tools/run_tests.py > /tmp/ssb_test.log 2>&1
 colcon test-result --all
 ```
 
-当前完整回归 **581 项通过，无失败/跳过**，本机约 26–31 秒（本轮 30.48 秒）；正式采集与评价另行执行。生产 D2/评价默认最多 8 个可用 CPU，测试入口默认 4 个工作进程。原生 GPU 测试边界见部署文档。
+当前完整回归 **595 项通过，无失败/跳过**，本机约 25–31 秒（本轮 25.40 秒）；正式采集与评价另行执行。生产 D2/评价默认最多 8 个可用 CPU，测试入口默认 4 个工作进程。原生 GPU 测试边界见部署文档。
 
 | 现象 | 检查 |
 |---|---|
@@ -162,6 +162,7 @@ colcon test-result --all
 | [DEPLOYMENT](docs/DEPLOYMENT.md) / [ASSETS](docs/ASSETS.md) | 环境安装、从官网下载并生成资产 |
 | [STAGE_B](docs/STAGE_B.md) / [STAGE_C](docs/STAGE_C.md) | 场景操作、名义壁面任务与历史 20 m 采集记录 |
 | [STAGE_D](docs/STAGE_D.md) / [EVALUATION](docs/EVALUATION.md) | 现行重建流程、验收协议与证据 |
+| [WHEEL_ERROR](docs/WHEEL_ERROR.md) | 编码器里程停车与三档轮径误差试验 |
 | [ROADMAP](docs/ROADMAP.md) | 停车、轮径、扫描轴误差、融合及 50 m 扩展 |
 | [SENSOR_NOISE](docs/SENSOR_NOISE.md) | 可选噪声模型，参数为仿真假设 |
 | [DEVELOPMENT_RULES](docs/DEVELOPMENT_RULES.md) | 开发、真值隔离与 WSL I/O 约束 |

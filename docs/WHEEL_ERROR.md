@@ -24,11 +24,49 @@ python3 tools/test_distance_stop.py \
   --output local_data/evaluation/distance_stop_control
 # 增加 3 m 壁面目标的完整原图、独立重成像和阶段 B 验收。
 bash tools/with_optix_runtime.sh python3 tools/test_distance_stop.py \
-  --capture --output local_data/evaluation/distance_stop_capture
+  --capture --output sessions/wheel_error_capture
 ```
 
 每次使用新目录。工具直接调用已安装包与真实 Gazebo 插件；日志按运行保存，采样只写两个连续 CSV，不新增逐行文件。完整采集额外使用名义壁面超扫余量，其估计车体行程大于 3 m；不得与恰好请求车体前进 3 m 的停车试验混淆。
 
 无滑移理想预期：请求估计行程 3 m 时，真实行程分别为 2.9625、3.0000、3.0375 m，真实螺距分别为 0.5925、0.6000、0.6075 m。实际参考取两个测量轮中心的位移；车体基准点随俯仰摆动，不能直接当作轮上位移。
 
-当前开发接触试验三档均通过，且刻意不足的超时不会被当作完成。完整成像验证完成后在此补充具有构建溯源的结果。已知轨道种子的敏感性试验不称作盲验；尚未验证仅靠图像能恢复绝对尺度，也未开放全部轮径/安装自由度。
+## 当前结果与未通过项
+
+冻结 `20cdd4a` 后完整构建，三档真实轮轨接触与完整采集在 `sessions/wheel_error_20261004/`。采集溯源均为干净源码且 `binary_matches_source=true`；每档 25 项阶段 B 检查通过，独立重成像逐字节相同，且刻意不足的超时不会被当作完成。完整回归 595 项通过，无失败或跳过，本机 25.40 s。
+
+| 真实 / 标定轮径 | 请求估计 3 m 的实际轮上位移 | 实测螺距 | 名义展开接缝 P95 | 优化窗口内 / 窗口间 P95 |
+|---|---:|---:|---:|---:|
+| 80 / 80 mm | 3.000018 m | 0.599957 m | 44.943 px | 0.774 / 0.850 px |
+| 79 / 80 mm | 2.962522 m | 0.592456 m | 73.951 px | 0.450 / 0.420 px |
+| 81 / 80 mm | 3.037516 m | 0.607458 m | 79.441 px | 0.763 / **1.015 px，主门限失败** |
+
+前两列来自恰好请求车体估计前进 3 m 的物理试验；后两列来自带首尾余量的 [3,6] m 壁面目标，其车体估计行程为 4.060191 m，每档约 40.8 万行原图。名义展开已补偿螺旋，是定量中间基线；展示用的原始条带仍不补偿螺旋。
+
+生产 D2/D3 三档统一使用 0.2 m 匹配间距、0.02 m 姿态节点及既有约束，每档主进程和 8 个工作进程的实际私有读取违规数均为零。分别有 5,787、5,796、5,670 个冻结规则下的评价样本，计划点无缺测、四边支撑通过。三档均通过 3 px 次级门限，但 81 mm 档未通过 1 px 主门限；图像留出一致性通过不能替代这一结论。
+
+三档均接受 314 个匹配窗口，未发生系数限幅或完全无支撑。81 mm 窗口间混凝土面 P95 为 0.839 px，非混凝土面 59 点的 P95 为 4.082 px；混凝土面有 102 点超过 1 px，加上上述 59 点，共 161/3096 点超过 1 px，将全体 P95 推过门限。材质分组只是隔离评价诊断，不剔除主评价点，也不证明误差已全部归因。仍需检查误差尾部和填缝视差处理；不降低门限或宣称所有轮径场景拼接合格。
+
+原始报告、逐点评价及汇总哈希在 `sessions/wheel_error_20261004/evaluation/` 和各档 `capture/evaluation/wheel_geometry/`。未根据这些真值评分调参。该批为已知种子 20261001、噪声关闭的受控敏感性试验，不称作盲验，也不证明噪声与安装偏差组合已经合格；尚未验证仅靠图像恢复绝对尺度。
+
+## 单独运行重建与评价
+
+```bash
+# 已完成 --capture 后，以 81 mm 档为例；三档保持相同参数。
+bash tools/with_optix_runtime.sh bash -c '
+  source /opt/ros/jazzy/setup.bash
+  source install/setup.bash
+  folder=sessions/wheel_error_capture/images_81
+  python3 -m ssb_tools.initial_unroll --session "$folder/capture" \
+    --calibration local_data/stage_b/contact_demo/calibration.json \
+    --backend cuda --output "$folder/unroll"
+  python3 -m ssb_tools.public_reconstruction --unroll "$folder/unroll" \
+    --observable "$folder/capture/config/observable_config.json" --root "$folder" \
+    --spacing-m .2 --attitude-spacing-m .02
+  python3 -m ssb_tools.evaluate_global_geometry --session "$folder/capture" \
+    --unroll "$folder/unroll" --trajectory "$folder/fit" \
+    --output "$folder/capture/evaluation/wheel_geometry"
+'
+```
+
+评价命令完成不等于主门限通过，须检查报告 `gates.strict_seam.status`、缺测与四边支撑。原图不去重、不删除；D1 为 v2 原图按需采样，未为此生成整幅大数组。
