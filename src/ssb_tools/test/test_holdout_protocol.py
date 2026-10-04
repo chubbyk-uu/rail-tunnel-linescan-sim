@@ -4,10 +4,39 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+import numpy as np
 from test_wall_coverage import nominal
 
 from ssb_tools.holdout_protocol import capture_checks, public_run_valid
 from ssb_tools.session import sha256_file
+
+
+@pytest.mark.parametrize('explicit_policy',[False,True])
+def test_relative_matching_protocol_checks_actual_public_span_not_fixed_halo(tmp_path,explicit_policy):
+    from ssb_tools.holdout_protocol import expected_matching_plan
+    protocol=dict(d2=dict(spacing_m=.1,height=256,max_width=1024,halo_m=.25),
+                  d3=dict(relative_encoder_scale=True))
+    if explicit_policy:protocol['d2']['halo_policy']='public_relative_scale_span_v1'
+    (tmp_path/'unroll').mkdir()
+    projection=np.array([(-1.2,),(21.2,)],dtype=[('x_axis_m','f8')])
+    np.save(tmp_path/'unroll/projection.npy',projection)
+    plan=expected_matching_plan(protocol,tmp_path)
+    assert plan['halo_m']==pytest.approx(.586)
+    old=dict(plan,halo_m=.25)
+    assert old!=plan
+    # A future actual exposure span is measured from public rows, not guessed
+    # from the target length or recovered from true wheel parameters.
+    projection['x_axis_m'][-1]=22.2;np.save(tmp_path/'unroll/projection.npy',projection)
+    assert expected_matching_plan(protocol,tmp_path)['halo_m']==pytest.approx(.601)
+    protocol['d2']['halo_policy']='fixed_v1'
+    with pytest.raises(ValueError,match='policy'):
+        expected_matching_plan(protocol,tmp_path)
+
+
+def test_nominal_matching_protocol_does_not_require_public_span_file(tmp_path):
+    from ssb_tools.holdout_protocol import expected_matching_plan
+    d2=dict(spacing_m=.2,height=512,max_width=1024,halo_m=.25)
+    assert expected_matching_plan(dict(d2=d2,d3={}),tmp_path)==d2
 
 
 def fixture(tmp_path, **overrides):
@@ -200,7 +229,8 @@ def test_relocated_audit_requires_exact_root_move_and_original_product_hashes(tm
 
 @pytest.mark.parametrize('relief,change', [(r,c) for r in (False,True) for c in
     (None, 'spacing_m', 'height', 'max_width', 'halo_m', 'missing','normal_backend')]+[(True,'relief_settings')])
-def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_path, monkeypatch, change, relief):
+@pytest.mark.parametrize('relative',[False,True])
+def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_path, monkeypatch, change, relief,relative):
     import ssb_tools.holdout_protocol as module
     root = tmp_path/'run'
     source = dict(git_head='frozen', git_dirty=False)
@@ -212,6 +242,7 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
     protocol = dict(schema='ssb.d3_holdout_protocol.v6', code_commit='frozen', holdout_roi_m=[12.,15.],
         d2=dict(planning, settings={}), d3=dict(adaptive_attitude=True), sampling=sampling,
         normal_backend_sha256='a'*64)
+    if relative:protocol['d3']['relative_encoder_scale']=True
     if relief:
         from ssb_tools.surface_relief import ReliefSettings
         from dataclasses import asdict
@@ -223,6 +254,9 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
         (root/name/'provenance.json').write_text(json.dumps(dict(source=source)))
     (root/'unroll/report.json').write_text(json.dumps(dict(grid=dict(target_x_m=[12.,15.]))))
     report = dict(settings={}, planning=planning.copy())
+    if relative:
+        np.save(root/'unroll/projection.npy',np.array([(10.,),(16.8,)],dtype=[('x_axis_m','f8')]))
+        report['planning']['halo_m']=.25+.03*(16.8-10.)/2
     if change == 'missing': report.pop('planning')
     elif change is not None and change not in ('relief_settings','normal_backend'): report['planning'][change] *= 2
     (root/'matches/report.json').write_text(json.dumps(report))

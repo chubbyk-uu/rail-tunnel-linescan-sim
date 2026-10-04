@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 
+import numpy as np
 import yaml
 
 from .band_matching import MatchSettings
@@ -14,6 +15,7 @@ from .optical_identity import check_calibration
 from .session import Session, read_json, sha256_file
 from .evaluate_global_geometry import SAMPLING_SCHEMA
 from .public_audit import POLICY
+from .reconstruction_support import matching_halo_m
 
 
 def evaluation_path(path):
@@ -59,7 +61,9 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     record = dict(schema='ssb.d3_holdout_protocol.v7' if surface_relief else 'ssb.d3_holdout_protocol.v6',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
-        d2=dict(spacing_m=spacing_m, height=height, max_width=1024, halo_m=.25, settings=asdict(match_settings)),
+        d2=dict(spacing_m=spacing_m, height=height, max_width=1024, halo_m=.25,
+                halo_policy=('public_relative_scale_span_v1' if relative_encoder_scale else 'fixed_v1'),
+                settings=asdict(match_settings)),
         d3=asdict(settings), sampling=dict(schema=SAMPLING_SCHEMA, spacing_q_m=spacing_m,
             phase_fractions=[.25, .75], samples_across=9, column_guard_pixels=2,
             original_nominal_probes_retained=True, angular_gaps_not_trimmed=True,
@@ -172,6 +176,22 @@ def public_run_valid(root, strong=True, relocation=None):
             expected == current)
 
 
+def expected_matching_plan(protocol,root):
+    """halo_m declares the base; frozen scale policy uses recorded public span."""
+    expected={k:protocol['d2'][k] for k in ('spacing_m','height','max_width','halo_m')}
+    relative=protocol['d3'].get('relative_encoder_scale',False)
+    if type(relative) is not bool:
+        raise ValueError('Boolean relative scale policy required')
+    policy='public_relative_scale_span_v1' if relative else 'fixed_v1'
+    if protocol['d2'].get('halo_policy',policy)!=policy:
+        raise ValueError('matching halo policy differs from declared geometry model')
+    if relative:
+        projection=np.load(Path(root)/'unroll/projection.npy',allow_pickle=False,mmap_mode='r')
+        axes=projection['x_axis_m']
+        expected['halo_m']=matching_halo_m([float(axes.min()),float(axes.max())],True,expected['halo_m'])
+    return expected
+
+
 def verify(protocol_file, root, output):
     protocol_file, root, output = Path(protocol_file), Path(root), evaluation_path(output)
     if output.exists():
@@ -193,8 +213,7 @@ def verify(protocol_file, root, output):
         input_hashes_unchanged=hashes_match(protocol['input_hashes']),
         production_sources_unchanged=hashes_match(protocol['production_sources']))
     if protocol.get('schema') in ('ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
-        checks['d2_planning_unchanged'] = read_json(root/'matches/report.json').get('planning') == {
-            k: protocol['d2'][k] for k in ('spacing_m', 'height', 'max_width', 'halo_m')}
+        checks['d2_planning_unchanged'] = read_json(root/'matches/report.json').get('planning') == expected_matching_plan(protocol,root)
     if protocol.get('schema') == 'ssb.d3_holdout_protocol.v7':
         checks['surface_relief_settings_unchanged'] = read_json(root/'fit/report.json').get(
             'surface_relief', {}).get('settings') == protocol['surface_relief']
@@ -220,6 +239,8 @@ def verify(protocol_file, root, output):
     checks['capture_complete'] = session.summary.get('status') == 'complete'
     report = dict(schema='ssb.d3_holdout_verification.v2', status='pass' if all(checks.values()) else 'fail',
         checks=checks, protocol_sha256=sha256_file(protocol_file),
+        validator_sha256=sha256_file(__file__),
+        matching_halo_contract='halo_m is base; relative policy adds 3% of half the public exposure span',
         capture_build=provenance.get('build'), capture_source_at_run=source,
         interpretation='unchanged C++ code is explanatory evidence, not an exemption from build identity')
     if protocol.get('schema') in ('ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
