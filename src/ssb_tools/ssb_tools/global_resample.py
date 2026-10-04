@@ -9,6 +9,7 @@ import time
 import numpy as np
 from PIL import Image
 
+from .reconstruction_support import correction_reach_m
 from .global_geometry import GeometrySettings, Trajectory
 from .initial_unroll import cpu_tile, display, grid_axes
 from .match_bands import verified_bands
@@ -148,7 +149,7 @@ def corrected_tile(model, coefficients, qs, xs):
     values = np.full((len(qs), len(xs)), np.nan, np.float32)
     best = np.full(values.shape, -np.inf, np.float32); count = np.zeros(values.shape, np.uint16)
     # Conservative margin from the declared 30 mm / 10 mrad parameter bounds.
-    margin = .03+.04*(model.radius+model.height)
+    margin = correction_reach_m(model.radius, model.height)
     for band, (lo, hi) in enumerate(model.sampler.band_x):
         begin = np.searchsorted(xs, lo-margin); end = np.searchsorted(xs, hi+margin, side='right')
         if end <= begin:

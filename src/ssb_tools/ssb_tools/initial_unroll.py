@@ -21,6 +21,7 @@ from .session import sha256_file
 from .wall_coverage import target_grid, RUN_DTYPE
 from .native_rows import NativeRows, FloatRows
 from .stage_b_scene import peak_rss_bytes
+from .reconstruction_support import correction_reach_m
 
 PROJECTION = np.dtype([('sequence', '<i8'), ('lattice_row', '<i8'), ('segment', '<i8'),
                        ('x_axis_m', '<f8'), ('theta_rad', '<f8')])
@@ -133,17 +134,31 @@ class BandSampler:
         return value.astype(np.float32), valid, score
 
 
+def retained_band_rows(rows, x_axis, usable, target, reach):
+    """Keep complete recorded scans that can reach the ROI within public bounds.
+
+    Cropping individual rows creates artificial angular holes at ROI edges.
+    This selects existing row identities only; actual gaps remain gaps.
+    """
+    eligible = ((x_axis+usable[-1]+reach >= target[0]) &
+                (x_axis+usable[0]-reach <= target[1]))
+    if not np.any(eligible):
+        raise ValueError('no exposure rows intersect the requested ROI support envelope')
+    segments = np.unique(rows['segment'][eligible])
+    return np.flatnonzero(np.isin(rows['segment'], segments))
+
+
 def prepare_sensor(capture, output, target, chunk_rows=256):
-    """Select ROI exposure rows, verify their raw blocks once and record native sources.
+    """Retain complete ROI-supporting scans, verify raw blocks and record native sources.
 
     Nothing pixel-sized is written: the raw blocks stay the only native image store.
     Saturation/invalid counts are taken in one sequential pass that also hashes blocks.
     """
     offsets, corrected_offsets, geometry_valid = sensor_geometry(capture.config, capture.calibration)
     usable = corrected_offsets[geometry_valid]
-    selected = np.flatnonzero((capture.x_axis+usable[-1] >= target[0]) &
-                              (capture.x_axis+usable[0] <= target[1]))
-    if not len(selected): raise ValueError('no exposure rows intersect the requested ROI')
+    reach = correction_reach_m(capture.config['calibration']['radius_m'],
+                               capture.config['robot']['scan_axis_height_m'])
+    selected = retained_band_rows(capture.rows, capture.x_axis, usable, target, reach)
     projection = np.zeros(len(selected), PROJECTION)
     for name, field in [('sequence', 'sequence'), ('lattice_row', 'row'), ('segment', 'segment')]:
         projection[name] = capture.rows[field][selected]
@@ -178,7 +193,8 @@ def prepare_sensor(capture, output, target, chunk_rows=256):
     native = NativeRows(capture.root/'raw', raw_blocks, projection['sequence'], capture.width, flat,
                         verified={b['file'] for b in raw_blocks})
     return BandSampler(projection, native, offsets, corrected_offsets, geometry_valid, capture.footprint), inputs, dict(
-        selected_rows=len(selected), raw_blocks=raw_blocks, saturated_samples=saturated, invalid_native_samples=invalid)
+        selected_rows=len(selected), source_retention='complete recorded bands intersecting bounded ROI',
+        correction_reach_m=reach, raw_blocks=raw_blocks, saturated_samples=saturated, invalid_native_samples=invalid)
 
 
 def cpu_tile(sampler, angles, xs, bands):

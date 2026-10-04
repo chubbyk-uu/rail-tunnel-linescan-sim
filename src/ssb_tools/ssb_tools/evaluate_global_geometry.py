@@ -26,6 +26,8 @@ from .session import Session, read_json, sha256_file
 from .parallel_budget import resolve_workers
 from .stage_b_scene import peak_rss_bytes
 
+from .reconstruction_support import correction_reach_m
+
 SAMPLING_SCHEMA = 'ssb.public_common_overlap.v4'
 _SHARED = None
 
@@ -152,7 +154,7 @@ def shared_seam_plan(model, coefficients, grid, spacing_m=.2, workers=1):
     coefficients = np.asarray(coefficients, float)
     if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all():
         raise ValueError('finite verified trajectory required for a public seam plan')
-    plan = seam_plan(model.sampler, grid, spacing_m, reach_margin=.03+.04*(model.radius+model.height))
+    plan = seam_plan(model.sampler, grid, spacing_m, reach_margin=correction_reach_m(model.radius, model.height))
     planned = [index for index, window in enumerate(plan) if window['status'] == 'planned']
     shared = dict(model=model, coefficients=coefficients, grid=grid, guard=2*grid['dx_m'])
     for index, window in zip(planned, parallel_map(plan_window, [plan[i] for i in planned], shared, workers)):
@@ -265,7 +267,7 @@ def boundary_chunk(chunk, model, coefficients, use_relief=True):
     for band in range(len(model.sampler.segments)):
         # Skip bands whose declared correction bounds cannot reach this x.
         lo, hi = model.sampler.band_x[band]
-        margin = .03+.04*(model.radius+model.height)
+        margin = correction_reach_m(model.radius, model.height)
         if np.max(x) < lo-margin or np.min(x) > hi+margin:
             continue
         supported |= sources_at(model, coefficients, band, x, q, use_relief)[1]

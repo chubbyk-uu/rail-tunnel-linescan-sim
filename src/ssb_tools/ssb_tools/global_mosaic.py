@@ -8,6 +8,7 @@ import shutil
 import time
 import numpy as np
 from PIL import Image
+from .reconstruction_support import correction_reach_m
 from .global_resample import load_global, corrected_tile
 from .initial_unroll import (rasterize, preview_sample, release_pages, display,
                              MOSAIC_INVALID, MOSAIC_SCALE)
@@ -20,7 +21,7 @@ class CpuGlobalRaster:
     """Explicit reference path; never chosen as fallback for a CUDA error."""
     def __init__(self, model, coefficients):
         self.model, self.coefficients = model, coefficients
-        self.margin = .03+.04*(model.radius+model.height)
+        self.margin = correction_reach_m(model.radius, model.height)
 
     def candidate_bands(self, xs):
         return [i for i, (lo, hi) in enumerate(self.model.sampler.band_x)

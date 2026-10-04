@@ -2,6 +2,7 @@
 import ctypes as ct
 import numpy as np
 from scipy.interpolate import BSpline
+from .reconstruction_support import correction_reach_m
 from .unroll_cuda import CudaRaster, pointer
 
 RAY = np.dtype([(name, '<f8') for name in
@@ -41,7 +42,7 @@ class GlobalCudaRaster(CudaRaster):
             if np.any(abs(coefficients[model.starts[field]:model.starts[field+1]]) > bound+1e-7):
                 raise ValueError('trajectory exceeds declared physical bounds')
         # Match the CPU's conservative band selection; this is not an image warp.
-        self.margin = .03+.04*(model.radius+model.height)
+        self.margin = correction_reach_m(model.radius, model.height)
         self.rays = row_rays(model, coefficients)
         super().__init__(model.sampler)
         try:

@@ -7,6 +7,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import yaml
+from .reconstruction_support import correction_reach_m
 
 
 def start_values(command):
@@ -147,7 +148,7 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002):
     # Reserve bounded reconstruction motion plus the corresponding encoder
     # advance. Partial first/last scans must be provably outside the target;
     # one-band pixel coverage alone is not sufficient for seam acceptance.
-    correction_reach = .03+.04*(radius+height)
+    correction_reach = correction_reach_m(radius, height)
     seam_margin = correction_reach+pitch*correction_reach/(2*math.pi*radius)+2*guard
     vehicle_start = min(start-pitch-left, start-right)-mount-ramp_margin-guard-seam_margin
     vehicle_end = max(start+length+pitch-right, start+length-left)-mount+ramp_margin+guard+seam_margin

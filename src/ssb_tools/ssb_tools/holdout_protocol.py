@@ -46,7 +46,7 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     match_settings = MatchSettings(max_q_shift_mm=max_q_shift_mm)
     sources = [workspace/'src/ssb_tools/ssb_tools'/name for name in
                ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py',
-                'global_geometry.py', 'initial_unroll.py', 'global_resample.py',
+                'global_geometry.py', 'initial_unroll.py', 'global_resample.py', 'reconstruction_support.py',
                 'evaluate_global_geometry.py', 'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py',
                 'validate_stage_b.py', 'validate_stage_a.py', 'ref_geometry.py', 'session.py')]
     if type(surface_relief) is not bool:

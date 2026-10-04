@@ -139,7 +139,7 @@ def public_fixture(root):
     phase = np.arange(math.ceil(-.048/step), math.floor(.048/step)+1)*step
     times = np.r_[phase+.05, phase+.05+2*math.pi]
     segments = np.repeat([0, 1], len(phase))
-    config = dict(schema='ssb.observable_config.v1', camera=dict(width=width, optical_signature='measured', nominal_distance_m=1.),
+    config = dict(robot=dict(scan_axis_height_m=1.), schema='ssb.observable_config.v1', camera=dict(width=width, optical_signature='measured', nominal_distance_m=1.),
         calibration=dict(radius_m=1., wheel_diameter_m=.2, head_mount_x_m=.003), contact=dict(enabled=False),
         scan_encoder=dict(ppr=1024, edges_per_cycle=4), odometer=dict(ppr=1000, edges_per_cycle=4, gear_ratio=1.),
         motion=dict(start_x_m=.5), gate=dict(start_rad=-.05, end_rad=.05),
@@ -230,7 +230,7 @@ def test_private_path_redirection_is_rejected_before_output_creation(tmp_path, k
     assert not (tmp_path/'rejected').exists()
 
 
-def test_roi_reads_only_intersecting_raw_blocks_and_rejects_used_block_corruption(tmp_path):
+def test_sensor_reads_only_supporting_bands_and_rejects_used_block_corruption(tmp_path):
     import hashlib
     root = tmp_path/'public'; cal, index = public_fixture(root)
     path = root/'raw/block.u8'; pixels = np.fromfile(path, np.uint8).reshape(-1, 32)
@@ -242,12 +242,23 @@ def test_roi_reads_only_intersecting_raw_blocks_and_rejects_used_block_corruptio
     summary = json.loads((root/'session.json').read_text())
     summary['files']['raw/index.json'] = sha256_file(root/'raw/index.json')
     (root/'session.json').write_text(json.dumps(summary))
-    report = reconstruct(root, cal, tmp_path/'roi', [.5, .501], pitch=.004)
-    assert report['diagnostic_roi'] and len(report['sensor']['raw_blocks']) == 1
+    from ssb_tools.initial_unroll import prepare_sensor
+    # A partial export is insufficient when the second scan is within the
+    # declared correction envelope, even without nominal ROI pixels.
+    with pytest.raises(ValueError, match='missing public input'):
+        reconstruct(root, cal, tmp_path/'insufficient', [.5, .501], pitch=.004)
+    capture = PublicCapture(root, cal)
+    # Isolate source preparation with a distant public nominal scan.
+    capture.x_axis[half:] += 1.
+    output = tmp_path/'roi'; output.mkdir()
+    sampler, _, report = prepare_sensor(capture, output, [.5, .501])
+    sampler.native.close()
+    assert len(report['raw_blocks']) == 1
     assert not (root/'raw/not_exported.u8').exists()
     with path.open('r+b') as f: f.write(b'\xff')
+    corrupt = tmp_path/'corrupt'; corrupt.mkdir()
     with pytest.raises(ValueError, match='raw block hash'):
-        reconstruct(root, cal, tmp_path/'corrupt', [.5, .501], pitch=.004)
+        prepare_sensor(capture, corrupt, [.5, .501])
     assert not (tmp_path/'corrupt/provenance.json').exists()
 
 
@@ -266,3 +277,49 @@ def test_bounded_preview_preserves_sparse_samples_and_uses_owned_memory(tmp_path
         preview = preview_sample(array, stride)
         assert type(preview) is np.ndarray and not np.shares_memory(preview, array)
         np.testing.assert_array_equal(preview, values[::stride, ::stride])
+
+
+@pytest.mark.parametrize('missing', [False, True])
+def test_roi_retains_whole_recorded_scans_without_filling_real_gaps(missing):
+    from ssb_tools.initial_unroll import retained_band_rows
+    from ssb_tools.reconstruction_support import correction_reach_m
+    # Independent spatial helix; outer scans contain no nominal ROI pixels,
+    # but can reach the ROI under the declared motion correction.
+    phase = np.linspace(-125., 125., 601)*math.pi/180
+    rows = np.zeros(7*len(phase), PROJECTION)
+    rows['sequence'] = np.arange(len(rows))
+    rows['segment'] = np.repeat(np.arange(1, 8), len(phase))
+    axis = np.repeat(-1.+np.arange(7)*.6, len(phase))+np.tile(phase, 7)*.6/(2*math.pi)
+    if missing:
+        keep = rows['sequence'] != 3*601+300
+        rows, axis = rows[keep], axis[keep]
+    selected = retained_band_rows(rows, axis, np.array([-.42, .42]), [1., 1.3],
+                                  correction_reach_m(2.75, 1.715))
+    expected = np.flatnonzero((rows['segment'] >= 3) & (rows['segment'] <= 6))
+    np.testing.assert_array_equal(selected, expected)
+    if missing:
+        assert (rows['sequence'][selected] != 3*601+300).all()
+    # Each retained scan preserves its actual public endpoints exactly.
+    for segment in (3, 4, 5, 6):
+        actual = rows['sequence'][selected][rows['segment'][selected] == segment]
+        np.testing.assert_array_equal(actual, rows['sequence'][rows['segment'] == segment])
+
+
+def test_sensor_preparation_retains_source_rows_outside_diagnostic_roi(tmp_path):
+    from ssb_tools.initial_unroll import prepare_sensor
+    root = tmp_path/'capture'; cal, _ = public_fixture(root)
+    capture = PublicCapture(root, cal); output = tmp_path/'d1'; output.mkdir()
+    sampler, _, report = prepare_sensor(capture, output, [.605, .609])
+    try:
+        np.testing.assert_array_equal(sampler.projection['sequence'], capture.rows['sequence'])
+        assert report['selected_rows'] == len(capture.rows)
+        assert report['correction_reach_m'] == pytest.approx(.11)
+    finally:
+        sampler.native.close()
+
+
+@pytest.mark.parametrize('radius,height', [(0., 1.), (1., 0.), (float('nan'), 1.), (1., float('inf'))])
+def test_public_support_bound_rejects_invalid_nominal_geometry(radius, height):
+    from ssb_tools.reconstruction_support import correction_reach_m
+    with pytest.raises(ValueError, match='positive nominal'):
+        correction_reach_m(radius, height)
