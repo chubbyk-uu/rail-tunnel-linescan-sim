@@ -313,11 +313,7 @@ def provenance_chain(s, cfg, truth, prov, backend):
         'backend_ptx_identified': bool(backend.get('describe', {}).get('ptx_sha256')),
         'provenance_names_pose_source': prov.get('pose_source') == s.summary.get('pose_source'),
     }
-    mismatched = []
-    for (area, key), value in observable_from_source(src).items():
-        got = cfg.get(area, {}).get(key)
-        if got is None or not math.isclose(float(got), float(value), rel_tol=1e-12, abs_tol=1e-15):
-            mismatched.append(f'{area}.{key}')
+    mismatched = field_mismatches(cfg, observable_from_source(src))
     links['observable_config_derives_from_source'] = not mismatched
     links['requested_wall_target_matches_source'] = cfg.get('inspection') == src.get('inspection')
     truth_mismatched = field_mismatches(truth, truth_from_source(src, source_sha))

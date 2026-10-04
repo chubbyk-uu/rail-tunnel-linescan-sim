@@ -125,3 +125,33 @@ def test_truth_record_must_derive_from_the_config_source():
     assert validate_stage_a.field_mismatches(truth, expected) == ['wheel_diameter_m']
     del truth['mount']['e_m']
     assert 'mount.e_m' in validate_stage_a.field_mismatches(truth, expected)
+
+
+def test_provenance_checks_nested_distance_stop_fields(tmp_path):
+    from types import SimpleNamespace
+    import yaml
+    from ssb_tools.package_paths import share_file
+    from ssb_tools.session import sha256_file
+    src=yaml.safe_load(share_file('config/stage_b.yaml','ssb_core').read_text())
+    src['motion']['distance_stop']=dict(target_m=3.,ramp_s=1.,brake_distance_m=.1,
+        tolerance_m=.0001,speed_tolerance_m_s=.001,hold_s=.5,timeout_s=40.)
+    path=tmp_path/'evaluation/config_source.yaml';path.parent.mkdir()
+    path.write_text(yaml.safe_dump(src));digest=sha256_file(path)
+    def nested(fields):
+        result={}
+        for keys,value in fields.items():
+            node=result
+            for key in keys[:-1]:node=node.setdefault(key,{})
+            node[keys[-1]]=value
+        return result
+    cfg=nested(validate_stage_a.observable_from_source(src))
+    truth=nested(validate_stage_a.truth_from_source(src,digest))
+    prov=dict(config_sha256=digest,pose_source='gazebo_contact',inputs={'config':{'sha256':digest}})
+    backend=dict(self_check={'passed':True},describe={'ptx_sha256':'identified'})
+    session=SimpleNamespace(root=tmp_path,summary=dict(pose_source='gazebo_contact',
+        files={'evaluation/config_source.yaml':digest}))
+    assert validate_stage_a.provenance_chain(session,cfg,truth,prov,backend)['state']=='pass'
+    cfg['motion']['distance_stop']['timeout_s']=41.
+    check=validate_stage_a.provenance_chain(session,cfg,truth,prov,backend)
+    assert check['state']=='fail'
+    assert check['observable_mismatches']==['motion.distance_stop.timeout_s']
