@@ -48,7 +48,10 @@ def synthetic_matches(translations=False):
     sampler = BandSampler(projection, np.zeros((len(projection), len(offsets)), np.float32),
                           offsets, offsets, np.ones(len(offsets), bool), .0051)
     model = Trajectory(sampler, 1., .7, GeometrySettings(attitude_spacing_m=.1,
-        fit_translation=translations is True,fit_heave=translations=='heave'))
+        fit_translation=translations in (True,'fixed'),fit_heave=translations=='heave',
+        coarse_translation=translations=='fixed',
+        translation_prior_mm=10. if translations=='fixed' else 2.,
+        translation_bound_mm=30. if translations=='fixed' else 5.))
 
     def truth_at(axis):
         # Nonzero coupled position, phase, roll and pitch; no production function creates truth.
@@ -58,6 +61,8 @@ def synthetic_matches(translations=False):
                                 -.0005+.001*s-.0006*s*s))
         if translations is True:
             values = np.column_stack((values, .0004+.0006*s, .001+.0007*s-.0003*s*s))
+        elif translations == 'fixed':
+            values = np.column_stack((values, np.full_like(s,.02),np.full_like(s,-.015)))
         elif translations=='heave':
             values = np.column_stack((values,.001+.0007*s-.0003*s*s))
         return values
@@ -96,6 +101,27 @@ def synthetic_matches(translations=False):
                 records.append(row)
     grid = dict(dx_m=.0002, dq_m=.0002)
     return model, np.concatenate(records), grid
+
+
+def test_slow_translation_recovers_large_coupled_image_error_without_claiming_absolute_pose():
+    model, table, grid = synthetic_matches('fixed')
+    assert model.sizes[4:] == model.sizes[:2]
+    dense = Trajectory(model.sampler,model.radius,model.height,
+                       GeometrySettings(attitude_spacing_m=.1,fit_translation=True))
+    assert model.size < dense.size
+    coefficients,scores,_,_,_,_,evidence = fit(model,table,grid)
+    assert scores['heldout_before']['norm_px']['p95']>10
+    assert scores['heldout_after']['norm_px']['p95']<.05
+    assert evidence['data_rank']<model.size
+    changed=table.copy(); selected=changed['holdout'].astype(bool)
+    changed['x_b_m'][selected]+=.003
+    for band in (1,2):
+        ids=selected & (changed['band_b']==band)
+        for name,value in native_sources(model.sampler,band,changed['x_b_m'][ids],changed['q_b_m'][ids],1.).items():
+            changed['b_'+name][ids]=value
+    repeated,changed_scores,*_=fit(model,changed,grid)
+    np.testing.assert_array_equal(repeated,coefficients)
+    assert changed_scores['heldout_after']['norm_px']['p95']>10
 
 
 def test_exact_support_rotation_and_cylinder_hit_against_independent_matrix_reference():
@@ -217,6 +243,8 @@ def test_d2_hash_chain_and_d1_identity_are_checked(tmp_path, kind):
     GeometrySettings(attitude_spacing_m=.1, observed_knots=True),
     GeometrySettings(attitude_spacing_m=.1, observed_knots=True, adaptive_attitude=True),
     GeometrySettings(attitude_spacing_m=.1, fit_translation=True),
+    GeometrySettings(attitude_spacing_m=.1,fit_translation=True,coarse_translation=True,
+                     observed_knots=True,adaptive_attitude=True,translation_bound_mm=30.,translation_prior_mm=10.),
     GeometrySettings(attitude_spacing_m=.1, fit_heave=True)])
 def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_chain(tmp_path, settings):
     from test_match_bands import bands_fixture

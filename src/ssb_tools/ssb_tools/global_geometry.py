@@ -31,9 +31,10 @@ class GeometrySettings:
     translation_bound_mm: float = 5.
     observed_knots: bool = False
     adaptive_attitude: bool = False
+    coarse_translation: bool = False
 
     def validate(self):
-        switches = ('fit_translation', 'fit_heave', 'observed_knots', 'adaptive_attitude')
+        switches = ('fit_translation', 'fit_heave', 'observed_knots', 'adaptive_attitude', 'coarse_translation')
         numbers = [v for k, v in vars(self).items() if k not in ('max_irls', *switches)]
         if not all(math.isfinite(v) and v > 0 for v in numbers):
             raise ValueError('positive finite optimization settings required')
@@ -55,8 +56,19 @@ class GeometrySettings:
             raise ValueError('observed_knots must be Boolean')
         if not isinstance(self.adaptive_attitude, bool):
             raise ValueError('adaptive_attitude must be Boolean')
-        if self.adaptive_attitude and (not self.observed_knots or self.fit_translation or self.fit_heave):
+        if not isinstance(self.coarse_translation, bool) or (self.coarse_translation and not self.fit_translation):
+            raise ValueError('coarse translation requires a Boolean switch and the lateral/heave model')
+        if self.adaptive_attitude and (not self.observed_knots or self.fit_heave or
+                                     (self.fit_translation and not self.coarse_translation)):
             raise ValueError('adaptive attitude requires the four-field observed-knot model')
+
+
+def reconstruction_settings(attitude_spacing_m=.02, adaptive_attitude=False, slow_translation=False):
+    """Public, declared priors; no rig truth used to choose coefficients."""
+    return GeometrySettings(attitude_spacing_m=attitude_spacing_m, observed_knots=True,
+        adaptive_attitude=adaptive_attitude, fit_translation=slow_translation,
+        coarse_translation=slow_translation, translation_bound_mm=30. if slow_translation else 5.,
+        translation_prior_mm=10. if slow_translation else 2.)
 
 
 def spline_knots(lower, upper, spacing):
@@ -97,13 +109,14 @@ CHUNK_RAYS = 1 << 16
 THREADS = resolve_workers()
 
 
-def in_chunks(function, count, factor=1.):
+def in_chunks(function, count, factor=1., max_workers=None):
     """[function(start, stop)] over fixed consecutive ranges of CHUNK_RAYS*factor, in order."""
     size = max(1, int(CHUNK_RAYS*factor))
     ranges = [(start, min(start+size, count)) for start in range(0, count, size)] or [(0, 0)]
-    if len(ranges) == 1 or THREADS == 1:
+    workers=THREADS if max_workers is None else min(THREADS,max_workers)
+    if len(ranges) == 1 or workers == 1:
         return [function(*r) for r in ranges]
-    with ThreadPoolExecutor(min(THREADS, len(ranges))) as pool:
+    with ThreadPoolExecutor(min(workers, len(ranges))) as pool:
         return list(pool.map(lambda r: function(*r), ranges))
 
 
@@ -211,7 +224,8 @@ class Trajectory:
                         if settings.observed_knots else spline_knots(*self.domain, settings.attitude_spacing_m))
             knots = [position, position, attitude, attitude]
             if settings.fit_translation:
-                knots += [attitude, attitude]
+                translation = position if settings.coarse_translation else attitude
+                knots += [translation, translation]
             elif settings.fit_heave:
                 knots += [attitude]
         self.fields = ['carriage_dx_m', 'scan_phase_dq_m', 'roll_rad', 'pitch_rad']

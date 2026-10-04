@@ -9,7 +9,7 @@ import subprocess
 import yaml
 
 from .band_matching import MatchSettings
-from .global_geometry import GeometrySettings
+from .global_geometry import GeometrySettings, reconstruction_settings
 from .optical_identity import check_calibration
 from .session import Session, read_json, sha256_file
 from .evaluate_global_geometry import SAMPLING_SCHEMA
@@ -24,7 +24,7 @@ def evaluation_path(path):
 
 
 def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attitude=False, height=512, max_q_shift_mm=None,
-            surface_relief=False):
+            surface_relief=False, slow_translation=False):
     workspace, demo, output = Path(workspace).resolve(), Path(demo).resolve(), evaluation_path(output)
     state = subprocess.check_output(['sh', str(workspace/'src/ssb_core/cmake/source_state.sh'),
                                      str(workspace)], text=True).split()
@@ -36,8 +36,7 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     config = yaml.safe_load((demo/'capture.yaml').read_text())
     wall_plan(config, start, length, read_json(demo/'calibration.json'))
     check_calibration(demo/'capture.yaml', demo/'calibration.json')
-    settings = GeometrySettings(attitude_spacing_m=.02, observed_knots=True,
-                                adaptive_attitude=adaptive_attitude)
+    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation)
     settings.validate()
     if not isinstance(spacing_m, (int, float)) or not 0 < spacing_m <= .4:
         raise ValueError('holdout matching spacing must be positive and at most 0.4 m')
@@ -53,6 +52,9 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
         raise ValueError('surface_relief must be Boolean')
     if surface_relief:
         sources.append(workspace/'src/ssb_tools/ssb_tools/surface_relief.py')
+    if slow_translation:
+        sources.extend([workspace/'src/ssb_tools/ssb_tools/fast_normal.py',
+                        workspace/'src/ssb_core/src/normal_equations.cpp',workspace/'src/ssb_core/CMakeLists.txt'])
     record = dict(schema='ssb.d3_holdout_protocol.v7' if surface_relief else 'ssb.d3_holdout_protocol.v6',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
@@ -69,6 +71,9 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     if surface_relief:
         from .surface_relief import ReliefSettings
         record['surface_relief'] = asdict(ReliefSettings())
+    if slow_translation:
+        from .fast_normal import backend
+        record['normal_backend_sha256']=backend()[1]['library_sha256']
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(record, indent=2)+'\n')
     return record
@@ -192,6 +197,9 @@ def verify(protocol_file, root, output):
     if protocol.get('schema') == 'ssb.d3_holdout_protocol.v7':
         checks['surface_relief_settings_unchanged'] = read_json(root/'fit/report.json').get(
             'surface_relief', {}).get('settings') == protocol['surface_relief']
+    if 'normal_backend_sha256' in protocol:
+        checks['normal_backend_identity'] = read_json(root/'fit/report.json').get(
+            'normal_backend',{}).get('library_sha256') == protocol['normal_backend_sha256']
     if protocol.get('schema') in ('ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         checks['public_only_production_run'] = public_run_valid(root,
             strong=protocol['schema'] != 'ssb.d3_holdout_protocol.v4')
@@ -237,6 +245,7 @@ def main():
     declaration.add_argument('--max-q-shift-mm', type=float)
     declaration.add_argument('--adaptive-attitude', action='store_true')
     declaration.add_argument('--surface-relief', action='store_true')
+    declaration.add_argument('--slow-translation', action='store_true')
     verification = sub.add_parser('verify')
     for name in ('protocol', 'root', 'output'):
         verification.add_argument('--'+name, required=True)
@@ -247,7 +256,8 @@ def main():
     args = parser.parse_args()
     if args.action == 'declare':
         declare(args.workspace, args.demo, args.output, args.start, args.length,
-                args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm, args.surface_relief)
+                args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm, args.surface_relief,
+                args.slow_translation)
         return 0
     if args.action == 'audit-public':
         output = evaluation_path(args.output)

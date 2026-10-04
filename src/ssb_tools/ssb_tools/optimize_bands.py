@@ -208,12 +208,17 @@ class FixedJacobian:
         return csr_matrix((np.r_[data, self.prior], self.indices, self.indptr), shape=self.shape)
 
 
-def normal_equations(matrix, residual):
+def normal_equations(matrix, residual, native=False):
     """J^T J and J^T r summed over fixed row chunks in order (thread-count independent)."""
-    def part(first, last):
-        block = matrix[first:last]
-        return block.T @ block, block.T @ residual[first:last]
-    parts = in_chunks(part, matrix.shape[0], 2.)
+    if native:
+        from .fast_normal import accumulator
+        part,cap=accumulator(matrix,residual)
+    else:
+        def part(first, last):
+            block = matrix[first:last]
+            return block.T @ block, block.T @ residual[first:last]
+        cap=None
+    parts = in_chunks(part, matrix.shape[0], 2., max_workers=cap)
     normal, gradient = parts[0]
     for product, vector in parts[1:]:
         normal = normal+product; gradient = gradient+vector
@@ -238,13 +243,23 @@ def regularizer(model):
         for i in range(size-2):
             rows.extend([row]*3); cols.extend([start+i, start+i+1, start+i+2])
             stencil = (curvature_stencil(model.knots[k], i,
-                settings.position_spacing_m if k < 2 else settings.attitude_spacing_m)
+                settings.position_spacing_m if k < 2 or (k > 3 and settings.coarse_translation)
+                else settings.attitude_spacing_m)
                 if settings.observed_knots else np.array([1., -2., 1.]))
             values.extend(stencil/curvature[k])
             row += 1
         if k < 2:
             rows.extend([row]*size); cols.extend(range(start, start+size))
             values.extend([1e4/size]*size); row += 1
+    if settings.coarse_translation:
+        # On a cylinder, a common roll can be exchanged for common lateral/
+        # vertical offsets and a rotation of output q. Fix the public midpoint
+        # coordinate frame rather than spending iterations along that near-null
+        # mode. Four basis entries preserve sparsity (a dense mean would not).
+        basis=model.bases(np.array([sum(model.domain)/2]))[2].tocoo()
+        rows.extend([row]*len(basis.data))
+        cols.extend((model.starts[2]+basis.col).tolist())
+        values.extend((1e4*basis.data).tolist()); row+=1
     return csr_matrix((values, (rows, cols)), shape=(row, model.size))
 
 
@@ -257,7 +272,58 @@ def residual_summary(delta, pitch):
         mean_px=values.mean(0).tolist(), std_px=values.std(0).tolist())
 
 
-def damped_solve(fun, jac, initial, bounds):
+def bounded_normal_step(normal, gradient, current, bounds, damping):
+    """Solve the damped box quadratic; clipping a coupled Newton step is not a solve."""
+    diagonal=np.maximum(normal.diagonal(),1e-8)
+    matrix=normal+diags(damping*diagonal)
+    lower,upper=-bounds-current,bounds-current
+    unconstrained=spsolve(matrix,-gradient,permc_spec='MMD_AT_PLUS_A')
+    if not np.isfinite(unconstrained).all():
+        raise ValueError('nonfinite bounded trajectory step')
+    if np.all(unconstrained>=lower) and np.all(unconstrained<=upper):
+        return unconstrained
+    step=np.zeros_like(current)
+    active=((lower>=-1e-10)&(gradient>0)) | ((upper<=1e-10)&(gradient<0))
+    for iteration in range(min(256,max(20,2*len(step)))):
+        derivative=matrix@step+gradient
+        free=np.flatnonzero(~active)
+        direction=np.zeros_like(step)
+        if len(free):
+            if iteration==0 and not active.any():
+                direction=unconstrained
+            else:
+                direction[free]=spsolve(matrix[free][:,free],-derivative[free],permc_spec='MMD_AT_PLUS_A')
+        if not np.isfinite(direction).all():
+            raise ValueError('nonfinite bounded trajectory step')
+        if np.max(abs(direction),initial=0.)<1e-9:
+            wrong=(active & (((step<=lower+1e-9)&(derivative<0)) |
+                             ((step>=upper-1e-9)&(derivative>0))))
+            violation=np.where(wrong,abs(derivative)/np.sqrt(diagonal),0.)
+            if np.max(violation,initial=0.)<1e-8:
+                return step
+            active[int(np.argmax(violation))]=False
+            continue
+        fraction=np.ones_like(step)
+        positive=direction>1e-12; negative=direction<-1e-12
+        fraction[positive]=(upper[positive]-step[positive])/direction[positive]
+        fraction[negative]=(lower[negative]-step[negative])/direction[negative]
+        alpha=max(0.,min(1.,float(fraction.min())))
+        step=np.clip(step+alpha*direction,lower,upper)
+        if alpha<1.:
+            active |= ((positive | negative)&(fraction<=alpha+1e-12))
+        else:
+            # This is the exact unconstrained minimum on the current free face.
+            derivative=matrix@step+gradient
+            wrong=(active & (((step<=lower+1e-9)&(derivative<0)) |
+                             ((step>=upper-1e-9)&(derivative>0))))
+            violation=np.where(wrong,abs(derivative)/np.sqrt(diagonal),0.)
+            if np.max(violation,initial=0.)<1e-8:
+                return step
+            active[int(np.argmax(violation))]=False
+    raise ValueError('bounded normal step exceeded its active-set budget')
+
+
+def damped_solve(fun, jac, initial, bounds, native=False):
     """Bounded, damped Gauss-Newton with a sparse normal system and backtracking.
 
     Explicit priors make the small coefficient system positive definite. Solving
@@ -268,7 +334,7 @@ def damped_solve(fun, jac, initial, bounds):
     residual = fun(c); evaluations += 1
     cost = float(residual @ residual)/2
     for iteration in range(50):
-        normal, gradient = normal_equations(jac(c), residual)
+        normal, gradient = normal_equations(jac(c), residual, native)
         diagonal = np.maximum(normal.diagonal(), 1e-8)
         active = ((c <= -bounds+1e-8) & (gradient > 0)) | ((c >= bounds-1e-8) & (gradient < 0))
         projected_gradient = np.where(active, 0., gradient)
@@ -278,14 +344,7 @@ def damped_solve(fun, jac, initial, bounds):
         if optimality < 1e-5:
             return c, dict(iterations=iteration, evaluations=evaluations, cost=cost, optimality=optimality,
                            active_bounds=int(active.sum()))
-        if active.any():
-            free = np.flatnonzero(~active)
-            step = np.zeros_like(c)
-            step[free] = spsolve(normal[free][:, free]+diags(damping*diagonal[free]), -gradient[free],
-                                 permc_spec='MMD_AT_PLUS_A')
-        else:
-            # Symmetric minimum-degree ordering suits the positive-definite normal system.
-            step = spsolve(normal+diags(damping*diagonal), -gradient, permc_spec='MMD_AT_PLUS_A')
+        step = bounded_normal_step(normal,gradient,c,bounds,damping)
         if not np.isfinite(step).all():
             raise ValueError('nonfinite damped trajectory step')
         accepted = False
@@ -341,7 +400,7 @@ def fit(model, table, grid):
 
         bounds = np.concatenate([np.full(size, 10. if k in (2, 3) else
             model.settings.translation_bound_mm if k > 3 else 30.) for k, size in enumerate(model.sizes)])
-        coefficients, solver = damped_solve(fun, jac, coefficients, bounds)
+        coefficients, solver = damped_solve(fun, jac, coefficients, bounds, native=model.settings.coarse_translation)
         delta = (b.hits(coefficients)-a.hits(coefficients))/pitch
         robust = np.ones(len(training))
         for item, ids in zip(descriptions, members):
@@ -489,7 +548,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
             image_consistency_gate=dict(threshold_p95_px=SEAM_P95_PX,
                 status='pass' if scores['heldout_after']['norm_px']['p95'] <= SEAM_P95_PX else 'fail',
                 scope='held-out image consistency only; optical-mesh seam acceptance is still required'),
-            gauge='mean carriage dx and scan phase dq anchored to zero; radius and measured lens mapping fixed',
+            gauge=('mean carriage dx and scan phase dq anchored to zero; radius and measured lens mapping fixed'+
+                   ('; roll at public encoder midpoint anchored to the output-cylinder frame' if settings.coarse_translation else '')),
             limitations=['image residuals are not independent optical-mesh seam acceptance',
                 'no IMU; fitted attitudes and positions are prior-dependent image corrections, not measured body poses',
                 'absolute scale, common deformation and photometric matching bias are not recovered from truth',
@@ -500,6 +560,9 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
             performance=dict(input_check_s=check_s, wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
         if refinement is not None:
             report['attitude_refinement'] = refinement
+        if settings.coarse_translation:
+            from .fast_normal import backend
+            report['normal_backend']=backend()[1]
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
         provenance = stage_record('global_optimization', inputs+match_inputs+[observable_path], sorted(output.iterdir()),
                                   dict(settings=asdict(settings)))

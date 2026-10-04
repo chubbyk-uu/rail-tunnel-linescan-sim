@@ -76,7 +76,8 @@ def test_missing_or_incomplete_stage_b_evidence_is_rejected(tmp_path, change):
 @pytest.mark.parametrize('start,length,valid', [(12., 3., True), (19., 3., False), (12., .5, False)])
 @pytest.mark.parametrize('spacing,adaptive,height', [(.2, False, 512), (.1, True, 256)])
 @pytest.mark.parametrize('relief', [False, True])
-def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp_path, monkeypatch, nominal, start, length, valid, spacing, adaptive, height, relief):
+@pytest.mark.parametrize('slow', [False, True])
+def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp_path, monkeypatch, nominal, start, length, valid, spacing, adaptive, height, relief, slow):
     import ssb_tools.holdout_protocol as module
     config, calibration = nominal
     demo = tmp_path/'demo'
@@ -89,14 +90,17 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
     for name in ('match_bands.py', 'band_matching.py', 'matching_structures.py', 'optimize_bands.py', 'global_geometry.py',
                  'initial_unroll.py', 'global_resample.py', 'reconstruction_support.py', 'evaluate_global_geometry.py',
                  'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py', 'validate_stage_b.py',
-                 'validate_stage_a.py', 'ref_geometry.py', 'session.py', 'surface_relief.py'):
+                 'validate_stage_a.py', 'ref_geometry.py', 'session.py', 'surface_relief.py','fast_normal.py'):
         (source/name).write_text('# fixture source\n')
+    (tmp_path/'src/ssb_core/src').mkdir(parents=True)
+    (tmp_path/'src/ssb_core/src/normal_equations.cpp').write_text('// fixture source\n')
+    (tmp_path/'src/ssb_core/CMakeLists.txt').write_text('# fixture build\n')
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: 'frozen 0 '+('a'*64))
     monkeypatch.setattr(module, 'check_calibration', lambda *a: 'measured-rig')
     output = tmp_path/'evaluation/protocol.json'
     if valid:
         record = module.declare(tmp_path, demo, output, start, length, spacing, adaptive, height,
-                                10. if adaptive else None, relief)
+                                10. if adaptive else None, relief, slow)
         assert record['holdout_roi_m'] == [12., 15.]
         assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance',
                                                'stage_b_report_hash_valid', 'public_only_production_run']
@@ -111,6 +115,10 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
         assert record['d2']['settings']['max_q_shift_mm'] == (10. if adaptive else None)
         assert record['sampling']['spacing_q_m'] == spacing
         assert record['d3']['adaptive_attitude'] is adaptive
+        assert record['d3']['coarse_translation'] is slow
+        assert record['d3']['fit_translation'] is slow
+        assert record['d3']['translation_bound_mm'] == (30. if slow else 5.)
+        if slow:assert len(record['normal_backend_sha256'])==64
         assert record['code_commit'] == 'frozen' and output.exists()
         assert record['sampling']['schema'] == 'ssb.public_common_overlap.v4'
         assert record['sampling']['exact_plan_saved_before_truth'] is True
@@ -190,7 +198,7 @@ def test_relocated_audit_requires_exact_root_move_and_original_product_hashes(tm
 
 
 @pytest.mark.parametrize('relief,change', [(r,c) for r in (False,True) for c in
-    (None, 'spacing_m', 'height', 'max_width', 'halo_m', 'missing')]+[(True,'relief_settings')])
+    (None, 'spacing_m', 'height', 'max_width', 'halo_m', 'missing','normal_backend')]+[(True,'relief_settings')])
 def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_path, monkeypatch, change, relief):
     import ssb_tools.holdout_protocol as module
     root = tmp_path/'run'
@@ -201,7 +209,8 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
         outside_target_requires_public_footprint_proof=True, angular_gaps_not_trimmed=True,
         exact_plan_saved_before_truth=True)
     protocol = dict(schema='ssb.d3_holdout_protocol.v6', code_commit='frozen', holdout_roi_m=[12.,15.],
-        d2=dict(planning, settings={}), d3=dict(adaptive_attitude=True), sampling=sampling)
+        d2=dict(planning, settings={}), d3=dict(adaptive_attitude=True), sampling=sampling,
+        normal_backend_sha256='a'*64)
     if relief:
         from ssb_tools.surface_relief import ReliefSettings
         from dataclasses import asdict
@@ -214,9 +223,9 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
     (root/'unroll/report.json').write_text(json.dumps(dict(grid=dict(target_x_m=[12.,15.]))))
     report = dict(settings={}, planning=planning.copy())
     if change == 'missing': report.pop('planning')
-    elif change is not None and change != 'relief_settings': report['planning'][change] *= 2
+    elif change is not None and change not in ('relief_settings','normal_backend'): report['planning'][change] *= 2
     (root/'matches/report.json').write_text(json.dumps(report))
-    fit = dict(settings=protocol['d3'])
+    fit = dict(settings=protocol['d3'],normal_backend=dict(library_sha256='b'*64 if change=='normal_backend' else 'a'*64))
     if relief:
         fit['surface_relief'] = dict(settings=protocol['surface_relief'].copy())
         if change == 'relief_settings':
@@ -232,7 +241,8 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
     monkeypatch.setattr(module, 'capture_checks', lambda *a, **k: dict(binary_matches_source=True))
     monkeypatch.setattr(module, 'public_run_valid', lambda *a, **k: True)
     result = module.verify(protocol_file, root, tmp_path/'evaluation/verification.json')
-    assert result['checks']['d2_planning_unchanged'] is (change in (None,'relief_settings'))
+    assert result['checks']['d2_planning_unchanged'] is (change in (None,'relief_settings','normal_backend'))
+    assert result['checks']['normal_backend_identity'] is (change!='normal_backend')
     if relief:
         assert result['checks']['surface_relief_settings_unchanged'] is (change != 'relief_settings')
     assert result['status'] == ('pass' if change is None else 'fail')

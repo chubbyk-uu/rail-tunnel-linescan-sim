@@ -424,6 +424,11 @@ def make_robot(out,config,spec):
             warnings.filterwarnings('ignore', message='Gimbal lock detected')
             angles = (rotation*Rotation.from_euler('xyz', old[3:])).as_euler('xyz')
         node.text = pose(*xyz, *angles)
+    for side,sign in (('front',1),('rear',-1)):
+        nominal=np.array([sign*upper_half,0.,zc])
+        mounted=np.array(placement[:3])+rotation.apply([sign*upper_half,0.,0.])
+        if np.linalg.norm(mounted-nominal)>1e-7:
+            base_tube(side+'_mount_adapter',nominal,mounted,.018,METAL)
     for visual in car.findall('link/visual'):
         # Uniform rough finishes, small low-poly primitives; no extra texture maps.
         material=visual.find('material')

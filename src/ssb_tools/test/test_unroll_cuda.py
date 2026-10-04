@@ -97,7 +97,7 @@ def test_feature_search_failure_releases_real_cuda_context():
 
 
 @pytest.mark.parametrize('missing', [False, True])
-@pytest.mark.parametrize('fields', [4, 5, 6])
+@pytest.mark.parametrize('fields', [4, 5, 6, 'coarse6'])
 def test_global_cuda_matches_cpu_coupled_rays_and_invalid_native_samples(tmp_path, missing, fields):
     from ssb_tools.global_geometry import Trajectory, GeometrySettings
     from ssb_tools.global_cuda import GlobalCudaRaster
@@ -107,9 +107,10 @@ def test_global_cuda_matches_cpu_coupled_rays_and_invalid_native_samples(tmp_pat
     sampler.native.raw_rows[:, 16] = 255
     sampler.geometry_valid[7] = False
     sampler.native.valid[22] = False
-    model = Trajectory(sampler, 1., .7, GeometrySettings(fit_heave=fields == 5, fit_translation=fields == 6))
+    model = Trajectory(sampler, 1., .7, GeometrySettings(fit_heave=fields == 5,
+        fit_translation=fields in (6,'coarse6'),coarse_translation=fields=='coarse6'))
     coefficients = np.empty(model.size)
-    for k in range(fields):
+    for k in range(len(model.fields)):
         coefficients[model.starts[k]:model.starts[k+1]] = (.7-.25*k)+.12*np.sin(np.arange(model.sizes[k]))
     qs = np.linspace(-.14, .14, 31)
     xs = np.linspace(.35, .77, 49)

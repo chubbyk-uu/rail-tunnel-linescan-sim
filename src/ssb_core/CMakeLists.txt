@@ -21,6 +21,11 @@ target_include_directories(ssb_timing PUBLIC
 target_compile_options(ssb_timing PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(ssb_timing PUBLIC yaml-cpp nlohmann_json::nlohmann_json OpenSSL::Crypto)
 
+# Numeric CSR normal accumulation only: no CUDA, scene, filesystem or private inputs.
+add_library(ssb_normal SHARED src/normal_equations.cpp)
+target_compile_options(ssb_normal PRIVATE -O3 -Wall -Wextra -Wpedantic -ffp-contract=off)
+install(TARGETS ssb_normal LIBRARY DESTINATION lib)
+
 # Source-tree identity baked in at every build (DESIGN.md §12.1).
 set(SSB_STAMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/stamp")
 add_custom_target(ssb_build_stamp ALL
