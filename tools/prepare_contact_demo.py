@@ -71,6 +71,10 @@ def main():
     if out.exists():raise ValueError('refuse to overwrite prepared demo')
     out.mkdir(parents=True)
     c=yaml.safe_load(a.config.read_text());spec=yaml.safe_load(a.spec.read_text())
+    # Fresh contact worlds allow roll/heave before the lateral limit engages.
+    # Explicit archived values remain authoritative; absent legacy values are
+    # upgraded only here while regenerating the world, never during replay.
+    spec['robot'].setdefault('guide_bearing_clearance_m',.002)
     for values, keys, limit in ((a.mount_offset_mm, ('dy_m','dz_m'), 20.),
                                 (a.mount_tilt_mrad, ('tilt_y_rad','tilt_z_rad'), 2.)):
         if values is not None:
@@ -150,7 +154,7 @@ def main():
             replaced[mesh['file']]=str(new);mesh['file']=str(new);mesh['sha256']=digest(new)
         scene['geometry_replacement']=dict(folder=str(geometry),manifest_sha256=digest(geometry/'manifest.json'),
             light_leak_edges=0,reason='watertight lining (no T-junction gaps); same layout, joints and seed')
-    shutil.copyfile(a.spec,out/'spec.yaml')
+    (out/'spec.yaml').write_text(yaml.safe_dump(spec,sort_keys=False))
     scene['runtime_spec']={'file':str(out/'spec.yaml'),'sha256':digest(out/'spec.yaml')}
     scene['indirect_fill_relative']=spec['preview']['indirect_fill_relative']
     scene['work_light_preview']={k:v for k,v in spec['preview'].items() if k.startswith('work_light')}

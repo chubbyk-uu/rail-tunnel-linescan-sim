@@ -540,6 +540,31 @@ def test_patent_guides_touch_inner_rail_and_wheels_rest_on_top(tmp_path,inputs):
     assert sum(float(v.text) for v in car.findall('link/inertial/mass'))==120
 
 
+def test_contact_guide_clearance_is_explicit_and_collisions_remain(tmp_path,inputs):
+    from ssb_tools.stage_b_robot import make_robot
+    from ssb_tools.physical_world import describe,expected
+    config,spec=copy.deepcopy(inputs)
+    config['contact']={'enabled':True}
+    config['truth'].update(odo_left_diameter_m=.081,odo_right_diameter_m=.081)
+    config['calibration'].update(odo_left_diameter_m=.08,odo_right_diameter_m=.08)
+    spec['robot']['guide_bearing_clearance_m']=.002
+    car=make_robot(tmp_path,config,spec)
+    sdf=ET.Element('sdf');world=ET.SubElement(sdf,'world');world.append(car)
+    path=tmp_path/'world.sdf';ET.ElementTree(sdf).write(path)
+    actual=describe(path)['guide_bearings'];want=expected(config,spec)['guide_bearings']
+    assert len(actual)==4 and set(actual)==set(want)
+    for name,guide in actual.items():
+        assert guide['shape']=='cylinder'
+        assert guide['radius']==pytest.approx(.025)
+        assert guide['length']==pytest.approx(.024)
+        np.testing.assert_allclose(guide['pose'],want[name]['pose'],atol=1e-12)
+        assert spec['track']['gauge_m']/2-(abs(guide['pose'][1])+guide['radius'])==pytest.approx(.002)
+    # Old archived specs retain their historical 0.2 mm geometry on replay.
+    spec['robot'].pop('guide_bearing_clearance_m')
+    legacy=expected(config,spec)['guide_bearings'][next(iter(want))]
+    assert spec['track']['gauge_m']/2-(abs(legacy['pose'][1])+legacy['radius'])==pytest.approx(.0002)
+
+
 def test_track_sleepers_and_contact_planes(tmp_path,inputs):
     from ssb_tools.stage_b_track import make_track
     config,spec=inputs;track=make_track(tmp_path,config,spec)

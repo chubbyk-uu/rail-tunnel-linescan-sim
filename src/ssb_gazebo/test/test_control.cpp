@@ -320,6 +320,47 @@ TEST(Control, OvershootCannotBeDeclaredSuccessfulParking) {
   EXPECT_FALSE(controller.Complete());
 }
 
+TEST(Control, QuantizedEncoderParkingWithLoadedDriveLag) {
+  for(double lag:{.01,.15,.2}) {
+    ssb::Config::DistanceStop stop;
+    stop.target_m=3.;stop.timeout_s=40.;
+    ssb_gazebo::DistanceController controller;
+    const double calibrated=.08,actual=.081,dt=.001;
+    const double quantum=M_PI*calibrated/10000.;
+    double travel=0.,speed=0.;
+    for(int i=0;i<40000 && !controller.Complete();++i) {
+      const double estimate=std::floor(travel*calibrated/actual/quantum)*quantum;
+      const double measured_rate=speed*calibrated/actual;
+      const double target=controller.Update(stop,.2,i*dt,estimate,measured_rate,dt,true);
+      // Independent delayed plant. No true distance is passed to the controller.
+      speed+=(target*actual/calibrated-speed)*dt/(lag+dt);
+      travel+=speed*dt;
+    }
+    ASSERT_TRUE(controller.Complete())<<"lag="<<lag;
+    EXPECT_NEAR(travel,stop.target_m*actual/calibrated,.00015);
+    EXPECT_LT(std::abs(speed*calibrated/actual),stop.speed_tolerance_m_s);
+  }
+}
+
+TEST(Control, GuideBearingManifestChecksClearanceAndCollision) {
+  PhysicalFixture fixture;
+  const auto model=gz::sim::Model(fixture.car);
+  for(int i=0;i<4;++i) {
+    const auto name=std::string("guide_")+std::to_string(i);
+    sdf::Geometry geometry;geometry.SetType(sdf::GeometryType::CYLINDER);
+    sdf::Cylinder cylinder;cylinder.SetRadius(.025);cylinder.SetLength(.024);geometry.SetCylinderShape(cylinder);
+    AddShape(fixture.ecm,fixture.car,name,"guide_contact",geometry);
+    const auto link=model.LinkByName(fixture.ecm,name);
+    fixture.ecm.CreateComponent(link,gz::sim::components::Pose(gz::math::Pose3d(0.,.706,-.019,0,0,0)));
+    fixture.manifest["expected"]["guide_bearings"][name]=
+      {{"shape","cylinder"},{"radius",.025},{"length",.024},{"pose",{0.,.706,-.019,0.,0.,0.}}};
+  }
+  EXPECT_NO_THROW(ssb_gazebo::CheckPhysicalManifest(model,fixture.ecm,fixture.config,fixture.manifest));
+  const auto link=model.LinkByName(fixture.ecm,"guide_0");
+  fixture.ecm.Component<gz::sim::components::Pose>(link)->Data()=gz::math::Pose3d(0.,.7078,-.019,0,0,0);
+  EXPECT_THROW(ssb_gazebo::CheckPhysicalManifest(model,fixture.ecm,fixture.config,fixture.manifest),std::runtime_error);
+}
+
 TEST(Control, DriveIntegralHoldsAgainstGradeAndDoesNotWindUp) {
   ssb_gazebo::DriveController controller;
   double rate=0.;

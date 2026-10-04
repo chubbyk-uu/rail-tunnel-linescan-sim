@@ -138,6 +138,9 @@ def make_robot(out,config,spec):
     guide_radius=robot.get('guide_bearing_radius_m',.025)
     guide_width=robot.get('guide_bearing_width_m',.024)
     guide_z=-.019  # centre of the existing 38 mm rail head
+    guide_clearance=robot.get('guide_bearing_clearance_m',.0002) if contact else 0.
+    if not math.isfinite(guide_clearance) or not 0<=guide_clearance<=.005:
+        raise ValueError('guide bearing clearance must be within 5 mm')
     if not (.01<=guide_radius<=.04 and .01<=guide_width<=.035):
         raise ValueError('guide bearing must fit the rail-head side')
     cradle=robot['head_cradle_length_m'];floor_depth=robot['head_floor_depth_m'];floor_z=zc-floor_depth
@@ -199,7 +202,7 @@ def make_robot(out,config,spec):
             base_box(f'{side}_frame_socket_{x}',x,sign*(rail_y-.13),.245,'.10 .09 .095',METAL)
             # Patent [0038], bearings 351/352: vertical axes at the inner rail head.
             # Nominal tangent contact in the ideal guide; visual only, not contact dynamics.
-            gy=sign*(spec['track']['gauge_m']/2-guide_radius-(.0002 if contact else 0))
+            gy=sign*(spec['track']['gauge_m']/2-guide_radius-guide_clearance)
             tag=f'{side}_guide_{x}'
             base_cylinder(tag,x,gy,guide_z,guide_radius,guide_width,METAL)
             # Dark shields inset within the outer race, central sleeve and mounting spindle.
@@ -440,7 +443,7 @@ def make_robot(out,config,spec):
         for side,sign in [('left',1),('right',-1)]:
             for x in (-half,half):
                 tag=f'{side}_guide_{x}'
-                gy=sign*(spec['track']['gauge_m']/2-guide_radius-.0002)
+                gy=sign*(spec['track']['gauge_m']/2-guide_radius-guide_clearance)
                 bearing=sub(car,'link',name=tag);sub(bearing,'pose',pose(x,gy,guide_z))
                 inertial(bearing,.2,(.00004,.00004,.000063))
                 for visual in list(base.findall('visual')):

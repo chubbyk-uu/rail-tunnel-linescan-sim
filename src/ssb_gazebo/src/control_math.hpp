@@ -43,8 +43,11 @@ class DistanceController {
     if(remaining>stop.tolerance_m) {
       const double braking_remaining=std::max(0.,remaining-.02*std::max(0.,speed));
       desired=std::min(cruise*startup,cruise*std::sqrt(braking_remaining/stop.brake_distance_m));
-      // Resolve the last few encoder increments without an abrupt crossing.
-      desired=std::min(desired,remaining/.05);
+      // The loaded drive does not follow speed commands instantaneously.
+      // Approach on the declared ramp time instead of assuming a 50 ms plant;
+      // that assumption can cross the target before the drive has stopped.
+      // Both position and speed remain calibrated encoder observations.
+      desired=std::min(desired,remaining/stop.ramp_s);
     }
     command_=desired;
     const bool parked=std::abs(remaining)<=stop.tolerance_m &&

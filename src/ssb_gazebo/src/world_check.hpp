@@ -142,6 +142,21 @@ inline std::vector<std::string> CheckPhysicalManifest(const gz::sim::Model& car,
     pose_matches(rails,box.at("link_pose"),"rails link");
     pose_matches(collision,box.at("pose"),name);
   }
+  // Guide clearances and collision shapes belong to the physical assembly.
+  if(manifest.at("expected").contains("guide_bearings")) {
+    const auto& guides=manifest.at("expected").at("guide_bearings");
+    if(guides.size()!=4)fail("four guide bearings required");
+    for(const auto& [name,guide]:guides.items()) {
+      const auto link=car.LinkByName(ecm,name);
+      if(link==gz::sim::kNullEntity)fail("missing guide bearing "+name);
+      pose_matches(link,guide.at("pose"),name);
+      const auto* geometry=CollisionGeometry(ecm,car.Entity(),name,"guide_contact");
+      if(!geometry||!geometry->CylinderShape()||guide.at("shape")!="cylinder")fail("guide collision "+name);
+      if(std::abs(geometry->CylinderShape()->Radius()-guide.at("radius").get<double>())>1e-9||
+         std::abs(geometry->CylinderShape()->Length()-guide.at("length").get<double>())>1e-9)
+        fail("guide dimensions "+name);
+    }
+  }
   // Wheel collision radii: the truth diameters, not what the world happens to contain.
   const YAML::Node truth=YAML::Load(config_text)["truth"];
   auto radius=[&](const std::string& link,bool sphere)->double{

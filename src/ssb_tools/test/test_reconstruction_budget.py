@@ -1,6 +1,8 @@
 """Preflight uses nominal public geometry and allocates no images."""
 import copy
 import json
+from pathlib import Path
+import runpy
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,22 @@ import yaml
 from ssb_tools.global_geometry import reconstruction_settings
 from ssb_tools.reconstruction_budget import plan
 from test_wall_coverage import nominal
+
+
+@pytest.mark.parametrize('bad_source',['domain','hash'])
+def test_reused_combined_lining_rejects_bad_inputs_before_work(tmp_path,bad_source):
+    tool=Path(__file__).resolve().parents[3]/'tools/prepare_combined_20m.py'
+    build=runpy.run_path(str(tool))['build']
+    demo=tmp_path/'demo';demo.mkdir()
+    bounds=[-1.5,21.5] if bad_source=='domain' else [-2.5,22.5]
+    (demo/'capture.yaml').write_text(yaml.safe_dump(dict(tunnel=dict(x_min_m=bounds[0],x_max_m=bounds[1]))))
+    if bad_source=='hash':
+        (demo/'asset.bin').write_bytes(b'corrupted')
+        (demo/'bundle.json').write_text(json.dumps(dict(schema='ssb.demo_bundle.v1',files={'asset.bin':'0'*64})))
+    work,output=tmp_path/'work',tmp_path/'output'
+    with pytest.raises(ValueError,match='domain' if bad_source=='domain' else 'hash mismatch'):
+        build(demo,tmp_path/'sources',work,output,20261129,True)
+    assert not work.exists() and not output.exists()
 
 
 def test_budget_keeps_truth_out_and_reports_live_image_and_coefficient_caps():

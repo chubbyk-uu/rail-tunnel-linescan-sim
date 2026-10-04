@@ -85,7 +85,7 @@ def _travel_plan(config, start, distance, inspection_domain=True):
     open_deg = (gate['end_deg']-gate['start_deg']) % 360.
     initial_phase = (m['start_theta_deg']-gate['start_deg']) % 360.
     entry_deg = 0. if initial_phase < open_deg else 360.-initial_phase
-    ramp_distance = speed*ramp/2
+    ramp_distance = speed*ramp if 'distance_stop' in m else speed*ramp/2
     # Predetermined nominal head-x interval, not a crop inferred from recorded rows.
     # A full bottom arc bounds the unexposed tail for any requested stop phase.
     # 10 mm covers nominal servo/encoder lag and avoids testing exact gate boundaries.
@@ -138,8 +138,9 @@ def wall_plan(config, start, length, calibration, guard=.01, grid_pitch=.0002, r
     if footprint < row_step:
         raise ValueError('Nominal perpendicular pixel footprint is narrower than the row sampling step')
     speed = pitch*config['motion']['line_rate_hz']/rows_per_rev
-    # At most one second ramps, so this upper bound also works for short/faster tasks.
-    ramp_margin = speed/2
+    # Startup advances at most speed/2. The encoder-only terminal approach
+    # starts at one ramp-time of remaining travel to tolerate drive lag.
+    ramp_margin = speed if config.get('contact', {}).get('enabled') else speed/2
     mount = config['calibration']['head_mount_x_m']
     radius = float(config['calibration']['radius_m'])
     height = float(config['robot']['scan_axis_height_m'])

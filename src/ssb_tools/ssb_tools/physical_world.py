@@ -63,9 +63,14 @@ def describe(world_path, snapshot=None):
                           size=_floats(shape.findtext('size')), samples=[width, height],
                           file=Path(shape.findtext('uri')).name, path=str(path), sha256=sha256(path)))
     car = root.find(".//model[@name='scan_car']")
-    wheels, joints = {}, {}
+    wheels, joints, guides = {}, {}, {}
     if car is not None:
         for link in car.findall('link'):
+            guide=link.find("collision[@name='guide_contact']/geometry")
+            if guide is not None:
+                shape=next(iter(guide)).tag
+                guides[link.get('name')]=dict(shape=shape,pose=_floats(link.findtext('pose','0 0 0 0 0 0')),
+                    radius=float(guide.findtext(f'{shape}/radius')),length=float(guide.findtext(f'{shape}/length','0')))
             geometry = link.find("collision[@name='tread_contact']/geometry")
             if geometry is None: continue
             kind = next(iter(geometry)).tag
@@ -99,7 +104,7 @@ def describe(world_path, snapshot=None):
                             axis=_floats(scan.findtext('axis/xyz', '0 0 0')),
                             axis_frame=scan.find('axis/xyz').get('expressed_in', ''))
     return dict(rails=sorted(rails, key=lambda r: r['name']), rail_boxes=sorted(boxes, key=lambda b: b['name']),
-                wheels=wheels, joints=joints, scanner_assembly=assembly)
+                wheels=wheels, joints=joints, scanner_assembly=assembly,guide_bearings=guides)
 
 
 def expected(config, spec):
@@ -124,12 +129,19 @@ def expected(config, spec):
              for side, sign in (('left', 1), ('right', -1))]
     truth = config['truth']
     wheels = {name: dict(shape='cylinder', radius=truth['wheel_diameter_m']/2) for name in RUNNING_WHEELS}
-    joints = {}
+    joints, guides = {}, {}
     compliance = truth.get('wheel_compliance')
     if compliance:
         for name in SUSPENSION:
             joints[name] = dict(stiffness=compliance['stiffness_n_m'], damping=compliance['damping_n_s_m'], reference=0.)
     if config.get('contact', {}).get('enabled'):
+        clearance=robot.get('guide_bearing_clearance_m',.0002)
+        radius=robot.get('guide_bearing_radius_m',.025)
+        length=robot.get('guide_bearing_width_m',.024)
+        for side,sign in (('left',1),('right',-1)):
+            for x in (-robot['wheelbase_m']/2,robot['wheelbase_m']/2):
+                guides[f'{side}_guide_{x}']=dict(shape='cylinder',radius=radius,length=length,
+                    pose=[x,sign*(track['gauge_m']/2-radius-clearance),-.019,0.,0.,0.])
         m = robot['measuring_wheel']
         for side, prefix in MEASURING.items():
             wheels[prefix+'_wheel'] = dict(shape='sphere', radius=truth[f'odo_{side}_diameter_m']/2)
@@ -137,7 +149,7 @@ def expected(config, spec):
                                           reference=-m['preload_n']/m['spring_rate_n_m'],
                                           lower=-m['travel_m'], upper=m['travel_m'])
     return dict(settings=s, x_range_m=[x0, x1], head_y_m=head_y, head_width_m=track['head_width_m'],
-                segment_samples=SEGMENT_SAMPLES, rails=rails, rail_boxes=boxes, wheels=wheels, joints=joints)
+                segment_samples=SEGMENT_SAMPLES, rails=rails, rail_boxes=boxes, wheels=wheels, joints=joints,guide_bearings=guides)
 
 
 def write_manifest(world_path, config, spec):
@@ -257,6 +269,13 @@ def check(config, spec, world_path, manifest_path=None, snapshot=None, decode=Tr
                  if n not in have['joints'] or any(abs(have['joints'][n][k]-v) > 1e-9*max(1., abs(v)) for k, v in j.items())]
     extra = [n for n in have['joints'] if n not in want['joints']]
     record('springs_match_configuration', not joint_bad and not extra, mismatched=joint_bad, unexpected=extra)
+    def guides_match(a,b):
+        return (set(a)==set(b) and all(a[n]['shape']==b[n]['shape'] and _close(a[n]['pose'],b[n]['pose']) and
+            abs(a[n]['radius']-b[n]['radius'])<1e-9 and abs(a[n]['length']-b[n]['length'])<1e-9 for n in a))
+    record('guide_bearings_match_configuration',guides_match(have['guide_bearings'],want['guide_bearings']))
+    listed_guides=manifest['actual'].get('guide_bearings') if manifest is not None else None
+    if listed_guides is not None:
+        record('guide_bearings_match_manifest',guides_match(have['guide_bearings'],listed_guides))
     from .robot_geometry import assembly_pose, mount_geometry
     base_z, _ = mount_geometry(config)
     assembly = dict(base_pose=[0.,0.,base_z,0.,0.,0.], head_pose=assembly_pose(config),

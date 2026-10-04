@@ -18,7 +18,7 @@ def nominal():
     width = 4096; fov = .8522592711111112
     config = dict(camera=dict(width=width, fov_at_nominal_m=fov, nominal_distance_m=2.75,
                               optical_signature='measured-rig'),
-                  tunnel=dict(x_min_m=-1.5, x_max_m=21.5),
+                  tunnel=dict(x_min_m=-2., x_max_m=22.),
                   robot=dict(scan_axis_height_m=1.715),
                   mission=dict(inspection_x_m=[0.,20.],vehicle_half_length_m=.56,safety_margin_m=.09,minimum_distance_m=1.),
                   motion=dict(start_x_m=3., start_theta_deg=180., advance_per_rev_m=.6,
@@ -51,6 +51,7 @@ def nominal_lines(config, task):
 
 def test_relative_scale_planner_reserves_public_uncertainty_and_requires_real_buffer(nominal):
     config, calibration = nominal
+    config['tunnel'].update(x_min_m=-1.5, x_max_m=21.5)
     with pytest.raises(ValueError, match='margin'):
         wall_plan(config, 0., 20., calibration, relative_encoder_scale=True)
     config['tunnel'].update(x_min_m=-2.5, x_max_m=22.5)

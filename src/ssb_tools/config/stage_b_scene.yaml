@@ -53,6 +53,7 @@ robot:
     wheel_mass_kg: 0.15
   guide_bearing_radius_m: 0.025 # estimated; vertical spindle, tangent to inner rail head
   guide_bearing_width_m: 0.024 # estimated axial width, contained within 38 mm head
+  guide_bearing_clearance_m: 0.002 # per side; avoids wedging the rolling chassis on irregular rails
   head_cradle_length_m: 0.56 # updated machine photos; unmeasured envelope estimate
   head_floor_depth_m: 0.215 # floor centre below shaft; lowered by 10 mm
   post_top_spacing_m: 0.62   # nearly vertical, outside the U cradle
