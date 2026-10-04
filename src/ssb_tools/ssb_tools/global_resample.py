@@ -77,6 +77,7 @@ def load_global(root, sampler, upstream, d1_root):
         bound = 10. if field in (2, 3) else settings.translation_bound_mm if field > 3 else 30.
         if np.any(abs(coefficients[model.starts[field]:model.starts[field+1]]) > bound+1e-7):
             raise ValueError('global trajectory exceeds declared physical bounds')
+    model.prepare_ray_cache(coefficients)
     return model, coefficients, report, paths
 
 

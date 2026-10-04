@@ -13,7 +13,6 @@ import time
 import cv2
 import numpy as np
 from scipy.ndimage import map_coordinates
-from scipy.interpolate import BSpline
 
 from .global_resample import load_global, sample_corrected
 from .match_bands import verified_bands
@@ -101,9 +100,7 @@ def stereo_flow(a, b):
 def camera_axis(model, coefficients, band, qs):
     ids = model.sampler.row_sources(band, qs/model.radius)[0]
     axis = model.sampler.projection['x_axis_m'][ids]
-    c = np.column_stack([np.asarray(BSpline(k,
-        coefficients[model.starts[i]:model.starts[i+1]]*model.scale, 3)(axis))
-        for i, k in enumerate(model.knots)])
+    c = model.ray_parameters(ids, coefficients)
     return axis+c[:, 0]+model.height*np.sin(c[:, 3])*np.cos(c[:, 2])
 
 

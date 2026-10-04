@@ -202,6 +202,7 @@ class Trajectory:
             raise ValueError('positive nominal radius and support height required')
         self.sampler, self.radius, self.height, self.settings = sampler, radius, height, settings
         self.relief = None
+        self._ray_cache = None
         axis = sampler.projection['x_axis_m']
         self.domain = [float(axis.min()), float(axis.max())]
         if knots is None:
@@ -242,6 +243,49 @@ class Trajectory:
             local = self.parameters(coefficients, bases)
         return cylinder_points(axis, theta, tangent, local,
                                self.radius, self.height)
+
+    def prepare_ray_cache(self, coefficients, budget_bytes=256 << 20):
+        """Cache image-fitted corrections on public exposure progress, never poses.
+
+        Reconstruction holds a fixed trajectory. Native row identities select
+        the same spline arguments on every inverse iteration. Changed coefficient
+        values or source progress fall back to direct evaluation, not stale data.
+        The bounded cache is memory only, shared read-only by evaluation workers.
+        """
+        coefficients = np.asarray(coefficients, float)
+        if coefficients.shape != (self.size,) or not np.isfinite(coefficients).all():
+            raise ValueError('finite verified coefficients required for ray cache')
+        axis = self.sampler.projection['x_axis_m']
+        if type(budget_bytes) is not int or not 0 < budget_bytes <= 256 << 20:
+            raise ValueError('ray cache budget must be within 256 MiB')
+        needed = len(axis)*(len(self.fields)+1)*8+coefficients.nbytes+sum(k.nbytes for k in self.knots)
+        if needed > budget_bytes:
+            self._ray_cache = None
+            return 0
+        table = np.empty((len(axis), len(self.fields)), np.float64)
+        splines = [BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
+                          extrapolate=False) for i, k in enumerate(self.knots)]
+        for first in range(0, len(axis), CHUNK_RAYS):
+            sl = slice(first, first+CHUNK_RAYS)
+            for field, spline in enumerate(splines):
+                table[sl, field] = spline(axis[sl])
+        saved_axis, saved_coefficients = axis.copy(), coefficients.copy()
+        saved_knots = [k.copy() for k in self.knots]
+        for array in (table, saved_axis, saved_coefficients, *saved_knots):
+            array.flags.writeable = False
+        self._ray_cache = (table, saved_axis, saved_coefficients, saved_knots)
+        return needed
+
+    def ray_parameters(self, ids, coefficients):
+        axis = self.sampler.projection['x_axis_m'][ids]
+        cached = self._ray_cache
+        if (cached is not None and np.array_equal(coefficients, cached[2]) and
+                np.array_equal(axis, cached[1][ids]) and
+                len(self.knots) == len(cached[3]) and
+                all(np.array_equal(k, old) for k, old in zip(self.knots, cached[3]))):
+            return cached[0][ids]
+        return np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
+                                       extrapolate=False)(axis) for i, k in enumerate(self.knots)])
 
     def native_side(self, table, side):
         """Four measured native pixel centres and their interpolation weights."""
@@ -294,23 +338,17 @@ class Trajectory:
             axis = p['x_axis_m']; theta = p['theta_rad']-2*math.pi*p['segment']
             theta = np.where(lo == hi, q.ravel()/self.radius, theta)
             tangent = (x.ravel()-axis)/self.radius
-            if radial_depth is not None:
-                local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
-                    extrapolate=False)(axis) for i, k in enumerate(self.knots)])
-                points = cylinder_points(axis, theta, tangent, local, self.radius, self.height,
-                                         np.broadcast_to(radial_depth, x.shape).ravel())
-            else:
-                points = self.points(axis, theta, tangent, coefficients)
+            local = self.ray_parameters(ids, coefficients)
+            depth = np.broadcast_to(radial_depth, x.shape).ravel() if radial_depth is not None else 0.
+            points = cylinder_points(axis, theta, tangent, local, self.radius, self.height, depth)
             if self.relief is not None and radial_depth is None:
                 depth = self.relief.depth(points[:, 0], points[:, 1])
                 affected = depth > 0
                 if affected.any():
-                    local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
-                        extrapolate=False)(axis[affected]) for i, k in enumerate(self.knots)])
                     for _ in range(8):
                         current = points[affected]
                         depth = self.relief.depth(current[:, 0], current[:, 1])
-                        updated = cylinder_points(axis[affected], theta[affected], tangent[affected], local,
+                        updated = cylinder_points(axis[affected], theta[affected], tangent[affected], local[affected],
                                                   self.radius, self.height, depth)
                         change = np.max(abs(updated-current), initial=0.)
                         points[affected] = updated
