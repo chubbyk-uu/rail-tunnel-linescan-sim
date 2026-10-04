@@ -2,12 +2,19 @@
 
 更新：2026-10-04。大型本机资产和会话不进 Git。清理只针对已完成的重复计算、重放及界面测试；生成、采集、重建中的文件不能删除。
 
-本次共享深度修复收尾：50 个正式证据哈希、两个导出包各 344 个文件均核对通过，217 项开发与测试记录逐项校验后集中归档（约 61 MB）。删除本轮开发目录、导出前中间世界和 16 个测试临时夹具目录，按 inode/硬链接计数预计净释放约 2.13 GiB；保留在正式会话中的原图硬链接不算释放空间。正式采集与独立重成像未删除或去重，首次缺测候选与失败测试日志仍在归档。
+最新 review 数据固化：本轮三档 3 m 和新采 20 m 的原图、独立重成像、曝光/编码器、D1、匹配、轨迹和共享深度已从 `/tmp` 直接迁入 `sessions/review_fixes_distance_20261004/` 与 `sessions/review_fixes_mission_20m_20261004/`。连同旧 20 m 整图的覆盖游程、预览和报告，共约 29.45 GiB；3,200 个文件路径、2,405 个独立 inode 的迁移前后哈希一致，原有硬链接关系保留，没有创建新硬链接或软链接。旧 `/tmp` 采集根目录已不存在，四批长期路径的实际读取及 CUDA/CPU 深度探针验证通过。原始报告、清单及首次验收字节不改写；路径映射在 `local_data/evaluation/review_fixes_20261004/relocation.json`，读取复核在 `relocation_readers.json`。
+
+此前按用户指定删除 16 个测试临时夹具目录，释放约 2.10 GiB，48 个日志/XML 等文件和 155 项归档哈希均核验保留，记录为同目录 `cleanup_tests_20261004.json`。数据迁移后，按用户指示清理本轮剩余 `/tmp/ssb_fix_*` 数据及一个归档辅助脚本，共 44 个顶层条目；其中旧 20 m 可重建的 `mosaic_u16.npy`、`mosaic_count.npy` 已删除。删除前再次核验长期目录的 3,200 个文件路径、2,405 个独立文件哈希和原 155 项证据；其余 790 个诊断/日志文件集中压缩并逐项校验，归档约 41.45 MiB，净释放约 16.25 GiB。记录为 `cleanup_tmp_20261004.json`，补充归档为 `tmp_retained_before_cleanup_20261004.tar.gz`。其他 `/tmp` 数据未处理；长期保留的预览/覆盖目录不包含两幅像素数组，整图回读需要按原图和参数重新生成。
+
+历史共享深度修复收尾：50 个正式证据哈希、两个导出包各 344 个文件均核对通过，217 项开发与测试记录逐项校验后集中归档（约 61 MB）。删除当轮开发目录、导出前中间世界和 16 个测试临时夹具目录，按 inode/硬链接计数预计净释放约 2.13 GiB；保留在正式会话中的原图硬链接不算释放空间。正式采集与独立重成像未删除或去重，首次缺测候选与失败测试日志仍在归档。
 
 ## 当前保留
 
 | 数据 | 位置 | 用途 |
 |---|---|---|
+| review 修复后的三档 3 m 新采 | `sessions/review_fixes_distance_20261004/images_{80,79,81}/` | 保留各批 `capture/`、独立 `reimage/`、`capture_dynamics/`、`unroll/`、`production/` 和独立几何报告；已知种子开发回归，已测 P95≤1 px，但新严格门限各有 828 个缺测诊断点而失败 |
+| review 修复后的 20 m 新采 | `sessions/review_fixes_mission_20m_20261004/` | 原图在 `sessions/20261004_164412_ba34f8df/`，独立重成像为 `wall_replay/`，保留 `unroll/`、`production/` 和独立评分；2,074,077 行，采集及图像一致性通过，严格接缝因 27 个缺测诊断点失败 |
+| review 修复与迁移证据 | `local_data/evaluation/review_fixes_20261004/` | 691 项测试、故障注入、逐点评分、源码快照、迁移前后完整文件哈希和读取验证；`mosaic_retained/` 保留旧 20 m 整图报告、预览、完整覆盖游程，像素数组已清理、可重新生成；补充归档保留剩余临时诊断与日志 |
 | 共享径向深度的两个独立留出 | `sessions/relief81_holdout_20261004/`、`sessions/relief81_cached_holdout_20261004/`、同名 `local_data/evaluation/`；`local_data/stage_b/relief81_seed20261013_bundle/`、`relief81_seed20261017_bundle/` | 分别冻结 `a16958f`、`857f5c7`，新种子 20261013、20261017，[8,11] m，真实 81 / 标定 80 mm。每次 25 项阶段 B、16 项协议 v7 通过；完整原图与实际独立重成像分别保留，未去重 |
 | 共享深度与等价缓存回归 | `sessions/relief_final_20261004/`、`sessions/relief_cached_20261004/`、同名 `local_data/evaluation/` | 原 79/80/81 mm 及 20 m 高环缝噪声原图回归，主门限和四边支撑通过；缓存前后匹配、轨迹、深度数组、取点计划及逐点评价一致。汇总 `relief_cached_20261004/summary.json` 绑定 50 个证据哈希；不是新 20 m 轮径误差采集 |
 | 共享深度根因及本轮开发归档 | `local_data/evaluation/relief_root_20261004/`；`local_data/evaluation/relief_cached_20261004/development_and_tests.tar.gz`、`archive_hashes.json`、`cleanup.json` | 保留真实网格/理想圆柱隔离诊断、缺测候选、原型图像、性能对照、失败测试及最终 661 项测试日志。归档排除重复原图、D1 投影和临时测试夹具，不是完整可运行会话；逐项校验后清理本轮开发目录和导出前中间世界 |
@@ -60,6 +67,22 @@
 部分文件采用硬链接，按目录分别执行 `du` 后再相加会重复计算。后续评估保留数据时既看运行依赖，也看评价端依赖，不能只因默认演示已独立打包就删除全部旧生成链。
 
 D1 v2 不保留原始列浮点缓存，因此其后续匹配仍依赖 `native_source.json` 所列的原图块。迁移 D1 时需同时保留这些块，并通过 D2 的 `--raw` 指定迁移后的原图目录；不能因展开产物已生成就删除原始采集。
+
+本轮迁移后的历史 `native_source.json` 和审计报告仍记录当时的 `/tmp` 路径，不能直接使用旧路径。重建/评价传入长期 `--unroll`、`--trajectory`、`--session` 和显式 `--raw`；历史审计产物身份按 `relocation.json` 映射核对，迁移不重新生成首次验收。匹配重跑使用新输出目录；标定的字节相同副本在 `local_data/evaluation/review_fixes_20261004/relocated_inputs/calibration.json`。例如重新评分新采 20 m：
+
+通用审计复核已支持显式迁移清单：`python3 -m ssb_tools.holdout_protocol audit-public --root sessions/review_fixes_mission_20m_20261004/production --relocation local_data/evaluation/review_fixes_20261004/relocation.json --output local_data/evaluation/relocated_audit_NEW.json`。逐项绑定原报告的哈希、根目录迁移关系和现存产物，拒绝重名、越界或哈希变更。这个通过仅代表原审计产物内容身份，不表示几何通过或新的冻结采集；不改写旧报告。
+
+```bash
+python3 -m ssb_tools.evaluate_global_geometry \
+  --session sessions/review_fixes_mission_20m_20261004/sessions/20261004_164412_ba34f8df \
+  --unroll sessions/review_fixes_mission_20m_20261004/unroll \
+  --trajectory sessions/review_fixes_mission_20m_20261004/production/fit \
+  --raw sessions/review_fixes_mission_20m_20261004/sessions/20261004_164412_ba34f8df/raw \
+  --output local_data/evaluation/review_fixes_20m_recheck_NEW --strict \
+  > /tmp/ssb_relocated_20m_recheck.log 2>&1
+```
+
+现有数据的严格接缝门限仍失败，命令应退出非零；迁移不会改变几何结果，不表示新的冻结或盲验。
 
 ## 清理原则与历史缺口
 

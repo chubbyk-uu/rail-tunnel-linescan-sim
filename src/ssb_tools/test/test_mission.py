@@ -245,6 +245,50 @@ def test_unknown_task_mode_is_rejected_before_queueing():
     assert fake.commands.empty() and fake.state == 'idle' and not fake.command_result['ok']
 
 
+@pytest.mark.parametrize('state', ['running', 'paused'])
+def test_stale_gazebo_telemetry_fails_even_when_process_is_alive(monkeypatch, state):
+    import threading
+    from types import SimpleNamespace
+    import ssb_tools.mission_manager as module
+    fake = SimpleNamespace(state=state, server=SimpleNamespace(poll=lambda: None),
+        lock=threading.RLock(), last_received=100., args=SimpleNamespace(status_timeout_s=10.),
+        latest=dict(capture={}, motion_complete=False))
+    monkeypatch.setattr(module.time, 'monotonic', lambda: 111.)
+    with pytest.raises(RuntimeError, match='telemetry expired'):
+        module.MissionManager.check_active(fake)
+    # A recent paused heartbeat does not require progress in simulation time.
+    fake.last_received = 110.
+    module.MissionManager.check_active(fake)
+
+
+@pytest.mark.parametrize('state', ['idle', 'starting', 'draining', 'complete', 'stopped', 'failed'])
+def test_telemetry_watchdog_does_not_replace_startup_or_drain_deadlines(state):
+    from types import SimpleNamespace
+    from ssb_tools.mission_manager import MissionManager
+    MissionManager.check_active(SimpleNamespace(state=state, server=SimpleNamespace(poll=lambda: None)))
+
+
+def test_worker_marks_stale_task_failed_and_fresh_messages_cannot_resume_it(monkeypatch):
+    import queue
+    import threading
+    from types import SimpleNamespace
+    import ssb_tools.mission_manager as module
+    fake = SimpleNamespace(state='running', server=SimpleNamespace(poll=lambda: None),
+        lock=threading.RLock(), last_received=0., args=SimpleNamespace(status_timeout_s=10.),
+        latest=dict(capture={}, motion_complete=False), closing=threading.Event(), commands=queue.Queue())
+    fake.check_active = lambda: module.MissionManager.check_active(fake)
+    errors = []
+    def fail(error):
+        errors.append(str(error)); fake.state = 'failed'; fake.closing.set()
+    fake.fail = fail
+    monkeypatch.setattr(module.time, 'monotonic', lambda: 11.)
+    module.MissionManager.work(fake)
+    assert fake.state == 'failed' and len(errors) == 1 and 'telemetry expired' in errors[0]
+    fake.last_received = 11.
+    module.MissionManager.check_active(fake)
+    assert fake.state == 'failed'
+
+
 def test_preview_moves_sprung_axles_and_measuring_sliders(tmp_path):
     pytest.importorskip('geometry_msgs')
     from builtin_interfaces.msg import Time

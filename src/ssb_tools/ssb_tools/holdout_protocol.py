@@ -110,8 +110,38 @@ def capture_checks(session, expected_commit, require_report_identity=False):
     return result
 
 
-def public_run_valid(root, strong=True):
+def relocated_outputs(outputs, root, relocation):
+    """Verify an explicit content-preserving move; never rewrite old evidence."""
+    manifest = read_json(relocation)
+    if manifest.get('schema') != 'ssb.review_data_relocation.v1' or manifest.get('status') != 'complete':
+        raise ValueError('completed relocation manifest required')
+    records = manifest.get('files', [])
+    entries = {item['original']: item for item in records}
+    if len(entries) != len(records) or len({item['durable'] for item in records}) != len(records):
+        raise ValueError('duplicate relocation identity')
+    translated = {}
+    for source, digest in outputs.items():
+        original = Path(source).resolve()
+        if original.is_relative_to(root):
+            destination = original
+        else:
+            item = entries.get(source)
+            if item is None or item.get('sha256') != digest:
+                raise ValueError('relocation does not bind the audited product hash')
+            destination = Path(item['durable']).resolve()
+            moves = [Path(move['durable']).resolve()/original.relative_to(Path(move['original']).resolve())
+                     for move in manifest.get('roots', []) if original.is_relative_to(Path(move['original']).resolve())]
+            if len(moves) != 1 or moves[0] != destination:
+                raise ValueError('relocation file differs from declared root move')
+        if destination.parent not in (root/'matches', root/'fit') or str(destination) in translated:
+            raise ValueError('relocation escapes or duplicates the audited product directory')
+        translated[str(destination)] = digest
+    return translated
+
+
+def public_run_valid(root, strong=True, relocation=None):
     """The scored D2/D3 products are exactly those of the audited public-only run."""
+    root = Path(root).resolve()
     path = root/'public_run/report.json'
     if not path.is_file():
         return False
@@ -121,15 +151,19 @@ def public_run_valid(root, strong=True):
                for p in sorted((root/name).iterdir()) if p.is_file()} if all(
                    (root/name).is_dir() for name in ('matches', 'fit')) else {}
     states = report.get('audit_states', [])
-    audited = (report.get('schema') == 'ssb.public_reconstruction.v2' and bool(states) and
+    audited = (report.get('schema') in ('ssb.public_reconstruction.v2', 'ssb.public_reconstruction.v3') and bool(states) and
                all(s.get('policy') == POLICY and s.get('installed') is True and
                    type(s.get('blocked_reads')) is int and s['blocked_reads'] == 0 and
                    type(s.get('data_reads')) is int and s['data_reads'] > 0 for s in states))
     if not strong and report.get('schema') == 'ssb.public_reconstruction.v1':
         audited = True  # historical v4 evidence retains its original, weaker meaning
-    return (audited and report.get('status') == 'pass' and
+    completed = (report.get('status') == 'complete' and report.get('audit_status') == 'pass'
+                 if report.get('schema') == 'ssb.public_reconstruction.v3' else report.get('status') == 'pass')
+    expected = (relocated_outputs(outputs, root, relocation) if relocation is not None else
+                {str(Path(k).resolve()): v for k, v in outputs.items()})
+    return (audited and completed and
             report.get('private_input_opens') == 0 and bool(current) and
-            {str(Path(k).resolve()): v for k, v in outputs.items()} == current)
+            expected == current)
 
 
 def verify(protocol_file, root, output):
@@ -206,11 +240,29 @@ def main():
     verification = sub.add_parser('verify')
     for name in ('protocol', 'root', 'output'):
         verification.add_argument('--'+name, required=True)
+    audit = sub.add_parser('audit-public', help='verify retained public products, optionally through an explicit relocation')
+    audit.add_argument('--root', required=True)
+    audit.add_argument('--relocation')
+    audit.add_argument('--output', required=True)
     args = parser.parse_args()
     if args.action == 'declare':
         declare(args.workspace, args.demo, args.output, args.start, args.length,
                 args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm, args.surface_relief)
         return 0
+    if args.action == 'audit-public':
+        output = evaluation_path(args.output)
+        if output.exists(): raise ValueError('use a fresh audit record; preserve earlier evidence')
+        root = Path(args.root).resolve()
+        valid = public_run_valid(root, relocation=args.relocation)
+        inputs = [root/'public_run/report.json']
+        if args.relocation: inputs.append(Path(args.relocation).resolve())
+        report = dict(schema='ssb.public_run_identity_check.v1', status='pass' if valid else 'fail',
+                      input_hashes={str(p): sha256_file(p) for p in inputs},
+                      scope='audited product content identity only; not geometric quality or a new frozen capture')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2)+'\n')
+        print(json.dumps(report))
+        return 0 if valid else 1
     report = verify(args.protocol, args.root, args.output)
     print(json.dumps(report))
     return 0 if report['status'] == 'pass' else 1

@@ -115,6 +115,7 @@ void MissionPanel::saveReview(const QString& name) {
   getDisplayContext()->getViewManager()->getRenderPanel()->getRenderWindow()
     ->captureScreenShot((prefix+"scene.png").toStdString());
   QJsonObject result{{"connected", connected_}, {"begin_enabled", begin_->isEnabled()},
+    {"telemetry_stale", telemetry_stale_},
     {"pause_enabled", pause_->isEnabled()}, {"resume_enabled", resume_->isEnabled()},
     {"stop_enabled", stop_->isEnabled()}, {"status", status_->text()},
     {"state", last_state_}, {"pending", pending_}, {"error", error_->text()},
@@ -161,6 +162,9 @@ void MissionPanel::showStatus(const QString& text) {
   const auto object = doc.object(); const QString state = object["state"].toString();
   last_state_ = state;
   connected_ = true; watchdog_->start();
+  const bool active = state == "running" || state == "paused";
+  telemetry_stale_ = active && (object["telemetry_stale"].toBool() ||
+    (object.contains("status_age_s") && object["status_age_s"].toDouble() > object["status_timeout_s"].toDouble(10.)));
   const auto limits=object["mission_limits"].toObject();
   const auto domain=limits["inspection_x_m"].toArray();
   const double minimum=limits["minimum_distance_m"].toDouble();
@@ -188,7 +192,8 @@ void MissionPanel::showStatus(const QString& text) {
   const QJsonObject labels{{"idle", "Ready"}, {"starting", "Initializing"}, {"running", "Running"},
     {"paused", "Paused"}, {"draining", "Saving pending images"},
     {"complete", "Capture complete; correction before stitching"}, {"stopped", "Stopped early; raw data saved"}, {"failed", "Failed"}};
-  status_->setText("Status: "+labels[state].toString(state)+(object["dynamics_only"].toBool() ? " (dynamics only; no images)" : ""));
+  status_->setText("Status: "+labels[state].toString(state)+(telemetry_stale_ ? " (Gazebo telemetry expired)" : "")+
+    (object["dynamics_only"].toBool() ? " (dynamics only; no images)" : ""));
   const double travelled = object["distance_estimated_m"].toDouble();
   const double distance = state == "idle" ? distance_->value() : object["task"].toObject()["distance_m"].toDouble();
   progress_->setText(QString("Travel: %1 m; remaining: %2 m\nSpeed: %3 m/s; scan: %4 rad/s\nRows: generated %5 / saved %6\nImaging lag: %7 s\nScan angle: %8 rad")
@@ -197,17 +202,20 @@ void MissionPanel::showStatus(const QString& text) {
     .arg(object["rows_generated"].toDouble(),0,'f',0).arg(object["rows_saved"].toDouble(),0,'f',0)
     .arg(object["imaging_lag_s"].toDouble(),0,'f',3).arg(object["scan_rad"].toDouble(),0,'f',3));
   output_->setText("Output: "+object["output"].toString());
-  error_->setText(command_error_.isEmpty() ? object["error"].toString() : command_error_);
+  QString error = command_error_.isEmpty() ? object["error"].toString() : command_error_;
+  if (telemetry_stale_ && error.isEmpty()) error = "Gazebo telemetry expired; waiting for mission failure handling.";
+  error_->setText(error);
 }
 
 void MissionPanel::updateControls() {
   const bool terminal = last_state_ == "idle" || last_state_ == "complete" || last_state_ == "stopped" || last_state_ == "failed";
-  const bool available = connected_ && limits_ready_ && pending_.isEmpty();
+  const bool can_stop = connected_ && limits_ready_ && pending_.isEmpty();
+  const bool available = can_stop && !telemetry_stale_;
   start_->setEnabled(terminal && available); distance_->setEnabled(terminal && available);
   mode_->setEnabled(terminal && available);
   begin_->setEnabled(terminal && available); pause_->setEnabled(last_state_ == "running" && available);
   resume_->setEnabled(last_state_ == "paused" && available);
-  stop_->setEnabled((last_state_ == "running" || last_state_ == "paused") && available);
+  stop_->setEnabled((last_state_ == "running" || last_state_ == "paused") && can_stop);
 }
 
 void MissionPanel::updateExtent() {

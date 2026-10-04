@@ -26,7 +26,7 @@ from .session import Session, read_json, sha256_file
 from .parallel_budget import resolve_workers
 from .stage_b_scene import peak_rss_bytes
 
-SAMPLING_SCHEMA = 'ssb.public_common_overlap.v2'
+SAMPLING_SCHEMA = 'ssb.public_common_overlap.v3'
 _SHARED = None
 
 
@@ -152,7 +152,7 @@ def shared_seam_plan(model, coefficients, grid, spacing_m=.2, workers=1):
     coefficients = np.asarray(coefficients, float)
     if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all():
         raise ValueError('finite verified trajectory required for a public seam plan')
-    plan = seam_plan(model.sampler, grid, spacing_m)
+    plan = seam_plan(model.sampler, grid, spacing_m, reach_margin=.03+.04*(model.radius+model.height))
     planned = [index for index, window in enumerate(plan) if window['status'] == 'planned']
     shared = dict(model=model, coefficients=coefficients, grid=grid, guard=2*grid['dx_m'])
     for index, window in zip(planned, parallel_map(plan_window, [plan[i] for i in planned], shared, workers)):
@@ -203,18 +203,18 @@ def sources_at(model, coefficients, band, x, q, use_relief=True):
     return table, valid & inverse_ok, score
 
 
-def map_points(model, coefficients, x, q, rows, camera, truth, mesh, workers=1):
+def map_points(model, coefficients, x, q, rows, camera, truth, mesh, workers=1, use_relief=True):
     """Actual source selected by the production central-column rule, then true hit."""
     x, q = np.asarray(x), np.asarray(q)
     chunks = [(x[start:start+512], q[start:start+512]) for start in range(0, len(x), 512)]
     parts = parallel_map(map_chunk, chunks, dict(model=model, coefficients=coefficients, rows=rows,
-                                                 camera=camera, truth=truth, mesh=mesh), workers)
+                                                 camera=camera, truth=truth, mesh=mesh, use_relief=use_relief), workers)
     if not parts:
         return np.full((0, 2), np.nan), np.full(0, -1, np.int16), np.full(0, -1, np.int16)
     return tuple(np.concatenate(values) for values in zip(*parts))
 
 
-def map_chunk(chunk, model, coefficients, rows, camera, truth, mesh):
+def map_chunk(chunk, model, coefficients, rows, camera, truth, mesh, use_relief=True):
     x, q = chunk
     points = np.full((len(x), 2), np.nan)
     material = np.full(len(x), -1, np.int16)
@@ -222,7 +222,7 @@ def map_chunk(chunk, model, coefficients, rows, camera, truth, mesh):
     best = np.full(len(x), -np.inf)
     selected = np.zeros(len(x), MATCH)
     for band in range(len(model.sampler.segments)):
-        table, valid, score = sources_at(model, coefficients, band, x, q)
+        table, valid, score = sources_at(model, coefficients, band, x, q, use_relief)
         use = valid & (score > best)
         selected[use] = table[use]
         best[use] = score[use]
@@ -259,7 +259,7 @@ def boundary_coordinates(grid):
                 right=(np.full(len(qs)-2, xs[-1]), qs[1:-1]))
 
 
-def boundary_chunk(chunk, model, coefficients):
+def boundary_chunk(chunk, model, coefficients, use_relief=True):
     x, q = chunk
     supported = np.zeros(len(x), bool)
     for band in range(len(model.sampler.segments)):
@@ -268,16 +268,17 @@ def boundary_chunk(chunk, model, coefficients):
         margin = .03+.04*(model.radius+model.height)
         if np.max(x) < lo-margin or np.min(x) > hi+margin:
             continue
-        supported |= sources_at(model, coefficients, band, x, q)[1]
+        supported |= sources_at(model, coefficients, band, x, q, use_relief)[1]
     model.sampler.native.release()
     return supported
 
 
-def boundary_support(model, coefficients, grid, workers=1):
+def boundary_support(model, coefficients, grid, workers=1, use_relief=True):
     output = {}
     for name, (x, q) in boundary_coordinates(grid).items():
         chunks = [(x[start:start+512], q[start:start+512]) for start in range(0, len(x), 512)]
-        parts = parallel_map(boundary_chunk, chunks, dict(model=model, coefficients=coefficients), workers)
+        parts = parallel_map(boundary_chunk, chunks, dict(model=model, coefficients=coefficients,
+                                                        use_relief=use_relief), workers)
         supported = np.concatenate(parts) if parts else np.zeros(0, bool)
         missing = np.flatnonzero(~supported)
         output[name] = dict(pixels=len(x), missing_pixels=len(missing),
@@ -298,14 +299,14 @@ def verify_session(session, upstream):
             raise ValueError('evaluation archived identity mismatch: '+name)
 
 
-def seam_plan(sampler, grid, spacing_m=.2):
+def seam_plan(sampler, grid, spacing_m=.2, reach_margin=0.):
     """Two fixed interleaved lattices, independent of matches, fit and truth.
 
     At the frozen 0.2 m spacing the phases are 0.05 and 0.15 m from the
     output's lower q boundary. All exclusions are retained, never selected
     using a score. Axial points cover a bounded nominal overlap at that q.
     """
-    if not np.isfinite(spacing_m) or spacing_m < .09:
+    if not np.isfinite(spacing_m) or spacing_m < .09 or not np.isfinite(reach_margin) or reach_margin < 0:
         raise ValueError('bounded fixed seam sampling plan required')
     lower, upper = np.asarray(grid['theta_rad'])*grid['radius_m']
     usable = sampler.output_offsets[sampler.geometry_valid]
@@ -317,15 +318,38 @@ def seam_plan(sampler, grid, spacing_m=.2):
             for q in np.arange(lower+phase*spacing_m, upper, spacing_m):
                 item = dict(id=len(plan), bands=[band, band+1], phase=phase,
                             q_center_m=float(q))
-                ranges = []
+                ranges = []; supported_bands = []
                 for k in item['bands']:
                     lo, hi, _, supported = sampler.row_sources(k, np.array([q/grid['radius_m']]))
-                    if not supported.all():
-                        break
+                    supported_bands.append(bool(supported.all()))
                     axis = sampler.projection['x_axis_m'][np.r_[lo, hi]]
                     ranges.append((float(axis.max()+usable[0]), float(axis.min()+usable[-1])))
-                if len(ranges) != 2:
-                    item.update(status='unmeasurable', reason='unsupported nominal exposure angle')
+                if not all(supported_bands):
+                    # Whole-band public footprint envelopes can prove irrelevance,
+                    # even when the requested angle has no recorded exposure.
+                    # Otherwise retain a fixed diagnostic interval and count its
+                    # missing samples; nearest rows never supply valid gap pixels.
+                    envelopes = [(sampler.band_x[k][0]-reach_margin, sampler.band_x[k][1]+reach_margin)
+                                 for k in item['bands']]
+                    left = max(grid['target_x_m'][0], *(r[0] for r in envelopes))
+                    right = min(grid['target_x_m'][1], *(r[1] for r in envelopes))
+                    item['nominal_exposure_supported'] = supported_bands
+                    if right <= left:
+                        item.update(status='excluded', reason='public band envelopes have no overlap inside target',
+                                    outside_target_band_envelopes=envelopes)
+                    else:
+                        guard = min(2*grid['dx_m'], (right-left)/4)
+                        left += guard; right -= guard
+                        # Prefer the nearest nominal probe when it intersects the
+                        # target; the wider envelope is only a bounded fallback.
+                        near_left = max(left, *(r[0] for r in ranges))
+                        near_right = min(right, *(r[1] for r in ranges))
+                        if near_right > near_left: left, right = near_left, near_right
+                        half = min((right-left)/2, 1023*grid['dx_m']/2)
+                        centre = (left+right)/2
+                        bounds = [centre-half, centre+half]
+                        item.update(status='unmeasurable', shared_support='unmeasurable', x_m=bounds,
+                                    nominal_probe_x_m=list(bounds), reason='unsupported nominal exposure angle')
                 else:
                     item['nominal_unclipped_x_m'] = [max(r[0] for r in ranges)+2*grid['dx_m'],
                                                     min(r[1] for r in ranges)-2*grid['dx_m']]
@@ -385,7 +409,7 @@ def score_window(window, model, coefficients, samples_across, training_windows, 
                   x_m=window['nominal_probe_x_m'], q_m=float(q[0]),
                   missing_samples=int((~(original_valid[0] & original_valid[1])).sum()),
                   side_valid=[v.tolist() for v in original_valid])
-    if window['status'] != 'planned':
+    if window['status'] not in ('planned', 'unmeasurable'):
         model.sampler.native.release()
         return legacy, None, [], {}
     x = np.linspace(*window['x_m'], samples_across)
@@ -434,7 +458,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         model, coefficients, optimized, trajectory_inputs = load_global(trajectory, sampler, upstream, unroll)
         grid = upstream['grid']; pitch = [grid['dx_m'], grid['dq_m']]
         windows = shared_seam_plan(model, coefficients, grid, spacing_m, workers)
-        planned = [w for w in windows if w['status'] == 'planned']
+        planned = [w for w in windows if w['status'] in ('planned', 'unmeasurable')]
         if not planned:
             raise ValueError('no nominal adjacent overlap to evaluate')
         output.mkdir(parents=True, exist_ok=False)
@@ -493,7 +517,7 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
         arrays = {}
         for name, c in (('nominal', np.zeros(model.size)), ('optimized', coefficients)):
             points, materials, bands = map_points(model, c, xx.ravel(), qq.ravel(), rows, config['camera'], truth, mesh,
-                                                  workers)
+                                                  workers, use_relief=(name == 'optimized'))
             valid = bands >= 0
             maps[name] = dict(supported_samples=int(valid.sum()), missing_samples=int((~valid).sum()),
                               absolute_error=residual_summary(points[valid]-np.column_stack((xx.ravel(), qq.ravel()))[valid], pitch),
@@ -501,11 +525,11 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
             arrays[name+'_true_xq_m'] = points.reshape(xx.shape+(2,))
             arrays[name+'_band'] = bands.reshape(xx.shape)
             arrays[name+'_material'] = materials.reshape(xx.shape)
-            boundaries[name] = boundary_support(model, c, grid, workers)
+            boundaries[name] = boundary_support(model, c, grid, workers, use_relief=(name == 'optimized'))
         seam_gate = stratum_gate(strata, SEAM_P95_PX)
         controlled_gate = stratum_gate(strata, CONTROLLED_SEAM_P95_PX)
         perimeter_missing = sum(v['missing_pixels'] for v in boundaries['optimized'].values())
-        report = dict(schema='ssb.global_geometry_evaluation.v3', evaluation_only=True, grid=grid,
+        report = dict(schema='ssb.global_geometry_evaluation.v4', evaluation_only=True, grid=grid,
             seam=statistics, seam_strata=strata, windows=per_window, mapping=maps, boundary=boundaries,
             gates=dict(strict_seam=seam_gate, controlled_seam=controlled_gate,
                        perimeter=dict(status='fail' if perimeter_missing else 'pass',
@@ -522,6 +546,8 @@ def run(session_root, unroll, trajectory, output, scene=None, spacing_m=.2, samp
                           outside_target_windows=sum(w['status'] == 'outside_target' for w in windows),
                           unmeasurable_windows=sum(w['status'] == 'unmeasurable' for w in windows),
                           excluded_windows=sum(w['status'] == 'excluded' for w in windows),
+                          required_windows=len(planned), scored_windows=len(per_window),
+                          exposure_gap_windows=sum(w['status'] == 'unmeasurable' for w in windows),
                           interior_shape=list(xx.shape)),
             nominal_domain_probe_diagnostic=dict(missing_samples=sum(w['missing_samples'] for w in legacy),
                 windows=legacy, interpretation='original nominal-domain probes; missing dual support is '
@@ -562,6 +588,7 @@ def main():
     for name in ('session','unroll','trajectory','output'):
         parser.add_argument('--'+name, required=True)
     parser.add_argument('--scene'); parser.add_argument('--raw')
+    parser.add_argument('--strict', action='store_true', help='exit nonzero unless all independent geometry gates pass')
     parser.add_argument('--spacing-m', type=float, default=.2,
                         help='predeclared fixed seam lattice spacing; use the frozen protocol value')
     parser.add_argument('--workers', type=int,
@@ -570,6 +597,8 @@ def main():
     report = run(args.session,args.unroll,args.trajectory,args.output,args.scene,spacing_m=args.spacing_m,raw_root=args.raw,
                  workers=args.workers)
     print(json.dumps({k:report[k] for k in ('seam','seam_strata','mapping','boundary','gates','performance')}))
+    if args.strict and (not report['gates'] or any(g['status'] != 'pass' for g in report['gates'].values())):
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

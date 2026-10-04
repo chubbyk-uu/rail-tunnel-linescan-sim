@@ -34,7 +34,8 @@ class CpuGlobalRaster:
         pass
 
     def describe(self):
-        return dict(name='cpu', geometry_precision='float64', role='explicit reference')
+        return dict(name='cpu', geometry_precision='float64', role='explicit reference',
+                    surface_relief=self.model.relief is not None)
 
 
 def write_preview(output, cover_min, stride):
@@ -108,8 +109,9 @@ def run(unroll, trajectory, output, raw_root=None, backend='cuda', comparison=Tr
                          coverage='minimum count over every stride x stride cell; red includes any missing pixel'),
             coverage_gate=dict(status='pass' if not covered['missing_pixels'] else 'fail',
                                requirement='all declared grid pixels have at least one valid native observation'),
-            inputs='public raw rows, encoders, measured optical calibration and image-fitted trajectory only',
-            limitations=['coverage does not certify geometric accuracy', 'nominal cylinder; no actual poses or optical mesh',
+            inputs='public raw rows, encoders, measured optical calibration, image-fitted trajectory and declared shared depth only',
+            surface_relief=model.relief is not None,
+            limitations=['coverage does not certify geometric accuracy', 'nominal surface coordinates; no actual poses or optical mesh',
                          'no seam fusion, inpainting, sharpening or contrast adjustment', 'noise robustness requires independent capture evidence'],
             performance=dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')

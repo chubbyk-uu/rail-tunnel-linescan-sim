@@ -73,7 +73,9 @@ def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
     outputs = {str(path): sha256_file(path) for directory in (matches, fit)
                for path in sorted(directory.iterdir()) if path.is_file()}
     states = public_audit.verified_states(audit, d2['worker_audits'])
-    report = dict(schema='ssb.public_reconstruction.v2', status='pass',
+    report = dict(schema='ssb.public_reconstruction.v3', status='complete', audit_status='pass',
+        quality_status=d3['image_consistency_gate']['status'],
+        quality_scope='pose image-consistency gate only; independent geometry and coverage required separately',
         public_raw_blocks=blocks, public_files_opened=sorted(reads), outputs=outputs,
         private_input_opens=sum(s['blocked_reads'] for s in states), audit_states=states,
         d2=dict(status=d2['status'], windows=d2['windows'], matches=d2['matches']['total']),
@@ -101,12 +103,14 @@ def main():
     parser.add_argument('--adaptive-attitude', action='store_true',
                         help='training-only bounded local refinement; use --spacing-m .1 for finer supported nodes')
     parser.add_argument('--surface-relief', action='store_true', help='estimate shared radial depth from public stereo images after the pose fit')
+    parser.add_argument('--strict', action='store_true', help='exit nonzero if the pose image-consistency gate is not pass')
     args = parser.parse_args()
     report = run(args.unroll, args.observable, args.root, args.raw, args.workers, args.spacing_m,
                  GeometrySettings(attitude_spacing_m=args.attitude_spacing_m, observed_knots=True,
                                   adaptive_attitude=args.adaptive_attitude), args.height, args.max_q_shift_mm,
                  args.surface_relief)
-    print(json.dumps({k: report[k] for k in ('status', 'public_raw_blocks', 'd2', 'd3', 'performance')}))
+    print(json.dumps({k: report[k] for k in ('status', 'audit_status', 'quality_status', 'public_raw_blocks', 'd2', 'd3', 'performance')}))
+    if args.strict and report['quality_status'] != 'pass': raise SystemExit(1)
 
 
 if __name__ == '__main__':

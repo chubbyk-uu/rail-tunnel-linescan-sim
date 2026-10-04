@@ -26,6 +26,21 @@ def test_cli_passes_the_frozen_seam_spacing_to_evaluation(monkeypatch):
     assert received['spacing_m'] == .1 and received['workers'] == 3
 
 
+@pytest.mark.parametrize('gate', ['pass', 'fail', 'unmeasurable'])
+def test_strict_geometry_cli_returns_failure_for_failed_or_unmeasurable_gates(monkeypatch, gate):
+    import sys
+    import ssb_tools.evaluate_global_geometry as module
+    report = {k: {} for k in ('seam', 'seam_strata', 'mapping', 'boundary', 'performance')}
+    report['gates'] = dict(strict_seam=dict(status=gate), perimeter=dict(status='pass'))
+    monkeypatch.setattr(module, 'run', lambda *a, **kw: report)
+    monkeypatch.setattr(sys, 'argv', ['evaluate_global_geometry', '--session', 'capture', '--unroll', 'd1',
+        '--trajectory', 'fit', '--output', 'evaluation/new', '--strict'])
+    if gate == 'pass': module.main()
+    else:
+        with pytest.raises(SystemExit) as error: module.main()
+        assert error.value.code == 1
+
+
 def independent_fixture(depth=0.):
     phases = np.linspace(-.2, .2, 101)
     p = np.zeros(202, PROJECTION)
@@ -109,6 +124,65 @@ def test_relief_is_used_even_for_zero_pose_coefficients_and_nominal_diagnostic_s
     nominal = sources_at(model, zero, 0, np.array([.5]), np.array([0.]), use_relief=False)[0]
     np.testing.assert_array_equal(nominal, before)
     assert optimized['a_lower_column'][0] != before['a_lower_column'][0]
+
+
+def test_nominal_mapping_drift_and_boundary_ignore_optimized_relief():
+    from ssb_tools.surface_relief import SurfaceRelief
+    model, _, rows, camera, truth, mesh = independent_fixture(.02)
+    zero = np.zeros(model.size)
+    grid = dict(shape=[11, 9], target_x_m=[.35, .65], theta_rad=[-.15, .15],
+                radius_m=1., dx_m=.3/9, dq_m=.3/11)
+    xs = np.linspace(.35, .65, 9); qs = np.linspace(-.1, .1, 3)
+    x, q = np.meshgrid(xs, qs)
+    before = map_points(model, zero, x.ravel(), q.ravel(), rows, camera, truth, mesh, use_relief=False)
+    boundary = boundary_support(model, zero, grid, use_relief=False)
+    model.relief = SurfaceRelief([dict(grid=[.25, -.2, .5, .4], depth=np.full((2, 2), .02, np.float32))])
+    after = map_points(model, zero, x.ravel(), q.ravel(), rows, camera, truth, mesh, use_relief=False)
+    for actual, expected in zip(after, before):
+        np.testing.assert_array_equal(actual, expected)
+    assert boundary_support(model, zero, grid, use_relief=False) == boundary
+    optimized = map_points(model, zero, x.ravel(), q.ravel(), rows, camera, truth, mesh, use_relief=True)
+    assert not np.allclose(optimized[0], before[0])
+    assert endpoint_drift(after[0].reshape(x.shape+(2,)), after[2].reshape(x.shape) >= 0, xs, qs) == \
+           endpoint_drift(before[0].reshape(x.shape+(2,)), before[2].reshape(x.shape) >= 0, xs, qs)
+
+
+def test_raw_exposure_gap_remains_in_real_mesh_scoring_and_fails_gate():
+    from ssb_tools.evaluate_global_geometry import score_window, residual_summary
+    model, c, rows, camera, truth, mesh = independent_fixture()
+    old = model.sampler; p = old.projection
+    keep = ~((p['segment'] == 0) & (abs(p['theta_rad']) < .012))
+    native = MemoryRows(old.native.raw_rows[keep], dict(offset=np.zeros(513), gain=np.ones(513), valid=np.ones(513, bool)))
+    sampler = BandSampler(p[keep], native, old.offsets, old.output_offsets, old.geometry_valid, old.footprint)
+    model = Trajectory(sampler, 1., .7, GeometrySettings(attitude_spacing_m=.1))
+    grid = dict(theta_rad=[-.075, .075], radius_m=1., target_x_m=[.4, .6], dx_m=.001, dq_m=.001)
+    plan = shared_seam_plan(model, c, grid, .1)
+    gap = next(w for w in plan if abs(w['q_center_m']) < 1e-12)
+    assert 'nominal_probe_x_m' in gap
+    training = [dict(source_window=dict(bands=[0, 1], shape=[53, 513], x_first_m=.3, q_first_m=-.051))]
+    scored = [score_window(w, model, c, 9, training, grid, .001, rows, camera, truth, mesh)
+              for w in plan if 'nominal_probe_x_m' in w]
+    assert len(scored) == 3
+    gap_score = next(item for item in scored if item[1]['window'] == gap['id'])
+    assert gap_score[1]['optimized']['missing_samples'] == 9
+    assert sum(gap_score[3]['optimized', s] for s in ('within_match_window', 'between_match_windows')) == 9
+    strata = dict(optimized={})
+    for name in ('within_match_window', 'between_match_windows'):
+        values = np.concatenate([sample[5][sample[8] == name] for item in scored
+                                 for sample in item[2] if sample[0] == 'optimized'])
+        assert len(values)
+        strata['optimized'][name] = dict(status='measured',
+            missing_samples=sum(item[3].get(('optimized', name), 0) for item in scored),
+            **residual_summary(values, .001))
+    assert stratum_gate(strata, 1.)['status'] == 'fail'
+    # A nominally disjoint envelope is insufficient if declared corrections
+    # can reach the target. Only the expanded public bound can prove exclusion.
+    grid['target_x_m'] = [.68, .70]
+    uncertain = shared_seam_plan(model, c, grid, .1)
+    assert next(w for w in uncertain if abs(w['q_center_m']) < 1e-12)['status'] == 'unmeasurable'
+    grid['target_x_m'] = [10., 11.]
+    outside = shared_seam_plan(model, c, grid, .1)
+    assert all(w['status'] == 'excluded' for w in outside)
 
 
 def test_drift_removes_translation_but_retains_scale_and_circumferential_shear():

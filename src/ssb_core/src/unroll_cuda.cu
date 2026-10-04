@@ -51,11 +51,12 @@ struct Context {
   Buffer native_offsets, output_offsets, geometry_valid, flat_offset, flat_gain, flat_valid;
   Buffer pixels, axes, row_sources, xs;
   Buffer image, count, source, best;
-  Buffer global_rays, global_qs;
+  Buffer global_rays, global_qs, global_depth;
+  bool use_depth = false;
   void reserve_begin(size_t n, size_t columns) {
     size_t total = native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
                    flat_offset.capacity+flat_gain.capacity+flat_valid.capacity+
-                   pixels.capacity+axes.capacity+row_sources.capacity+global_rays.capacity+global_qs.capacity;
+                   pixels.capacity+axes.capacity+row_sources.capacity+global_rays.capacity+global_qs.capacity+global_depth.capacity;
     total += std::max(xs.capacity, columns*sizeof(double))+
              std::max(image.capacity, n*sizeof(float))+
              std::max(count.capacity, n*sizeof(uint16_t))+
@@ -67,7 +68,7 @@ struct Context {
     size_t total = native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
         flat_offset.capacity+flat_gain.capacity+flat_valid.capacity+
         xs.capacity+image.capacity+count.capacity+source.capacity+best.capacity+
-        global_rays.capacity+global_qs.capacity;
+        global_rays.capacity+global_qs.capacity+global_depth.capacity;
     total += std::max(pixels.capacity, pixels_bytes)+std::max(axes.capacity, axes_bytes)+
              std::max(row_sources.capacity, row_bytes);
     if (total > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
@@ -75,7 +76,7 @@ struct Context {
   void account() {
     size_t total = 0;
     for (auto* b : {&native_offsets, &output_offsets, &geometry_valid, &flat_offset, &flat_gain, &flat_valid, &pixels,
-                    &axes, &row_sources, &xs, &image, &count, &source, &best, &global_rays, &global_qs})
+                    &axes, &row_sources, &xs, &image, &count, &source, &best, &global_rays, &global_qs, &global_depth})
       total += b->capacity;
     peak = std::max(peak, total);
     if (total > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
@@ -185,7 +186,7 @@ __device__ Row global_rows(const GlobalRay* rays, int n, double phase, double fo
 }
 
 __device__ double2 global_hit(const GlobalRay& r, double x, double radius,
-                              double angular_offset = 0.) {
+                              double angular_offset = 0., double depth = 0.) {
   double tangent = (x-r.axis)/radius;
   // Rotate inside the recorded row's finite angular footprint, around the
   // fitted scan axis (r.tx, 0, r.tz). This changes neither pose nor source row.
@@ -198,18 +199,19 @@ __device__ double2 global_hit(const GlobalRay& r, double x, double radius,
   }
   double vx = r.tx*tangent+rx, vy = ry, vz = r.tz*tangent+rz;
   double aa = vy*vy+vz*vz, bb = 2.*(r.oy*vy+r.oz*vz);
-  double cc = r.oy*r.oy+r.oz*r.oz-radius*radius;
+  double surface_radius = radius+depth;
+  double cc = r.oy*r.oy+r.oz*r.oz-surface_radius*surface_radius;
   double length = (-bb+sqrt(bb*bb-4.*aa*cc))/(2.*aa);
   return make_double2(r.ox+length*vx,
                      radius*atan2(r.oy+length*vy, r.oz+length*vz));
 }
 
 __device__ double2 global_forward(const GlobalRay* rays, int n, double x, double q,
-                                  double radius, double footprint, Row* row) {
+                                  double radius, double footprint, double depth, Row* row) {
   *row = global_rows(rays, n, q/radius, footprint);
   double offset = row->lower == row->upper ? q/radius-rays[row->lower].phase : 0.;
-  double2 a = global_hit(rays[row->lower], x, radius, offset);
-  double2 b = global_hit(rays[row->upper], x, radius, offset);
+  double2 a = global_hit(rays[row->lower], x, radius, offset, depth);
+  double2 b = global_hit(rays[row->upper], x, radius, offset, depth);
   return make_double2((1.-row->weight)*a.x+row->weight*b.x,
                       (1.-row->weight)*a.y+row->weight*b.y);
 }
@@ -218,20 +220,23 @@ __global__ void global_band(const uint8_t* pixels, const double* axes,
     const GlobalRay* rays, int n, const double* qs, const double* xs,
     const double* native, const double* output, const uint8_t* geometry, Flat flat,
     int width, int nq, int nx, int left, int right, int band, double radius,
-    double footprint, float* image, uint16_t* count, int16_t* source, float* best) {
+    double footprint, const double* depths, float* image, uint16_t* count, int16_t* source, float* best) {
   int i = blockIdx.x*blockDim.x+threadIdx.x, span = right-left;
   if (i >= nq*span) return;
   int q_index = i/span, column = left+i%span;
   double target_x = xs[column], target_q = qs[q_index];
+  // Shared depth is evaluated at the known OUTPUT point, then held fixed
+  // through inversion, exactly as the CPU's inverse_points implementation.
+  double depth = depths ? depths[q_index*nx+column] : 0.;
   double x = target_x, q = target_q;
   Row row;
   for (int iteration = 0; iteration < 10; ++iteration) {
-    double2 point = global_forward(rays, n, x, q, radius, footprint, &row);
+    double2 point = global_forward(rays, n, x, q, radius, footprint, depth, &row);
     double ex = point.x-target_x, eq = point.y-target_q;
     x -= ex; q -= eq;
     if (fmax(fabs(ex), fabs(eq)) < 1e-9) break;
   }
-  double2 final = global_forward(rays, n, x, q, radius, footprint, &row);
+  double2 final = global_forward(rays, n, x, q, radius, footprint, depth, &row);
   if (!row.supported || !isfinite(x) || !isfinite(q) || !isfinite(final.x) || !isfinite(final.y) ||
       fmax(fabs(final.x-target_x), fabs(final.y-target_q)) >= 1e-8) return;
   Sample a = along(row.lower, x, pixels, axes, native, output, geometry, flat, width);
@@ -285,6 +290,7 @@ int ssb_unroll_begin(void* handle, int rows, int columns, const double* xs) {
     if (rows <= 0 || columns <= 0 || static_cast<int64_t>(rows)*columns > kMaxPixels)
       throw std::runtime_error("invalid CUDA tile dimensions");
     c.rows = rows; c.columns = columns;
+    c.use_depth = false;
     const size_t n = static_cast<size_t>(rows)*columns;
     c.reserve_begin(n, columns);
     c.image.grow(n*sizeof(float)); c.count.grow(n*sizeof(uint16_t));
@@ -324,7 +330,25 @@ int ssb_unroll_band(void* handle, int native_rows, const uint8_t* pixels,
   });
 }
 
-int ssb_unroll_global_abi() { return 1; }
+int ssb_unroll_global_abi() { return 2; }
+int ssb_unroll_global_depth(void* handle, const double* depths) {
+  return guarded([&] {
+    auto& c = *static_cast<Context*>(handle);
+    const size_t n = static_cast<size_t>(c.rows)*c.columns;
+    if (!depths || !n) throw std::runtime_error("invalid CUDA global depth tile");
+    for (size_t i = 0; i < n; ++i)
+      if (!std::isfinite(depths[i]) || depths[i] < 0. || depths[i] > .03+1e-8)
+        throw std::runtime_error("invalid CUDA global radial depth");
+    size_t total = 0;
+    for (auto* b : {&c.native_offsets, &c.output_offsets, &c.geometry_valid, &c.flat_offset,
+        &c.flat_gain, &c.flat_valid, &c.pixels, &c.axes, &c.row_sources, &c.xs,
+        &c.image, &c.count, &c.source, &c.best, &c.global_rays, &c.global_qs}) total += b->capacity;
+    if (total+std::max(c.global_depth.capacity, n*sizeof(double)) > kBudget)
+      throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
+    c.global_depth.upload(depths, n*sizeof(double)); c.account();
+    c.use_depth = true;
+  });
+}
 int ssb_unroll_global_band(void* handle, int native_rows, const uint8_t* pixels,
     const double* axes, const void* ray_data, const double* qs, int left, int right,
     int band, double radius, double footprint) {
@@ -354,7 +378,7 @@ int ssb_unroll_global_band(void* handle, int native_rows, const uint8_t* pixels,
     size_t retained = 0;
     for (auto* b : {&c.native_offsets, &c.output_offsets, &c.geometry_valid, &c.flat_offset,
         &c.flat_gain, &c.flat_valid, &c.xs, &c.image, &c.count, &c.source, &c.best,
-        &c.row_sources, &c.global_rays, &c.global_qs}) retained += b->capacity;
+        &c.row_sources, &c.global_rays, &c.global_qs, &c.global_depth}) retained += b->capacity;
     retained += std::max(c.pixels.capacity, bytes)+std::max(c.axes.capacity, native_rows*sizeof(double));
     if (retained+extra > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
     c.pixels.upload(pixels, bytes); c.axes.upload(axes, native_rows*sizeof(double));
@@ -366,6 +390,7 @@ int ssb_unroll_global_band(void* handle, int native_rows, const uint8_t* pixels,
         c.global_rays.as<GlobalRay>(), native_rows, c.global_qs.as<double>(), c.xs.as<double>(),
         c.native_offsets.as<double>(), c.output_offsets.as<double>(), c.geometry_valid.as<uint8_t>(),
         flat, c.width, c.rows, c.columns, left, right, band, radius, footprint,
+        c.use_depth ? c.global_depth.as<double>() : nullptr,
         c.image.as<float>(), c.count.as<uint16_t>(), c.source.as<int16_t>(), c.best.as<float>());
     checked(cudaGetLastError());
   });

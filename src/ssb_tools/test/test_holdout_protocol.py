@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -111,7 +112,7 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
         assert record['sampling']['spacing_q_m'] == spacing
         assert record['d3']['adaptive_attitude'] is adaptive
         assert record['code_commit'] == 'frozen' and output.exists()
-        assert record['sampling']['schema'] == 'ssb.public_common_overlap.v2'
+        assert record['sampling']['schema'] == 'ssb.public_common_overlap.v3'
         assert record['sampling']['exact_plan_saved_before_truth'] is True
         assert any(name.endswith('evaluate_global_geometry.py') for name in record['production_sources'])
     else:
@@ -127,7 +128,8 @@ def public_run_fixture(root):
     outputs = {str(p): sha256_file(p) for name in ('matches', 'fit') for p in sorted((root/name).iterdir())}
     (root/'public_run').mkdir()
     from ssb_tools.public_audit import POLICY
-    report = dict(schema='ssb.public_reconstruction.v2', status='pass', private_input_opens=0, outputs=outputs,
+    report = dict(schema='ssb.public_reconstruction.v3', status='complete', audit_status='pass',
+                  quality_status='pass', private_input_opens=0, outputs=outputs,
         audit_states=[dict(policy=POLICY, installed=True, blocked_reads=0, data_reads=3)])
     (root/'public_run/report.json').write_text(json.dumps(report))
     return report
@@ -149,10 +151,42 @@ def test_scored_products_must_be_those_of_the_audited_public_run(tmp_path, chang
     elif change in ('missing_audit', 'blocked_read', 'legacy'):
         if change == 'missing_audit': report['audit_states'] = []
         elif change == 'blocked_read': report['audit_states'][0]['blocked_reads'] = 1
-        else: report['schema'] = 'ssb.public_reconstruction.v1'
+        else: report.update(schema='ssb.public_reconstruction.v1', status='pass')
         (tmp_path/'public_run/report.json').write_text(json.dumps(report))
         if change == 'legacy': assert public_run_valid(tmp_path, strong=False)
     assert public_run_valid(tmp_path) is (change is None)
+
+
+def test_previous_public_audit_schema_retains_its_status_meaning(tmp_path):
+    report = public_run_fixture(tmp_path)
+    report.update(schema='ssb.public_reconstruction.v2', status='pass')
+    report.pop('audit_status'); report.pop('quality_status')
+    (tmp_path/'public_run/report.json').write_text(json.dumps(report))
+    assert public_run_valid(tmp_path)
+
+
+@pytest.mark.parametrize('change', [None, 'digest', 'missing', 'duplicate', 'escape', 'root', 'product'])
+def test_relocated_audit_requires_exact_root_move_and_original_product_hashes(tmp_path, change):
+    old, new = tmp_path/'old', tmp_path/'new'
+    old.mkdir()
+    report = public_run_fixture(old)
+    files = [dict(original=p, durable=str(new/Path(p).relative_to(old)), sha256=h)
+             for p, h in report['outputs'].items()]
+    old.rename(new)
+    manifest = dict(schema='ssb.review_data_relocation.v1', status='complete', files=files,
+                    roots=[dict(original=str(old), durable=str(new))])
+    if change == 'digest': files[0]['sha256'] = 'f'*64
+    elif change == 'missing': files.pop()
+    elif change == 'duplicate': files.append(dict(files[0]))
+    elif change == 'escape': files[0]['durable'] = str(tmp_path/'elsewhere')
+    elif change == 'root': manifest['roots'][0]['durable'] = str(tmp_path/'wrong')
+    elif change == 'product': Path(files[0]['durable']).write_text('changed')
+    relocation = tmp_path/'relocation.json'; relocation.write_text(json.dumps(manifest))
+    assert not public_run_valid(new)
+    if change in ('digest', 'missing', 'duplicate', 'escape', 'root'):
+        with pytest.raises(ValueError): public_run_valid(new, relocation=relocation)
+    else:
+        assert public_run_valid(new, relocation=relocation) is (change is None)
 
 
 @pytest.mark.parametrize('relief,change', [(r,c) for r in (False,True) for c in

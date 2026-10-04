@@ -21,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--limits-only',action='store_true',help='quick configured-range regression')
+    parser.add_argument('--telemetry-only', action='store_true', help='quick stale Gazebo telemetry regression')
     args = parser.parse_args()
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
@@ -82,6 +83,22 @@ def main():
             assert initial['command_timeout_ms'] == 90000
             assert initial['task_mode'] == 'travel'
             assert initial['start_max_m']==19. and initial['distance_max_m']==20.
+            if args.telemetry_only:
+                state.update(state='running', status_age_s=5., status_timeout_s=3.)
+                stale = review('stale', lambda v: v['telemetry_stale'])
+                assert stale['connected'] and not stale['pause_enabled'] and stale['stop_enabled']
+                assert 'telemetry expired' in stale['status'] and 'telemetry expired' in stale['error']
+                state.update(state='paused', status_age_s=0.)
+                paused = review('paused_fresh', lambda v: not v['telemetry_stale'] and v['resume_enabled'])
+                assert paused['connected'] and paused['stop_enabled']
+                state.update(state='failed', status_age_s=5., error='Gazebo mission telemetry expired')
+                failed = review('failed', lambda v: v['state'] == 'failed')
+                assert not failed['pause_enabled'] and not failed['resume_enabled'] and not failed['stop_enabled']
+                assert failed['begin_enabled'] and failed['error'] == state['error']
+                (output/'report.json').write_text(json.dumps(dict(status='passed', stale=stale,
+                    paused=paused, failed=failed), indent=2)+'\n')
+                print('Panel stale telemetry, fresh pause and terminal failure passed')
+                return
             if args.limits_only:
                 state['mission_limits']['inspection_x_m']=[-5.,150.]
                 expanded=review('expanded',lambda v:v['start_max_m']==149.)

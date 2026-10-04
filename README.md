@@ -2,7 +2,7 @@
 
 轨道车沿钢轨前进，线阵相机与 COB 光源共同旋转，编码器逐行触发，形成连续螺旋扫描。Gazebo 负责轮轨接触与运动，OptiX 负责高速成像，ROS 2 / RViz 提供任务控制；采后通过标定、展开、特征匹配和全局优化复原隧道内壁。
 
-已完成 20 米采集、CUDA 展开、匹配、连续轨迹优化与公开图像估计的板缝深度补偿。当前 20 米高环缝回归接缝 P95 为 **0.625/0.692 px**（窗口内/间），通过 **1 px** 目标；79/80/81 mm 的 3 米轮径场景和新种子留出也通过。新的优化整幅图与融合仍待完成。保留轨道起伏和车体小姿态变化，不读取仿真真值进行拼接，后续最多扩展到 **50 米**。
+已完成 20 米采集、CUDA 展开、匹配、连续轨迹优化与公开图像估计的板缝深度补偿；CUDA 整图已使用共享深度。保留的 20 米原图生成了 **57.596 亿像素**优化整图，完整覆盖无缺口。2026-10-04 review 修复后，新采 20 米与 79/80/81 mm 三档 3 米数据的已测接缝 P95 均低于 **1 px**，但首尾不可测诊断点纳入新门限后，严格接缝验收均失败；不能沿用旧取点规则的通过结论，见 [当前证据](docs/EVALUATION.md)。本轮为开发回归，融合尚未实现；保留轨道起伏和车体小姿态变化，不读取仿真真值进行拼接，后续最多扩展到 **50 米**。
 
 ## 运行效果
 
@@ -123,7 +123,7 @@ python3 -m ssb_tools.initial_unroll --session sessions/wall_NEW \
 python3 -m ssb_tools.public_reconstruction \
   --unroll sessions/d1_NEW \
   --observable sessions/wall_NEW/config/observable_config.json \
-  --root sessions/reconstruction_NEW --surface-relief > /tmp/ssb_reconstruction.log 2>&1
+  --root sessions/reconstruction_NEW --surface-relief --strict > /tmp/ssb_reconstruction.log 2>&1
 python3 -m ssb_tools.feature_review \
   --unroll sessions/d1_NEW --trajectory sessions/reconstruction_NEW/fit \
   --observable sessions/wall_NEW/config/observable_config.json \
@@ -144,7 +144,7 @@ python3 tools/run_tests.py > /tmp/ssb_test.log 2>&1
 colcon test-result --all
 ```
 
-当前完整回归 **661 项通过，无失败/跳过**，本轮耗时 25.41 秒；正式采集与评价另行执行。生产 D2/评价默认最多 8 个可用 CPU，测试入口默认 4 个工作进程。原生 GPU 测试边界见部署文档。
+当前完整回归 **703 项通过，无失败/跳过**，其中 Python 619 项；实际采集、故障注入与独立评价另行执行，结果见验收文档。生产 D2/评价默认最多 8 个可用 CPU，测试入口默认 4 个工作进程。原生 GPU 测试边界见部署文档。
 
 | 现象 | 检查 |
 |---|---|

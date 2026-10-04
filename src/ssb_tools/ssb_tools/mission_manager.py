@@ -319,16 +319,12 @@ class MissionManager(Node):
 
     def work(self):
         while not self.closing.is_set():
+            try: self.check_active()
+            except Exception as e:
+                self.fail(e)
+                continue
             try: command = self.commands.get(timeout=.1)
             except queue.Empty:
-                if self.server and self.state in ('running', 'paused'):
-                    try:
-                        if self.server.poll() is not None: raise RuntimeError('Gazebo server exited unexpectedly')
-                        with self.lock: latest = dict(self.latest)
-                        if latest.get('capture', {}).get('failed'): raise RuntimeError('Imaging pipeline failed')
-                        if latest.get('motion_complete'):
-                            self.finish()
-                    except Exception as e: self.fail(e)
                 continue
             if command['id'] in self.seen: continue
             self.seen.append(command['id'])
@@ -342,6 +338,18 @@ class MissionManager(Node):
             except Exception as e:
                 self.fail(e)
                 with self.lock: self.command_result = dict(id=command['id'], ok=False, error=str(e))
+
+    def check_active(self):
+        # Paused Gazebo still publishes wall-clock heartbeats. Startup has its
+        # own 60 s deadline; draining is monitored by completed writer work.
+        if not self.server or self.state not in ('running', 'paused'): return
+        if self.server.poll() is not None: raise RuntimeError('Gazebo server exited unexpectedly')
+        with self.lock:
+            latest = dict(self.latest); age = time.monotonic()-self.last_received
+        if age > self.args.status_timeout_s:
+            raise RuntimeError(f'Gazebo mission telemetry expired ({age:.2f} s; limit {self.args.status_timeout_s:g} s)')
+        if latest.get('capture', {}).get('failed'): raise RuntimeError('Imaging pipeline failed')
+        if latest.get('motion_complete'): self.finish()
 
     def stop_server(self):
         def progress():
@@ -381,6 +389,7 @@ class MissionManager(Node):
     def tick(self):
         with self.lock:
             latest = dict(self.latest); state = self.state
+            age = time.monotonic()-self.last_received
             capture = latest.get('capture', {})
             status = dict(state=state, error=self.error, task=self.task,
                           mission_limits=self.limits,
@@ -391,7 +400,8 @@ class MissionManager(Node):
                           imaging_lag_s=max(0., capture.get('sim_time_pushed', 0)-capture.get('sim_time_written', 0)),
                           output=str(self.session or ''), command_result=self.command_result,
                           dynamics_only=self.args.dynamics_only,
-                          status_age_s=time.monotonic()-self.last_received)
+                          status_age_s=age, status_timeout_s=self.args.status_timeout_s,
+                          telemetry_stale=state in ('running', 'paused') and age > self.args.status_timeout_s)
         self.status.publish(String(data=json.dumps(status, ensure_ascii=False)))
         sim = max(0., latest['sim_time']); clock = Clock()
         clock.clock.sec = int(sim); clock.clock.nanosec = int((sim-int(sim))*1e9)
@@ -445,6 +455,8 @@ def main():
     p.add_argument('--data-root', default='local_data', help='writable assets/cache/lock root; Linux filesystem preferred')
     p.add_argument('--gz-gui', action='store_true')
     p.add_argument('--dynamics-only', action='store_true', help='test mode, NO image acquisition')
+    p.add_argument('--status-timeout-s', type=positive_timeout, default=10.,
+                   help='maximum wall-clock age of Gazebo telemetry while running or paused')
     p.add_argument('--drain-timeout-s', type=positive_timeout, default=180.,
                    help='maximum seconds without completed capture/commit work during drain')
     p.add_argument('--terminate-timeout-s', type=positive_timeout, default=10.)

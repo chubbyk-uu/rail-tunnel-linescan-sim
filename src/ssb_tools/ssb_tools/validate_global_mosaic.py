@@ -14,6 +14,48 @@ from ssb_tools.wall_coverage import RUN_DTYPE
 from ssb_tools.provenance import stage_record
 
 
+def relief_reference_positions(model, angles, xs):
+    """Fixed public-depth rule, evaluated before reading output values/errors.
+
+    Random probes can miss every narrow groove. Probe up to 16 evenly spaced
+    positive patch samples inside the declared output cell centres, too.
+    This checks CPU/CUDA depth sampling, not independent geometric accuracy.
+    """
+    if model.relief is None: return set()
+    qs = angles*model.radius
+    candidates = []
+    for patch in model.relief.patches:
+        x0, q0, dx, dq = patch['grid']; data = patch['depth']
+        xa = int(np.searchsorted(xs, x0-1e-12))
+        xb = int(np.searchsorted(xs, x0+(data.shape[1]-1)*dx+1e-12, side='right'))
+        qa = int(np.searchsorted(qs, q0-1e-12))
+        qb = int(np.searchsorted(qs, q0+(data.shape[0]-1)*dq+1e-12, side='right'))
+        if xa >= xb or qa >= qb: continue
+        # Every positive bilinear basis has a positive vertex. Its nearest
+        # in-domain output centre witnesses that basis if any centre can hit it.
+        # Include vertices just outside the ROI whose interpolation reaches it.
+        rows, columns = np.nonzero(data > 0)
+        keep = ((x0+columns*dx >= xs[xa]-dx) & (x0+columns*dx <= xs[xb-1]+dx) &
+                (q0+rows*dq >= qs[qa]-dq) & (q0+rows*dq <= qs[qb-1]+dq))
+        rows, columns = rows[keep], columns[keep]
+        if not len(rows): continue
+        xi = np.rint((x0+columns*dx-xs[0])/(xs[1]-xs[0])).astype(int) if len(xs)>1 else np.zeros(len(rows), int)
+        qi = np.rint((q0+rows*dq-qs[0])/(qs[1]-qs[0])).astype(int) if len(qs)>1 else np.zeros(len(rows), int)
+        indices = np.unique(np.clip(qi, qa, qb-1)*len(xs)+np.clip(xi, xa, xb-1))
+        best = None; maximum = 0.
+        for first in range(0, len(indices), 4096):
+            part = indices[first:first+4096]
+            q_bins, x_bins = np.divmod(part, len(xs))
+            depth = model.relief.depth(xs[x_bins], qs[q_bins])
+            chosen = int(np.argmax(depth))
+            if depth[chosen] > maximum:
+                maximum = float(depth[chosen]); best = (int(q_bins[chosen]), int(x_bins[chosen]))
+        if best is not None: candidates.append(best)
+    if not candidates: return set()
+    indices = np.unique(np.rint(np.linspace(0, len(candidates)-1, min(16, len(candidates)))).astype(int))
+    return {candidates[i] for i in indices}
+
+
 def validate(unroll, trajectory, mosaic, output):
     started = time.monotonic()
     mosaic = Path(mosaic).resolve(); output = Path(output).resolve()
@@ -73,6 +115,8 @@ def validate(unroll, trajectory, mosaic, output):
             rng = np.random.default_rng(20261003)
             positions = {(0, 0), (0, nx-1), (nq-1, 0), (nq-1, nx-1)}
             positions.update(zip(rng.integers(0, nq, 64).tolist(), rng.integers(0, nx, 64).tolist()))
+            relief_positions = relief_reference_positions(model, angles, xs)
+            positions.update(relief_positions)
             maximum = 0; probes = []
             for q, x in sorted(positions):
                 v, n = corrected_tile(model, coefficients, np.array([angles[q]*model.radius]), np.array([xs[x]]))
@@ -82,21 +126,24 @@ def validate(unroll, trajectory, mosaic, output):
                 if int(count[q, x]) != min(int(n[0, 0]), 255) or ((actual != MOSAIC_INVALID) != valid) or error > 1:
                     raise ValueError(f'CPU native reference differs at ({q}, {x})')
                 maximum = max(maximum, error)
-                probes.append(dict(q_bin=q, x_bin=x, count=int(n[0, 0]), code_error=error))
+                probes.append(dict(q_bin=q, x_bin=x, count=int(n[0, 0]), code_error=error,
+                                   relief_probe=(q, x) in relief_positions))
         finally:
             values._mmap.close(); count._mmap.close()
-        result = dict(schema='ssb.global_mosaic_validation.v1',
+        result = dict(schema='ssb.global_mosaic_validation.v2',
             status='pass' if not histogram.get(0, 0) else 'fail',
             full_pixel_consistency=True, total_pixels=nq*nx, missing_pixels=histogram.get(0, 0),
             coverage_gate='pass' if not histogram.get(0, 0) else 'fail',
             cpu_reference=dict(seed=20261003, probes=probes, maximum_code_error=maximum,
+                               relief_probes=len(relief_positions),
                                tolerance_code=1, role='independent NumPy resampling, not true-geometry evaluation'),
             wall_s=time.monotonic()-started)
         output.mkdir(parents=True, exist_ok=False)
         (output/'report.json').write_text(json.dumps(result, indent=2)+'\n')
         (output/'provenance.json').write_text(json.dumps(stage_record('global_mosaic_validation',
             inputs+trajectory_inputs+[record_path, mosaic/'report.json'], [output/'report.json'],
-            dict(seed=20261003, full_pixel_consistency=True)), indent=2)+'\n')
+            dict(seed=20261003, full_pixel_consistency=True,
+                 relief_probe_rule='up to 16 evenly spaced positive public patch samples within output cell centres')), indent=2)+'\n')
         return result
     finally:
         if hasattr(sampler.native, 'close'):

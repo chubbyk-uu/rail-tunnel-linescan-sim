@@ -47,8 +47,10 @@ class GlobalCudaRaster(CudaRaster):
         try:
             self.lib.ssb_unroll_global_abi.argtypes = []
             self.lib.ssb_unroll_global_abi.restype = ct.c_int
-            if self.lib.ssb_unroll_global_abi() != 1:
+            if self.lib.ssb_unroll_global_abi() != 2:
                 raise RuntimeError('unsupported CUDA global ABI')
+            self.lib.ssb_unroll_global_depth.argtypes = [ct.c_void_p, ct.c_void_p]
+            self.lib.ssb_unroll_global_depth.restype = ct.c_int
             self.lib.ssb_unroll_global_band.argtypes = [ct.c_void_p, ct.c_int, ct.c_void_p,
                 ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_int, ct.c_int, ct.c_double, ct.c_double]
             self.lib.ssb_unroll_global_band.restype = ct.c_int
@@ -61,7 +63,7 @@ class GlobalCudaRaster(CudaRaster):
                 if hi+self.margin >= xs[0] and lo-self.margin <= xs[-1]]
 
     def describe(self):
-        return dict(super().describe(), global_abi=1,
+        return dict(super().describe(), global_abi=2, surface_relief=self.model.relief is not None,
                     geometry='fitted Ry(pitch) Rx(roll); double inverse, 10 iterations, 1e-8 m support threshold')
 
     def tile(self, angles, xs, bands=None):
@@ -72,6 +74,11 @@ class GlobalCudaRaster(CudaRaster):
             raise ValueError('finite ordered one-dimensional CUDA grid required')
         self.check(self.lib.ssb_unroll_begin(self.handle, len(angles), len(xs), pointer(xs)))
         qs = np.ascontiguousarray(angles*self.model.radius)
+        if self.model.relief is not None:
+            depth = np.ascontiguousarray(self.model.relief.depth(xs[None, :], qs[:, None]), np.float64)
+            if depth.shape != (len(qs), len(xs)):
+                raise ValueError('shared radial depth must match the CUDA output tile')
+            self.check(self.lib.ssb_unroll_global_depth(self.handle, pointer(depth)))
         for band in (self.candidate_bands(xs) if bands is None else bands):
             lo, hi = self.sampler.band_x[band]
             left = int(np.searchsorted(xs, lo-self.margin))

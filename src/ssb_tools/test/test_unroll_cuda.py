@@ -158,6 +158,71 @@ def test_global_cuda_zero_correction_matches_d1_and_preserves_shifted_band_candi
 
 
 @pytest.mark.parametrize('coupled', [False, True])
+@pytest.mark.parametrize('kind', ['constant', 'groove', 'partial'])
+def test_global_cuda_applies_shared_relief_and_matches_cpu_across_tiles(coupled, kind):
+    from test_evaluate_global_geometry import independent_fixture
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    from ssb_tools.global_resample import corrected_tile
+    from ssb_tools.surface_relief import SurfaceRelief
+    model, *_ = independent_fixture()
+    offsets = model.sampler.offsets
+    model.sampler.native.raw_rows[:] = np.rint(100+200*offsets).astype(np.uint8)
+    c = np.zeros(model.size)
+    if coupled:
+        for field, value in enumerate([.7, -.4, .6, -.5]):
+            c[model.starts[field]:model.starts[field+1]] = value
+    qs, xs = np.linspace(-.1, .1, 21), np.linspace(.45, .55, 31)
+    plain, _ = corrected_tile(model, c, qs, xs)
+    data = np.full((3, 3), .02, np.float32)
+    if kind == 'groove': data[:, [0, 2]] = 0.
+    patch = dict(grid=[.47 if kind == 'partial' else .4, -.06, .035, .06], depth=data)
+    model.relief = SurfaceRelief([patch])
+    expected, counts = corrected_tile(model, c, qs, xs)
+    assert np.nanmax(abs(expected-plain)) > .1
+    raster = GlobalCudaRaster(model, c)
+    try:
+        actual, number, _ = raster.tile(qs, xs)
+        np.testing.assert_array_equal(number, counts)
+        np.testing.assert_allclose(actual, expected, atol=3e-5, rtol=0, equal_nan=True)
+        # Reuse the context with different tile dimensions and no depth support.
+        for sl in (slice(0, 5), slice(5, 17), slice(17, 21)):
+            actual, number, _ = raster.tile(qs[sl], xs[7:19])
+            np.testing.assert_array_equal(number, counts[sl, 7:19])
+            np.testing.assert_allclose(actual, expected[sl, 7:19], atol=3e-5, rtol=0, equal_nan=True)
+        assert raster.describe()['surface_relief'] is True
+        assert raster.describe()['allocated_peak_bytes'] < 256 << 20
+        model.relief = None
+        actual, number, _ = raster.tile(qs, xs)
+        reference, counts = corrected_tile(model, c, qs, xs)
+        np.testing.assert_array_equal(number, counts)
+        np.testing.assert_allclose(actual, reference, atol=3e-5, rtol=0, equal_nan=True)
+    finally:
+        raster.close()
+
+
+def test_global_cuda_rejects_old_depthless_abi_and_releases_context(monkeypatch):
+    import ctypes
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    from test_evaluate_global_geometry import independent_fixture
+    model, *_ = independent_fixture()
+    from ament_index_python.packages import get_package_prefix
+    from pathlib import Path
+    library = ctypes.CDLL(str(Path(get_package_prefix('ssb_core'))/'lib/libssb_unroll_cuda.so'))
+    monkeypatch.setattr(library, 'ssb_unroll_global_abi', lambda: 1)
+    monkeypatch.setattr(ctypes, 'CDLL', lambda *a: library)
+    closed = []
+    destroy = library.ssb_unroll_destroy
+    destroy.argtypes = [ctypes.c_void_p]; destroy.restype = None
+    def record_destroy(handle):
+        closed.append(handle); destroy(handle)
+    # The adapter assigns ctypes signatures to the wrapper just as to a symbol.
+    monkeypatch.setattr(library, 'ssb_unroll_destroy', record_destroy)
+    with pytest.raises(RuntimeError, match='global ABI'):
+        GlobalCudaRaster(model, np.zeros(model.size))
+    assert len(closed) == 1
+
+
+@pytest.mark.parametrize('coupled', [False, True])
 def test_cuda_inverse_preserves_finite_nearest_row_footprints_and_real_gaps(coupled):
     from ssb_tools.global_geometry import Trajectory
     from ssb_tools.global_cuda import GlobalCudaRaster
@@ -233,7 +298,8 @@ def test_global_cuda_row_vectors_match_independent_matrix_ray_equations():
 
 
 @pytest.mark.parametrize('saturated', [False, True])
-def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_path, saturated):
+@pytest.mark.parametrize('relief', [False, True])
+def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_path, saturated, relief):
     from ssb_tools.global_geometry import Trajectory, GeometrySettings
     from ssb_tools.global_mosaic import run
     from ssb_tools.match_bands import verified_bands
@@ -263,9 +329,15 @@ def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_
     fit = tmp_path/'fit'; fit.mkdir()
     (fit/'trajectory.json').write_text(json.dumps(model.serialize(np.zeros(model.size))))
     (fit/'windows.json').write_text('[]')
-    (fit/'report.json').write_text(json.dumps(dict(schema='ssb.global_optimization.v1',
+    fit_report = dict(schema='ssb.global_optimization.v1',
         settings=vars(settings), grid=upstream['grid'], optical_signature=upstream['optical_signature'],
-        source_observation_hashes=upstream['source_observation_hashes'])))
+        source_observation_hashes=upstream['source_observation_hashes'])
+    if relief:
+        from dataclasses import asdict
+        from ssb_tools.surface_relief import ReliefSettings, SurfaceRelief
+        SurfaceRelief([dict(grid=[.2, -.2, .8, .4], depth=np.full((2, 2), .02, np.float32))]).save(fit/'surface_relief.npz')
+        fit_report['surface_relief'] = dict(schema='ssb.stereo_radial_relief.v1', settings=asdict(ReliefSettings()))
+    (fit/'report.json').write_text(json.dumps(fit_report))
     (fit/'provenance.json').write_text(json.dumps(stage_record('global_optimization',
         [d1/name for name in ('projection.npy', 'mapping.npz', 'bands.json')], sorted(fit.iterdir()), {})))
     sampler.native.close()
@@ -273,8 +345,16 @@ def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_
     output = tmp_path/'mosaic'
     report = run(d1, fit, output, angular_tile_rows=3, tile_columns=5)
     products = [read_products(output/name) for name in ('nominal', 'optimized')]
-    for a, b in zip(*products):
-        np.testing.assert_array_equal(a, b)
+    if not relief:
+        for a, b in zip(*products): np.testing.assert_array_equal(a, b)
+    else:
+        cpu = tmp_path/'cpu_mosaic'
+        run(d1, fit, cpu, backend='cpu', angular_tile_rows=2, tile_columns=7)
+        reference = read_products(cpu/'optimized')
+        assert np.max(abs(products[1][0].astype(int)-reference[0].astype(int))) <= 1
+        for actual, expected in zip(products[1][1:], reference[1:]): np.testing.assert_array_equal(actual, expected)
+        assert np.any(products[0][0] != products[1][0])
+        assert report['products']['optimized']['backend']['surface_relief']
     code, count, runs = products[1]
     assert np.array_equal(code == 65535, count == 0)
     stats = report['products']['optimized']['coverage']
@@ -293,6 +373,7 @@ def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_
     assert checked['coverage_gate'] == report['coverage_gate']['status']
     assert checked['status'] == ('fail' if saturated else 'pass')
     assert checked['cpu_reference']['maximum_code_error'] <= 1
+    assert (checked['cpu_reference']['relief_probes'] > 0) is relief
     with (output/'optimized/mosaic_u16.npy').open('r+b') as file:
         file.seek(-2, 2); file.write(b'xx')
     with pytest.raises(ValueError, match='product hash mismatch'):
