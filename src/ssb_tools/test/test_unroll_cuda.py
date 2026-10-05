@@ -535,6 +535,16 @@ def test_fusion_full_output_validator_and_baseline_tamper_rejection(tmp_path):
     assert checked['status']=='pass' and checked['fusion_reference']
     assert checked['cpu_reference']['fusion_probes'] > 0
     assert checked['cpu_reference']['maximum_code_error'] <= 1
+    # Exercise the real installed CLI under its permanent Python read audit.
+    # Ament's code locator must be admitted narrowly; data/truth remain blocked.
+    import subprocess, sys
+    audited = tmp_path/'audited_fusion'
+    process = subprocess.run([sys.executable,'-m','ssb_tools.seam_fusion',
+        '--public-root',str(root),'--raw',str(root/'raw'),'--unroll',str(d1),
+        '--trajectory',str(fit),'--baseline',str(baseline),'--output',str(audited)],
+        text=True,capture_output=True,timeout=60)
+    assert process.returncode == 0, process.stderr
+    assert json.loads((audited/'public_audit.json').read_text())['private_input_opens'] == 0
     with (baseline/'optimized/mosaic_u16.npy').open('r+b') as file:
         file.seek(-2,2);file.write(b'xx')
     with pytest.raises(ValueError,match='baseline product hash mismatch'):

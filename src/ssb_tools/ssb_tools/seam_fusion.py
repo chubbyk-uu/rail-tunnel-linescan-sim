@@ -288,7 +288,11 @@ def main():
     code_inputs = []
     if args.backend == 'cuda':
         library = Path(get_package_prefix('ssb_core'))/'lib/libssb_unroll_cuda.so'
-        ct.CDLL(str(library)); sha256_file(library); code_inputs.append(library)
+        ct.CDLL(str(library)); sha256_file(library)
+        # ament reopens this exact installed code locator when a raster is built.
+        # Admit the locator itself, never the whole install/ tree.
+        resource = library.parent.parent/'share/ament_index/resource_index/packages/ssb_core'
+        code_inputs.extend([library, resource])
     for folder in (args.unroll, args.trajectory, args.baseline, args.output, args.raw):
         if public_audit.private(Path(folder).resolve()):
             raise ValueError('fusion inputs/output must be outside private evaluation/')
