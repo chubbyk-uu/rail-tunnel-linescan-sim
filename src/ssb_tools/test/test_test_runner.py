@@ -3,7 +3,15 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from ssb_tools.test_runner import merge_results
+from ssb_tools.test_runner import merge_results, partition
+
+
+def test_both_cuda_modules_share_one_group_and_do_not_enter_cpu_groups():
+    nodes = ['test/test_unroll_cuda.py::sample', 'test/test_fast_geometry_cuda.py::sample',
+             'test/test_fast_geometry.py::cpu', 'test/test_global_optimization.py::cpu']
+    groups = partition(nodes, {}, 4)
+    assert set(groups[0]) == set(nodes[:2])
+    assert set(node for group in groups[1:] for node in group) == set(nodes[2:])
 
 
 def worker(path, names, failed=False):

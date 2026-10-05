@@ -120,10 +120,13 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
                  'initial_unroll.py', 'global_resample.py', 'reconstruction_support.py', 'evaluate_global_geometry.py',
                  'reconstruction_budget.py', 'mission_plan.py', 'global_cuda.py', 'global_mosaic.py',
                  'public_audit.py', 'public_reconstruction.py', 'parallel_budget.py', 'validate_stage_b.py',
-                 'validate_stage_a.py', 'ref_geometry.py', 'session.py', 'surface_relief.py','fast_normal.py'):
+                 'validate_stage_a.py', 'ref_geometry.py', 'session.py', 'surface_relief.py','fast_normal.py', 'fast_geometry.py'):
         (source/name).write_text('# fixture source\n')
     (tmp_path/'src/ssb_core/src').mkdir(parents=True)
     (tmp_path/'src/ssb_core/src/normal_equations.cpp').write_text('// fixture source\n')
+    (tmp_path/'src/ssb_core/src/ray_numeric.cpp').write_text('// fixture source\n')
+    (tmp_path/'src/ssb_core/include/ssb_core').mkdir(parents=True)
+    (tmp_path/'src/ssb_core/include/ssb_core/ray_numeric.hpp').write_text('// fixture source\n')
     (tmp_path/'src/ssb_core/CMakeLists.txt').write_text('# fixture build\n')
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: 'frozen 0 '+('a'*64))
     monkeypatch.setattr(module, 'check_calibration', lambda *a: 'measured-rig')
@@ -228,7 +231,8 @@ def test_relocated_audit_requires_exact_root_move_and_original_product_hashes(tm
 
 
 @pytest.mark.parametrize('relief,change', [(r,c) for r in (False,True) for c in
-    (None, 'spacing_m', 'height', 'max_width', 'halo_m', 'missing','normal_backend')]+[(True,'relief_settings')])
+    (None, 'spacing_m', 'height', 'max_width', 'halo_m', 'missing','normal_backend',
+     'geometry_backend', 'geometry_diagnostic_backend')]+[(True,'relief_settings')])
 @pytest.mark.parametrize('relative',[False,True])
 def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_path, monkeypatch, change, relief,relative):
     import ssb_tools.holdout_protocol as module
@@ -241,7 +245,8 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
         exact_plan_saved_before_truth=True)
     protocol = dict(schema='ssb.d3_holdout_protocol.v6', code_commit='frozen', holdout_roi_m=[12.,15.],
         d2=dict(planning, settings={}), d3=dict(adaptive_attitude=True), sampling=sampling,
-        normal_backend_sha256='a'*64)
+        normal_backend_sha256='a'*64, geometry_backend_sha256='c'*64,
+        geometry_diagnostic_backend_sha256='d'*64)
     if relative:protocol['d3']['relative_encoder_scale']=True
     if relief:
         from ssb_tools.surface_relief import ReliefSettings
@@ -258,9 +263,12 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
         np.save(root/'unroll/projection.npy',np.array([(10.,),(16.8,)],dtype=[('x_axis_m','f8')]))
         report['planning']['halo_m']=.25+.03*(16.8-10.)/2
     if change == 'missing': report.pop('planning')
-    elif change is not None and change not in ('relief_settings','normal_backend'): report['planning'][change] *= 2
+    elif change is not None and change not in ('relief_settings','normal_backend', 'geometry_backend', 'geometry_diagnostic_backend'):
+        report['planning'][change] *= 2
     (root/'matches/report.json').write_text(json.dumps(report))
     fit = dict(settings=protocol['d3'],normal_backend=dict(library_sha256='b'*64 if change=='normal_backend' else 'a'*64))
+    fit['geometry_backend'] = dict(library_sha256=('e' if change=='geometry_backend' else 'c')*64,
+        host_diagnostic_backend=dict(library_sha256=('e' if change=='geometry_diagnostic_backend' else 'd')*64))
     if relief:
         fit['surface_relief'] = dict(settings=protocol['surface_relief'].copy())
         if change == 'relief_settings':
@@ -276,8 +284,9 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
     monkeypatch.setattr(module, 'capture_checks', lambda *a, **k: dict(binary_matches_source=True))
     monkeypatch.setattr(module, 'public_run_valid', lambda *a, **k: True)
     result = module.verify(protocol_file, root, tmp_path/'evaluation/verification.json')
-    assert result['checks']['d2_planning_unchanged'] is (change in (None,'relief_settings','normal_backend'))
+    assert result['checks']['d2_planning_unchanged'] is (change in (None,'relief_settings','normal_backend', 'geometry_backend', 'geometry_diagnostic_backend'))
     assert result['checks']['normal_backend_identity'] is (change!='normal_backend')
+    assert result['checks']['geometry_backend_identity'] is (change not in ('geometry_backend', 'geometry_diagnostic_backend'))
     if relief:
         assert result['checks']['surface_relief_settings_unchanged'] is (change != 'relief_settings')
     assert result['status'] == ('pass' if change is None else 'fail')

@@ -26,7 +26,7 @@ def evaluation_path(path):
 
 
 def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attitude=False, height=512, max_q_shift_mm=None,
-            surface_relief=False, slow_translation=False, relative_encoder_scale=False):
+            surface_relief=False, slow_translation=False, relative_encoder_scale=False, geometry_backend='cpu'):
     workspace, demo, output = Path(workspace).resolve(), Path(demo).resolve(), evaluation_path(output)
     state = subprocess.check_output(['sh', str(workspace/'src/ssb_core/cmake/source_state.sh'),
                                      str(workspace)], text=True).split()
@@ -38,7 +38,7 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     config = yaml.safe_load((demo/'capture.yaml').read_text())
     wall_plan(config, start, length, read_json(demo/'calibration.json'), relative_encoder_scale=relative_encoder_scale)
     check_calibration(demo/'capture.yaml', demo/'calibration.json')
-    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation, relative_encoder_scale)
+    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation, relative_encoder_scale, geometry_backend)
     settings.validate()
     if not isinstance(spacing_m, (int, float)) or not 0 < spacing_m <= .4:
         raise ValueError('holdout matching spacing must be positive and at most 0.4 m')
@@ -58,6 +58,13 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     if slow_translation:
         sources.extend([workspace/'src/ssb_tools/ssb_tools/fast_normal.py',
                         workspace/'src/ssb_core/src/normal_equations.cpp',workspace/'src/ssb_core/CMakeLists.txt'])
+    if geometry_backend != 'numpy':
+        sources.extend([workspace/'src/ssb_tools/ssb_tools/fast_geometry.py',
+                        workspace/'src/ssb_core/src/ray_numeric.cpp',
+                        workspace/'src/ssb_core/include/ssb_core/ray_numeric.hpp',
+                        workspace/'src/ssb_core/CMakeLists.txt'])
+        if geometry_backend == 'cuda':
+            sources.append(workspace/'src/ssb_core/src/ray_numeric_cuda.cu')
     record = dict(schema='ssb.d3_holdout_protocol.v7' if surface_relief else 'ssb.d3_holdout_protocol.v6',
         declared_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), code_commit=state[0],
         holdout_roi_m=[start, start+length],
@@ -79,6 +86,10 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     if slow_translation:
         from .fast_normal import backend
         record['normal_backend_sha256']=backend()[1]['library_sha256']
+    if geometry_backend != 'numpy':
+        from .fast_geometry import backend, cuda_backend
+        record['geometry_backend_sha256'] = (cuda_backend if geometry_backend == 'cuda' else backend)()[1]['library_sha256']
+        record['geometry_diagnostic_backend_sha256'] = backend()[1]['library_sha256']
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(record, indent=2)+'\n')
     return record
@@ -220,6 +231,12 @@ def verify(protocol_file, root, output):
     if 'normal_backend_sha256' in protocol:
         checks['normal_backend_identity'] = read_json(root/'fit/report.json').get(
             'normal_backend',{}).get('library_sha256') == protocol['normal_backend_sha256']
+    if 'geometry_backend_sha256' in protocol:
+        actual = read_json(root/'fit/report.json').get('geometry_backend', {})
+        diagnostic = actual.get('host_diagnostic_backend', actual)
+        checks['geometry_backend_identity'] = (
+            actual.get('library_sha256') == protocol['geometry_backend_sha256'] and
+            diagnostic.get('library_sha256') == protocol.get('geometry_diagnostic_backend_sha256'))
     if protocol.get('schema') in ('ssb.d3_holdout_protocol.v4', 'ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         checks['public_only_production_run'] = public_run_valid(root,
             strong=protocol['schema'] != 'ssb.d3_holdout_protocol.v4')
@@ -269,6 +286,7 @@ def main():
     declaration.add_argument('--surface-relief', action='store_true')
     declaration.add_argument('--slow-translation', action='store_true')
     declaration.add_argument('--relative-encoder-scale', action='store_true')
+    declaration.add_argument('--geometry-backend', choices=('numpy', 'cpu', 'cuda'), default='cuda')
     verification = sub.add_parser('verify')
     for name in ('protocol', 'root', 'output'):
         verification.add_argument('--'+name, required=True)
@@ -280,7 +298,7 @@ def main():
     if args.action == 'declare':
         declare(args.workspace, args.demo, args.output, args.start, args.length,
                 args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm, args.surface_relief,
-                args.slow_translation, args.relative_encoder_scale)
+                args.slow_translation, args.relative_encoder_scale, args.geometry_backend)
         return 0
     if args.action == 'audit-public':
         output = evaluation_path(args.output)

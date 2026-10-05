@@ -26,6 +26,12 @@ add_library(ssb_normal SHARED src/normal_equations.cpp)
 target_compile_options(ssb_normal PRIVATE -O3 -Wall -Wextra -Wpedantic -ffp-contract=off)
 install(TARGETS ssb_normal LIBRARY DESTINATION lib)
 
+# Fused public ray/analytic-Jacobian numerics, without simulator or scene access.
+add_library(ssb_ray_numeric SHARED src/ray_numeric.cpp)
+target_include_directories(ssb_ray_numeric PRIVATE include)
+target_compile_options(ssb_ray_numeric PRIVATE -O3 -Wall -Wextra -Wpedantic -ffp-contract=off)
+install(TARGETS ssb_ray_numeric LIBRARY DESTINATION lib)
+
 # Source-tree identity baked in at every build (DESIGN.md §12.1).
 set(SSB_STAMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/stamp")
 add_custom_target(ssb_build_stamp ALL
@@ -55,6 +61,12 @@ add_library(ssb_unroll_cuda SHARED src/unroll_cuda.cu)
 target_compile_options(ssb_unroll_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
 target_link_libraries(ssb_unroll_cuda PRIVATE CUDA::cudart)
 install(TARGETS ssb_unroll_cuda LIBRARY DESTINATION lib)
+
+add_library(ssb_ray_cuda SHARED src/ray_numeric_cuda.cu)
+target_include_directories(ssb_ray_cuda PRIVATE include)
+target_compile_options(ssb_ray_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
+target_link_libraries(ssb_ray_cuda PRIVATE CUDA::cudart)
+install(TARGETS ssb_ray_cuda LIBRARY DESTINATION lib)
 
 set(SSB_PTX "${CMAKE_CURRENT_BINARY_DIR}/ssb_scan.ptx")
 add_custom_command(OUTPUT "${SSB_PTX}"

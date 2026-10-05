@@ -1,6 +1,7 @@
 """D3: robust continuous trajectory fitting from verified D1/D2 public products."""
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+import hashlib
 import json
 from pathlib import Path
 import time
@@ -47,10 +48,10 @@ def verified_matches(root, d1_root, upstream, sampler):
     accepted = {w['id']: w for w in windows if w['status'] == 'accepted'}
     if len(graph_components(len(sampler.segments), windows)) != 1:
         raise ValueError('disconnected match graph cannot define one global result')
-    for w in np.unique(table['window']):
+    for w, ids in window_groups(table):
         if int(w) not in accepted:
             raise ValueError('matches from a rejected window')
-        selected = table[table['window'] == w]
+        selected = table[ids]
         if not np.all(selected['band_a'] == accepted[int(w)]['bands'][0]) or not np.all(
                 selected['band_b'] == accepted[int(w)]['bands'][1]):
             raise ValueError('match window band identity mismatch')
@@ -80,6 +81,13 @@ def public_robot(path, expected_hash, radius):
     return height, path
 
 
+def window_groups(table):
+    """Stable row groups: one sort instead of a full-table scan per window."""
+    order = np.argsort(table['window'], kind='stable')
+    split = np.flatnonzero(np.diff(table['window'][order]))+1
+    return [(int(table['window'][ids[0]]), ids) for ids in np.split(order, split) if len(ids)]
+
+
 def window_weights(table, grid, settings):
     """Directional noise from training-only local scatter, not NCC or evaluation truth.
 
@@ -89,8 +97,8 @@ def window_weights(table, grid, settings):
     weights = np.zeros((len(table), 2)); descriptions = []
     train = table['inlier'].astype(bool) & ~table['holdout'].astype(bool)
     pitch = np.array([grid['dx_m'], grid['dq_m']])
-    for window in np.unique(table['window']):
-        selected = np.flatnonzero(train & (table['window'] == window))
+    for window, ids in window_groups(table):
+        selected = ids[train[ids]]
         if len(selected) < 12:
             raise ValueError('insufficient independent training support in match window')
         a = np.column_stack((table['x_a_m'][selected], table['q_a_m'][selected]))
@@ -118,6 +126,54 @@ def window_weights(table, grid, settings):
         descriptions.append(dict(window=int(window), training=len(selected), sigma_px=sigma.tolist(),
                                  effective_points=min(settings.effective_points_per_window, len(selected))))
     return train, weights, descriptions
+
+
+@dataclass
+class PreparedFit:
+    """Fit-invariant public observations, shared only across one run's refinement.
+
+    Robust weights, spline bases and priors are deliberately not cached here.
+    Content identity prevents a changed table from silently reusing old noise.
+    """
+    table: np.ndarray
+    digest: str
+    identity: tuple
+    train: np.ndarray
+    holdout: np.ndarray
+    training: np.ndarray
+    base: np.ndarray
+    descriptions: list
+    members: list
+
+    @staticmethod
+    def content(table):
+        return hashlib.sha256(memoryview(np.ascontiguousarray(table)).cast('B')).hexdigest()
+
+    @staticmethod
+    def key(grid, settings, bands):
+        return (grid['dx_m'], grid['dq_m'], settings.noise_floor_px,
+                settings.effective_points_per_window, bands)
+
+    @classmethod
+    def prepare(cls, model, table, grid):
+        train, weights, descriptions = window_weights(table, grid, model.settings)
+        holdout = table['inlier'].astype(bool) & table['holdout'].astype(bool)
+        if not holdout.any():
+            raise ValueError('independent held-out image matches required')
+        for mask in (train, holdout):
+            pairs = np.unique(np.column_stack((table['band_a'][mask], table['band_b'][mask])), axis=0)
+            if len(pairs) != len(model.sampler.segments)-1:
+                raise ValueError('training or held-out match graph is disconnected')
+        training = table[train]
+        by_window = dict(window_groups(training))
+        members = [by_window[item['window']] for item in descriptions]
+        return cls(table, cls.content(table), cls.key(grid, model.settings, len(model.sampler.segments)),
+                   train, holdout, training, weights[train], descriptions, members)
+
+    def validate(self, model, table, grid):
+        if (table is not self.table or self.identity != self.key(grid, model.settings, len(model.sampler.segments))
+                or self.digest != self.content(table)):
+            raise ValueError('prepared fit observations changed')
 
 
 def observability(a, b, coefficients, weights, pitch):
@@ -183,11 +239,45 @@ class FixedJacobian:
         self.indptr = np.r_[rows_ptr, 2*self.nnz+prior.indptr]
         self.prior = prior.data
         self.shape = (2*n+prior.shape[0], model.size)
+        self.columns = np.ascontiguousarray(columns, np.int32) if model.settings.geometry_backend == 'cuda' else None
+        self.numeric = None
+        if model.settings.geometry_backend != 'numpy':
+            from .fast_geometry import CpuJacobian, CudaJacobian
+            self.numeric = (CudaJacobian if model.settings.geometry_backend == 'cuda' else CpuJacobian)(self)
+        self._coefficients, self._local = None, None
+        self._difference_coefficients, self._difference = None, None
+
+    def parameters(self, coefficients):
+        if self._coefficients is None or not np.array_equal(coefficients, self._coefficients):
+            self._local = [self.model.parameters(coefficients, rays.bases, rays.axis) for rays in self.sides]
+            self._coefficients = coefficients.copy()
+        return self._local
+
+    def difference(self, coefficients):
+        if self._difference_coefficients is None or not np.array_equal(coefficients, self._difference_coefficients):
+            if self.numeric is None:
+                a, b = self.sides
+                self._difference = b.hits(coefficients)-a.hits(coefficients)
+            else:
+                parameters = coefficients if self.model.settings.geometry_backend == 'cuda' else self.parameters(coefficients)
+                self._difference = self.numeric.difference(parameters)
+            self._difference.setflags(write=False)
+            self._difference_coefficients = coefficients.copy()
+        return self._difference
 
     def __call__(self, coefficients, current, pitch):
         model = self.model
-        local = [model.parameters(coefficients, rays.bases, rays.axis) for rays in self.sides]
+        local = coefficients if model.settings.geometry_backend == 'cuda' else self.parameters(coefficients)
         data = np.empty(2*self.nnz)
+
+        if self.numeric is not None:
+            current = np.ascontiguousarray(current, np.float64)
+            pitch = np.ascontiguousarray(pitch, np.float64)
+            if model.settings.geometry_backend == 'cuda':
+                self.numeric.fill(0, self.n, local, current, pitch, data)
+            else:
+                in_chunks(lambda first, last: self.numeric.fill(first, last, local, current, pitch, data), self.n, .25)
+            return csr_matrix((np.r_[data, self.prior], self.indices, self.indptr), shape=self.shape)
 
         def fill(first, last):
             derivatives = []
@@ -404,35 +494,32 @@ def damped_solve(fun, jac, initial, bounds, native=False):
     raise ValueError('global trajectory solver exceeded 50 Gauss-Newton steps: '+json.dumps(trace[-5:]))
 
 
-def fit(model, table, grid, initial=None):
+def fit(model, table, grid, initial=None, prepared=None):
+    from .fast_geometry import numeric_scope
+    with numeric_scope():
+        return _fit(model, table, grid, initial, prepared)
+
+
+def _fit(model, table, grid, initial=None, prepared=None):
     coefficients = np.zeros(model.size) if initial is None else np.asarray(initial, dtype=float).copy()
     if (coefficients.shape != (model.size,) or not np.isfinite(coefficients).all() or
             np.any(abs(coefficients) > model.coefficient_bounds())):
         raise ValueError('finite bounded initial trajectory coefficients required')
-    train, weights, descriptions = window_weights(table, grid, model.settings)
-    holdout = table['inlier'].astype(bool) & table['holdout'].astype(bool)
-    if not holdout.any():
-        raise ValueError('independent held-out image matches required')
-    training = table[train]
-    # Train and held-out adjacency must both cover every link in the chain.
-    for field_mask in (train, holdout):
-        pairs = np.unique(np.column_stack((table['band_a'][field_mask], table['band_b'][field_mask])), axis=0)
-        if len(pairs) != len(model.sampler.segments)-1:
-            raise ValueError('training or held-out match graph is disconnected')
+    if prepared is None:
+        prepared = PreparedFit.prepare(model, table, grid)
+    else:
+        prepared.validate(model, table, grid)
+    train, holdout, training = prepared.train, prepared.holdout, prepared.training
+    descriptions, members = prepared.descriptions, prepared.members
     a, b = model.native_side(training, 'a'), model.native_side(training, 'b')
     pitch = np.array([grid['dx_m'], grid['dq_m']])
-    base = weights[train]; current = base.copy()
+    base = prepared.base; current = base.copy()
     prior = regularizer(model)
     assembly = FixedJacobian(a, b, prior)
-    # Training rows of each window, in table order (one pass, not one scan per window).
-    order = np.argsort(training['window'], kind='stable')
-    split = np.flatnonzero(np.diff(training['window'][order]))+1
-    by_window = dict(zip(training['window'][order][np.r_[0, split]].tolist(), np.split(order, split)))
-    members = [by_window[item['window']] for item in descriptions]
     history = []
     for iteration in range(model.settings.max_irls):
         def fun(c):
-            d = (b.hits(c)-a.hits(c))/pitch
+            d = assembly.difference(c)/pitch
             return np.r_[(d*current).ravel(), prior @ c]
 
         def jac(c):
@@ -440,7 +527,7 @@ def fit(model, table, grid, initial=None):
 
         bounds = model.coefficient_bounds()
         coefficients, solver = damped_solve(fun, jac, coefficients, bounds, native=model.settings.coarse_translation)
-        delta = (b.hits(coefficients)-a.hits(coefficients))/pitch
+        delta = assembly.difference(coefficients)/pitch
         robust = np.ones(len(training))
         for item, ids in zip(descriptions, members):
             z = np.linalg.norm(delta[ids]/item['sigma_px'], axis=1)
@@ -463,6 +550,8 @@ def fit(model, table, grid, initial=None):
                   training_after=residual_summary(after[train], pitch),
                   heldout_before=residual_summary(before[holdout], pitch),
                   heldout_after=residual_summary(after[holdout], pitch))
+    if assembly.numeric is not None:
+        model.numeric_report = assembly.numeric.describe()
     return coefficients, scores, descriptions, history, before, after, evidence
 
 
@@ -549,8 +638,10 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
             raise ValueError('attitude nodes finer than two observed window spacings')
         model = Trajectory(sampler, upstream['grid']['radius_m'], height, settings)
         check_s = time.monotonic()-started
+        prepared = PreparedFit.prepare(model, table, upstream['grid'])
         fit_started = time.monotonic()
-        coefficients, scores, noise, history, before, after, evidence = fit(model, table, upstream['grid'])
+        coefficients, scores, noise, history, before, after, evidence = fit(
+            model, table, upstream['grid'], prepared=prepared)
         fit_passes = [dict(coefficients=model.size, wall_s=time.monotonic()-fit_started,
                           initialization='zero', solver=history)]
         refinement = None
@@ -564,7 +655,7 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                 model = refined
                 fit_started = time.monotonic()
                 coefficients, scores, noise, history, before, after, evidence = fit(
-                    model, table, upstream['grid'], initial=initial)
+                    model, table, upstream['grid'], initial=initial, prepared=prepared)
                 refinement['initialization'] = 'exact_training_curve_knot_insertion_v1'
                 fit_passes.append(dict(coefficients=model.size, wall_s=time.monotonic()-fit_started,
                                        initialization=refinement['initialization'], solver=history))
@@ -615,6 +706,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
         if settings.coarse_translation:
             from .fast_normal import backend
             report['normal_backend']=backend()[1]
+        if settings.geometry_backend != 'numpy':
+            report['geometry_backend'] = model.numeric_report
         if settings.relative_encoder_scale:
             report['relative_encoder_scale'] = model.serialize(coefficients)['relative_encoder_scale']
             report['gauge'] += '; local dx linear mode anchored; global scale is relative to fixed radius/lens priors'
@@ -634,6 +727,7 @@ def main():
     parser.add_argument('--observable', required=True); parser.add_argument('--output', required=True)
     parser.add_argument('--raw', help='relocated public raw directory')
     parser.add_argument('--attitude-spacing-m', type=float, default=.05)
+    parser.add_argument('--geometry-backend', choices=('numpy', 'cpu', 'cuda'), default='cuda')
     parser.add_argument('--observed-knots', action='store_true', help='fine pose knots only in recorded exposure spans')
     parser.add_argument('--adaptive-attitude', action='store_true', help='one training-only, observation-supported local attitude refinement')
     parser.add_argument('--relative-encoder-scale', action='store_true')
@@ -642,7 +736,7 @@ def main():
     translation.add_argument('--fit-heave', action='store_true', help='image-derived continuous vertical correction only; no pose truth')
     args = parser.parse_args()
     report = run(args.unroll, args.matches, args.observable, args.output,
-                 GeometrySettings(attitude_spacing_m=args.attitude_spacing_m, fit_translation=args.fit_translation,
+                 GeometrySettings(geometry_backend=args.geometry_backend, attitude_spacing_m=args.attitude_spacing_m, fit_translation=args.fit_translation,
                                   fit_heave=args.fit_heave, observed_knots=args.observed_knots,
                                   adaptive_attitude=args.adaptive_attitude,
                                   relative_encoder_scale=args.relative_encoder_scale), args.raw)

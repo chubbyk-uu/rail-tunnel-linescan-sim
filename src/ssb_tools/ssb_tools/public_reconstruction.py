@@ -65,6 +65,12 @@ def run(unroll, observable, root, raw_root=None, workers=None, spacing_m=.2,
         # data-read audit. The cached backend consumes only public arrays later.
         from .fast_normal import backend
         backend()
+    if settings.geometry_backend != 'numpy':
+        from .fast_geometry import backend
+        backend()
+        if settings.geometry_backend == 'cuda':
+            from .fast_geometry import cuda_backend
+            cuda_backend()
     d1, config, raw, blocks = stage(unroll, observable, record/'public', raw_root)
     staged_s = time.monotonic()-started
     reads = set()
@@ -110,6 +116,7 @@ def main():
     parser.add_argument('--height', type=int, default=512, help='matching window height; 256 with 0.1 m spacing keeps angular gaps')
     parser.add_argument('--max-q-shift-mm', type=float, help='explicit circumferential search prior; otherwise inherits 40 mm axial prior')
     parser.add_argument('--attitude-spacing-m', type=float, default=.02)
+    parser.add_argument('--geometry-backend', choices=('numpy', 'cpu', 'cuda'), default='cuda')
     parser.add_argument('--adaptive-attitude', action='store_true',
                         help='training-only bounded local refinement; use --spacing-m .1 for finer supported nodes')
     parser.add_argument('--slow-translation', action='store_true',
@@ -120,7 +127,7 @@ def main():
     parser.add_argument('--strict', action='store_true', help='exit nonzero if the pose image-consistency gate is not pass')
     args = parser.parse_args()
     report = run(args.unroll, args.observable, args.root, args.raw, args.workers, args.spacing_m,
-                 reconstruction_settings(args.attitude_spacing_m,args.adaptive_attitude,args.slow_translation,args.relative_encoder_scale), args.height, args.max_q_shift_mm,
+                 reconstruction_settings(args.attitude_spacing_m,args.adaptive_attitude,args.slow_translation,args.relative_encoder_scale,args.geometry_backend), args.height, args.max_q_shift_mm,
                  args.surface_relief)
     print(json.dumps({k: report[k] for k in ('status', 'audit_status', 'quality_status', 'public_raw_blocks', 'd2', 'd3', 'performance')}))
     if args.strict and report['quality_status'] != 'pass': raise SystemExit(1)

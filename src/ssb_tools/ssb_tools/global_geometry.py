@@ -12,6 +12,7 @@ from scipy.interpolate import BSpline, insert
 from scipy.sparse import csr_matrix, diags, hstack
 from .parallel_budget import resolve_workers
 from .reconstruction_support import RELATIVE_SCALE_BOUND
+from .fast_geometry import ray_values
 
 
 @dataclass(frozen=True)
@@ -36,11 +37,14 @@ class GeometrySettings:
     relative_encoder_scale: bool = False
     relative_scale_prior_fraction: float = .01
     relative_scale_bound_fraction: float = RELATIVE_SCALE_BOUND
+    geometry_backend: str = 'cpu'
 
     def validate(self):
         switches = ('fit_translation', 'fit_heave', 'observed_knots', 'adaptive_attitude', 'coarse_translation',
                     'relative_encoder_scale')
-        numbers = [v for k, v in vars(self).items() if k not in ('max_irls', *switches)]
+        numbers = [v for k, v in vars(self).items() if k not in ('max_irls', 'geometry_backend', *switches)]
+        if self.geometry_backend not in ('numpy', 'cpu', 'cuda'):
+            raise ValueError('explicit numpy, cpu or cuda geometry backend required')
         if not all(math.isfinite(v) and v > 0 for v in numbers):
             raise ValueError('positive finite optimization settings required')
         if not .01 <= self.attitude_spacing_m <= .6:
@@ -73,9 +77,9 @@ class GeometrySettings:
 
 
 def reconstruction_settings(attitude_spacing_m=.02, adaptive_attitude=False, slow_translation=False,
-                            relative_encoder_scale=False):
+                            relative_encoder_scale=False, geometry_backend='cpu'):
     """Public, declared priors; no rig truth used to choose coefficients."""
-    return GeometrySettings(attitude_spacing_m=attitude_spacing_m, observed_knots=True,
+    return GeometrySettings(geometry_backend=geometry_backend, attitude_spacing_m=attitude_spacing_m, observed_knots=True,
         adaptive_attitude=adaptive_attitude, fit_translation=slow_translation,
         coarse_translation=slow_translation, translation_bound_mm=30. if slow_translation else 5.,
         translation_prior_mm=10. if slow_translation else 2., relative_encoder_scale=relative_encoder_scale)
@@ -509,7 +513,10 @@ class RaySet:
         model = self.model
         local = model.parameters(coefficients, self.bases, self.axis)
         # Elementwise per ray: chunking leaves every hit bit-identical.
-        points = np.concatenate(in_chunks(lambda a, b: cylinder_points(
+        # CUDA accelerates the training assembly; final diagnostic rays are
+        # explicitly CPU geometry, also recorded in the backend identity.
+        function = ray_values if model.settings.geometry_backend != 'numpy' else cylinder_points
+        points = np.concatenate(in_chunks(lambda a, b: function(
             self.axis[a:b], self.theta[a:b], self.tangent[a:b], local[a:b], model.radius, model.height),
             len(self.axis)))
         return np.sum(points.reshape(-1, 4, 2)*self.weights[..., None], axis=1)
@@ -518,8 +525,11 @@ class RaySet:
         """Analytic d(x, q)/d(local correction field) of every native centre ray."""
         model = self.model
         local = model.parameters(coefficients, self.bases, self.axis)
-        return np.concatenate(in_chunks(lambda a, b: cylinder_derivatives(
-            self.axis[a:b], self.theta[a:b], self.tangent[a:b], local[a:b], model.radius, model.height),
+        def derivative(first, last):
+            args = (self.axis[first:last], self.theta[first:last], self.tangent[first:last],
+                    local[first:last], model.radius, model.height)
+            return ray_values(*args, derivatives=True) if model.settings.geometry_backend != 'numpy' else cylinder_derivatives(*args)
+        return np.concatenate(in_chunks(derivative,
             len(self.axis)))
 
     def jacobian(self, coefficients):

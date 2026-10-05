@@ -28,10 +28,13 @@ def pytest_configure(config):
     cv2.setNumThreads(1)
 
 
+GPU_TEST_PREFIXES = ('test/test_unroll_cuda.py::', 'test/test_fast_geometry_cuda.py::')
+
+
 def partition(nodes, durations, workers):
     if workers == 1:
         return [nodes]
-    gpu = [node for node in nodes if node.startswith('test/test_unroll_cuda.py::')]
+    gpu = [node for node in nodes if node.startswith(GPU_TEST_PREFIXES)]
     cpu = [node for node in nodes if node not in gpu]
     count = min(workers-bool(gpu), len(cpu))
     groups, costs = [[] for _ in range(count)], [0.] * count
@@ -132,7 +135,7 @@ def run(workspace, workers=4, output=None):
         cpp = pool.submit(execute, 'cpp', ['colcon', 'test', '--packages-skip', 'ssb_tools'])
 
         def python_group(index, group):
-            if any(node.startswith('test/test_unroll_cuda.py::') for node in group):
+            if any(node.startswith(GPU_TEST_PREFIXES) for node in group):
                 cpp.result()  # Never overlap Python CUDA contexts with OptiX tests.
             command = base+['-q', '--junit-prefix=ssb_tools', '--junit-xml='+str(paths[index])]
             command += ['--basetemp='+str(output/f'python_{index}_tmp')]

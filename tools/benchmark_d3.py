@@ -24,15 +24,28 @@ def main():
     parser.add_argument('--slow-translation', action='store_true')
     parser.add_argument('--relative-encoder-scale', action='store_true')
     parser.add_argument('--attitude-spacing-m', type=float, default=.02)
+    parser.add_argument('--geometry-backend', choices=('numpy', 'cpu', 'cuda'), default='cuda')
+    parser.add_argument('--geometry-workers', type=int, help='explicit CPU geometry thread budget')
     args = parser.parse_args()
     public, matches, output = (Path(p).resolve() for p in (args.public, args.matches, args.output))
     if output.is_relative_to(public) or output.is_relative_to(matches):
         parser.error('output must be separate from public inputs')
     output.mkdir(exist_ok=False, parents=True)
     sources = [Path(module.__file__).resolve() for module in (optimizer, geometry)]
+    from ssb_tools import fast_geometry
+    sources.append(Path(fast_geometry.__file__).resolve())
     sources.append(Path(__file__).resolve())
     hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     backend()  # Bind the installed CPU implementation before restricting reads.
+    if args.geometry_backend != 'numpy':
+        from ssb_tools.fast_geometry import backend as ray_backend
+        ray_backend()
+        if args.geometry_backend == 'cuda':
+            from ssb_tools.fast_geometry import cuda_backend
+            cuda_backend()
+    if args.geometry_workers is not None:
+        from ssb_tools.parallel_budget import resolve_workers
+        geometry.THREADS = resolve_workers(args.geometry_workers)
     metrics, passes = {}, []
 
     def timed(obj, name, key=None):
@@ -55,6 +68,8 @@ def main():
             timed(optimizer, name)
     timed(optimizer.FixedJacobian, '__init__', 'jacobian_plan')
     timed(optimizer.FixedJacobian, '__call__', 'jacobian_assembly')
+    timed(optimizer.FixedJacobian, 'difference', 'training_ray_difference')
+    timed(optimizer.FixedJacobian, 'parameters', 'training_ray_parameters')
     for name in ('hits', 'derivatives', 'jacobian'):
         timed(geometry.RaySet, name, 'ray_'+name)
     timed(geometry.Trajectory, 'native_side', 'native_sources')
@@ -77,7 +92,7 @@ def main():
     audit = public_audit.install(public, public/'raw', reads, recorded=[matches, output])
     started = time.monotonic()
     settings = reconstruction_settings(args.attitude_spacing_m, args.adaptive_attitude,
-                                       args.slow_translation, args.relative_encoder_scale)
+                                       args.slow_translation, args.relative_encoder_scale, args.geometry_backend)
     report = optimizer.run(public/'d1', matches, public/'config/observable_config.json',
                            output/'pose', settings, public/'raw')
     public_audit.verified_states(audit, [])

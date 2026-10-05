@@ -33,6 +33,7 @@ fi
 if [[ ${SSB_RELATIVE_ENCODER_SCALE:-0} == 1 ]]; then
   refinement_args+=(--relative-encoder-scale)
 fi
+refinement_args+=(--geometry-backend "${SSB_D3_BACKEND:-cuda}")
 search_args=()
 if [[ -n ${SSB_D2_Q_SHIFT_MM:-} ]]; then
   search_args=(--max-q-shift-mm "$SSB_D2_Q_SHIFT_MM")
@@ -68,6 +69,7 @@ fi
 if [[ ${SSB_RELATIVE_ENCODER_SCALE:-0} == 1 ]]; then
   refinement_args+=(--relative-encoder-scale)
 fi
+refinement_args+=(--geometry-backend "${SSB_D3_BACKEND:-cuda}")
 search_args=()
 if [[ -n ${SSB_D2_Q_SHIFT_MM:-} ]]; then
   search_args=(--max-q-shift-mm "$SSB_D2_Q_SHIFT_MM")
