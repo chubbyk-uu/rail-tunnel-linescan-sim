@@ -2,7 +2,7 @@
 
 综合装配与噪声场景采用匹配 0.1 m / 256 行、姿态 0.02 m、粗节点横向/升沉和共享表面深度；下文 0.2 m 命令仍是名义基线。
 
-更新：2026-10-05。D1、D2、D3 已实现，3 m 及 20 m 综合新采均通过。最新 20 m 窗口内／间 P95 0.607／0.662 px、计划点零缺测、完整优化全图零缺口。相对尺度、支撑、物理修复及核验器勘误见 [RELATIVE_SCALE](RELATIVE_SCALE.md)，当前门限见 [EVALUATION](EVALUATION.md)。[第一轮 D3 提速](D3_PERFORMANCE.md) 已完成并复核，下一步做亮度融合与最多 50 m 的分段扩展，见 [ROADMAP](ROADMAP.md)。旧模型、失败与门限保留在 [开发归档](history/STAGE_D_DEVLOG_2026-10-03.md)，不与现行结论混用。
+更新：2026-10-05。D1、D2、D3 已实现，3 m 及 20 m 综合新采均通过。最新 20 m 窗口内／间 P95 0.607／0.662 px、计划点零缺测、完整优化全图零缺口。相对尺度、支撑、物理修复及核验器勘误见 [RELATIVE_SCALE](RELATIVE_SCALE.md)，当前门限见 [EVALUATION](EVALUATION.md)。[两轮 D3 提速](D3_PERFORMANCE.md) 已完成并复核，下一步做亮度融合与最多 50 m 的分段扩展，见 [ROADMAP](ROADMAP.md)。旧模型、失败与门限保留在 [开发归档](history/STAGE_D_DEVLOG_2026-10-03.md)，不与现行结论混用。
 
 ## 输入与几何
 
@@ -134,6 +134,10 @@ python3 tools/validate_global_mosaic.py \
 ## 并行与实测性能
 
 D2、独立评价 CLI 默认 `min(8, 当前可用 CPU 数)`，优先 affinity，支持 `--workers N`；D3 分块线程采用同一默认预算。固定分块和合并顺序不因线程数改变；脚本 `SSB_OFFLINE_WORKERS=N` 设置 D2 与评价，不设置 D3 线程。测试入口默认 4 个工作进程，另行调度。
+
+D3 生产 CLI 默认 `--geometry-backend cuda`，留出脚本可用 `SSB_D3_BACKEND=cpu` 显式选择融合 CPU；NumPy 参考为 `--geometry-backend numpy`。Python 库接口默认仍为 CPU，避免隐式要求 CUDA。GPU 只处理公开光线、样条修正、残差和解析雅可比，使用 double、固定索引且不做浮点原子累加；稀疏正规方程、有界线性求解及诊断继续在 CPU。单次拟合以作用域管理 GPU 资源，出错也释放，不静默降级。协议冻结并核验数值库哈希。
+
+2026-10-05 同一 20 m 公开 D1/D2 的位姿剖析：第一轮 315.800 s →融合 CPU 136.552 s →CUDA 99.388 s。后两者均为 108 次 GN，保留五轮 IRLS、匹配点、节点密度和验收规则；主机峰值 RSS 分别约 7.19／7.57 GiB，GPU 优化工作分配约 2.11 GiB、上限 4 GiB。缓存增加主机内存占用，位姿耗时不包含共享深度、整图和独立评价。完整 20 m 成图及新种子 3 m 通过，详见 [D3_PERFORMANCE](D3_PERFORMANCE.md)。
 
 | 本机记录 | 耗时 / 范围 |
 |---|---|

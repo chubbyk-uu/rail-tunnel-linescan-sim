@@ -1,6 +1,19 @@
 # 数据保留与清理
 
-## D3 提速与新种子复核（2026-10-05）
+## 第二轮 D3 融合与 CUDA（2026-10-05）
+
+| 保留内容 | 位置 |
+|---|---|
+| 正式同数据 CPU/CUDA 性能 | `sessions/d3_perf_fused_cpu_20261005/`、`sessions/d3_perf_fused_20261005/`，最终轨迹、审计和报告保留 |
+| 重新生成的 20 m 完整全图 | `sessions/d3_perf_fused_20261005/mosaic/`，全像素覆盖及 CPU 核验在 `local_data/evaluation/d3_fused_20261005/full_mosaic/` |
+| 新种子综合 3 m | `sessions/d3_fused_holdout_seed20261223_20261005/`，完整原图、实际独立重成像、公开输入、优化与整图均保留；同名 evaluation 保留 18 项协议和独立评分 |
+| 新采独立生成包 | `local_data/stage_b/d3_fused_seed20261223_bundle/`，运行引用闭包及 bundle 哈希已核对 |
+| 8/16 线程公开微基准 | `sessions/d3_thread_probe_20261005/report.json` |
+| 测试、开发候选与准备失败记录 | `local_data/evaluation/d3_fused_20261005/test_and_preparation_records.tar.gz`，逐项回读 SHA-256；删除清单见 `cleanup.json` |
+
+只清理本轮两份准备目录、三轮测试临时夹具及四个被正式对照替代的开发候选目录。归档保留开发报告/轨迹/剖析及旧标定复用失败记录，不含开发大数组，不能作为完整可重放会话。删除逻辑体积约 **3.58 GiB**，按独立 inode 及硬链接估算释放约 **1.75 GiB**。既有正式证据和本轮最终 CPU/CUDA 产物、新原图、实际重成像、完整全图均未删除。WSL 文件系统上批量归档并核验后集中清理，不产生逐窗口小文件。
+
+## 第一轮 D3 提速与新种子复核（2026-10-05）
 
 | 保留内容 | 位置 |
 |---|---|

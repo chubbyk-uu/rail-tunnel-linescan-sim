@@ -108,6 +108,8 @@ colcon build --symlink-install --cmake-args \
   -DCUDAToolkit_ROOT=/path/to/cuda-12.8 > /tmp/ssb_build.log 2>&1
 ```
 
+构建同时安装 `libssb_ray_numeric.so` 与 `libssb_ray_cuda.so`。D3 生产 CLI 默认 CUDA 残差/雅可比，支持 `--geometry-backend cpu` 显式使用融合 CPU；公开留出脚本可设 `SSB_D3_BACKEND=cpu`。CUDA 优化工作分配上限 4 GiB，20 m 实测约 2.11 GiB，另需约 7.57 GiB 主机峰值 RSS，详见 [性能与范围](D3_PERFORMANCE.md)。
+
 缺少 CUDA 或 OptiX 会直接使配置失败，项目不静默降级成其他成像后端。每次更新 Git 提交或源码后，采集前重新构建；采集会核对构建版本与运行源码身份，包括文档提交。
 
 ```bash
