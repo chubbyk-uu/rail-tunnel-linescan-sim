@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
-from scipy.interpolate import BSpline
+from scipy.interpolate import BSpline, insert
 from scipy.sparse import csr_matrix, diags, hstack
 from .parallel_budget import resolve_workers
 from .reconstruction_support import RELATIVE_SCALE_BOUND
@@ -111,6 +111,57 @@ def curvature_stencil(knots, index, reference_spacing):
         raise ValueError('positive Greville spacing required')
     return reference_spacing**2*np.array([2/(left*(left+right)), -2/(left*right),
                                          2/(right*(left+right))])
+
+
+def refined_attitude_coefficients(source, target, coefficients):
+    """Preserve the training-fitted curve exactly when inserting attitude knots.
+
+    Boehm insertion changes the basis, not the ray geometry. Copy the other
+    fields and the separate relative scale; never estimate a seed from holdout
+    points or accept an external pose. Changing dx knots would change its gauge.
+    """
+    coefficients = np.asarray(coefficients, dtype=float)
+    if (source.sampler is not target.sampler or source.settings != target.settings or
+            source.fields != target.fields or source.domain != target.domain or
+            source.radius != target.radius or source.height != target.height or
+            source.scale_reference_m != target.scale_reference_m):
+        raise ValueError('refinement requires the same public trajectory model')
+    if (coefficients.shape != (source.size,) or not np.isfinite(coefficients).all() or
+            np.any(abs(coefficients) > source.coefficient_bounds())):
+        raise ValueError('finite bounded source coefficients required for refinement')
+    result = np.empty(target.size)
+    for field, (old, new) in enumerate(zip(source.knots, target.knots)):
+        values = coefficients[source.starts[field]:source.starts[field+1]]
+        if field not in (2, 3):
+            if not np.array_equal(old, new):
+                raise ValueError('only attitude knots may be refined')
+            result[target.starts[field]:target.starts[field+1]] = values
+            continue
+        if not np.isfinite(new).all() or np.any(np.diff(new) < 0):
+            raise ValueError('sorted finite refinement knots required')
+        old_values, old_counts = np.unique(old, return_counts=True)
+        new_values, new_counts = np.unique(new, return_counts=True)
+        counts = dict(zip(new_values, new_counts))
+        if any(counts.get(x, 0) < n for x, n in zip(old_values, old_counts)):
+            raise ValueError('refinement cannot remove or move existing knots')
+        old_counts = dict(zip(old_values, old_counts))
+        spline = BSpline(old, values.copy(), 3, extrapolate=False)
+        for x, count in zip(new_values, new_counts):
+            added = int(count-old_counts.get(x, 0))
+            if added:
+                if not source.domain[0] < x < source.domain[1]:
+                    raise ValueError('refinement knots must be inside the public domain')
+                # scipy.interpolate.insert supports the deployed SciPy 1.11;
+                # its returned coefficient buffer includes unused padding.
+                spline = insert(x, spline, m=added)
+        if not np.array_equal(spline.t, new):
+            raise ValueError('refinement knot identity mismatch')
+        result[target.starts[field]:target.starts[field+1]] = spline.c[:target.sizes[field]]
+    if source.scale_index is not None:
+        result[target.scale_index] = coefficients[source.scale_index]
+    if not np.isfinite(result).all() or np.any(abs(result) > target.coefficient_bounds()+1e-12):
+        raise ValueError('refined coefficients exceed the declared bounds')
+    return result
 
 
 # Fixed chunks keep temporaries in cache; their order (not the thread count)

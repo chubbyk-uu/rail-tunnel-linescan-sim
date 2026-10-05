@@ -7,10 +7,10 @@ import time
 
 import numpy as np
 from scipy.sparse import csr_matrix, diags, vstack
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import splu
 
 from .global_geometry import (GeometrySettings, Trajectory, curvature_stencil, cylinder_derivatives,
-                              in_chunks)
+                              in_chunks, refined_attitude_coefficients)
 from .quality_targets import SEAM_P95_PX
 from .match_bands import MATCH, verified_bands, graph_components
 from .provenance import stage_record
@@ -290,12 +290,31 @@ def residual_summary(delta, pitch):
         mean_px=values.mean(0).tolist(), std_px=values.std(0).tolist())
 
 
+def symmetric_normal_solve(matrix, rhs):
+    """Solve a regularized SPD normal system without general-LU row pivoting.
+
+    Matching row/column ordering avoids fill from the differently scaled spline
+    fields and gauges. Check componentwise backward error on the actual system;
+    never accept a fast factorization merely because its result is finite.
+    """
+    matrix = matrix.tocsc()
+    solution = splu(matrix, permc_spec='MMD_AT_PLUS_A', diag_pivot_thresh=0.,
+                    options={'SymmetricMode': True}).solve(rhs)
+    residual = matrix @ solution-rhs
+    reference = abs(matrix) @ abs(solution)+abs(rhs)
+    if (not np.isfinite(solution).all() or not np.isfinite(residual).all() or
+            not np.isfinite(reference).all() or
+            np.max(abs(residual)/np.maximum(reference, 1e-300)) > 1e-10):
+        raise ValueError('symmetric normal solve failed its backward-error check')
+    return solution
+
+
 def bounded_normal_step(normal, gradient, current, bounds, damping):
     """Solve the damped box quadratic; clipping a coupled Newton step is not a solve."""
     diagonal=np.maximum(normal.diagonal(),1e-8)
     matrix=normal+diags(damping*diagonal)
     lower,upper=-bounds-current,bounds-current
-    unconstrained=spsolve(matrix,-gradient,permc_spec='MMD_AT_PLUS_A')
+    unconstrained=symmetric_normal_solve(matrix,-gradient)
     if not np.isfinite(unconstrained).all():
         raise ValueError('nonfinite bounded trajectory step')
     if np.all(unconstrained>=lower) and np.all(unconstrained<=upper):
@@ -310,7 +329,7 @@ def bounded_normal_step(normal, gradient, current, bounds, damping):
             if iteration==0 and not active.any():
                 direction=unconstrained
             else:
-                direction[free]=spsolve(matrix[free][:,free],-derivative[free],permc_spec='MMD_AT_PLUS_A')
+                direction[free]=symmetric_normal_solve(matrix[free][:,free],-derivative[free])
         if not np.isfinite(direction).all():
             raise ValueError('nonfinite bounded trajectory step')
         if np.max(abs(direction),initial=0.)<1e-9:
@@ -385,7 +404,11 @@ def damped_solve(fun, jac, initial, bounds, native=False):
     raise ValueError('global trajectory solver exceeded 50 Gauss-Newton steps: '+json.dumps(trace[-5:]))
 
 
-def fit(model, table, grid):
+def fit(model, table, grid, initial=None):
+    coefficients = np.zeros(model.size) if initial is None else np.asarray(initial, dtype=float).copy()
+    if (coefficients.shape != (model.size,) or not np.isfinite(coefficients).all() or
+            np.any(abs(coefficients) > model.coefficient_bounds())):
+        raise ValueError('finite bounded initial trajectory coefficients required')
     train, weights, descriptions = window_weights(table, grid, model.settings)
     holdout = table['inlier'].astype(bool) & table['holdout'].astype(bool)
     if not holdout.any():
@@ -406,7 +429,6 @@ def fit(model, table, grid):
     split = np.flatnonzero(np.diff(training['window'][order]))+1
     by_window = dict(zip(training['window'][order][np.r_[0, split]].tolist(), np.split(order, split)))
     members = [by_window[item['window']] for item in descriptions]
-    coefficients = np.zeros(model.size)
     history = []
     for iteration in range(model.settings.max_irls):
         def fun(c):
@@ -527,15 +549,25 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
             raise ValueError('attitude nodes finer than two observed window spacings')
         model = Trajectory(sampler, upstream['grid']['radius_m'], height, settings)
         check_s = time.monotonic()-started
+        fit_started = time.monotonic()
         coefficients, scores, noise, history, before, after, evidence = fit(model, table, upstream['grid'])
+        fit_passes = [dict(coefficients=model.size, wall_s=time.monotonic()-fit_started,
+                          initialization='zero', solver=history)]
         refinement = None
         if settings.adaptive_attitude:
             knots, refinement = refine_attitude_knots(model, table, after, upstream['grid'],
                                                       2*spacing*progress_per_q)
             refinement['initial_image_consistency'] = scores
             if refinement['after_coefficients'] > model.size:
-                model = Trajectory(sampler, upstream['grid']['radius_m'], height, settings, knots)
-                coefficients, scores, noise, history, before, after, evidence = fit(model, table, upstream['grid'])
+                refined = Trajectory(sampler, upstream['grid']['radius_m'], height, settings, knots)
+                initial = refined_attitude_coefficients(model, refined, coefficients)
+                model = refined
+                fit_started = time.monotonic()
+                coefficients, scores, noise, history, before, after, evidence = fit(
+                    model, table, upstream['grid'], initial=initial)
+                refinement['initialization'] = 'exact_training_curve_knot_insertion_v1'
+                fit_passes.append(dict(coefficients=model.size, wall_s=time.monotonic()-fit_started,
+                                       initialization=refinement['initialization'], solver=history))
         output.mkdir(parents=True, exist_ok=False)
         (output/'trajectory.json').write_text(json.dumps(model.serialize(coefficients), indent=2)+'\n')
         np.savez(output/'match_residuals.npz', before_m=before, after_m=after,
@@ -576,7 +608,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                  if settings.relative_encoder_scale else 'yaw, mounting errors and wheel scale are not independently fitted; absolute translation modes remain prior-dependent'
                  if extended else 'yaw, lateral motion, heave, mounting errors and wheel scale are not independently fitted in this first model'),
                 'no seam blending; geometry, coverage and noisy-image robustness require independent acceptance'],
-            performance=dict(input_check_s=check_s, wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
+            performance=dict(input_check_s=check_s, wall_s=time.monotonic()-started,
+                             peak_rss_bytes=peak_rss_bytes(), fit_passes=fit_passes))
         if refinement is not None:
             report['attitude_refinement'] = refinement
         if settings.coarse_translation:
