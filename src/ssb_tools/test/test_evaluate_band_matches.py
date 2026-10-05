@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from ssb_tools.evaluate_band_matches import paired_hits, run
+from ssb_tools.evaluate_band_matches import paired_hits, run, diagnostic_indices
 from ssb_tools.provenance import stage_record
 from ssb_tools.session import sha256_file
 from test_initial_unroll import public_fixture
@@ -26,6 +26,31 @@ def test_evaluation_cannot_publish_truth_side_results_outside_evaluation(tmp_pat
     monkeypatch.setattr(evaluator,'Session',lambda root: object())
     with pytest.raises(ValueError,match='evaluation/'):
         run(tmp_path/'session',tmp_path/'matches',tmp_path/'public_result')
+
+
+def test_diagnostic_plan_covers_native_column_range_and_ignores_rejected_matches():
+    table = np.zeros(13, dtype=[('window', 'i4'), ('inlier', 'i1'), ('a_lower_column', 'f8')])
+    table['window'] = [0]*10+[1]*3
+    table['inlier'] = 1
+    table['inlier'][0] = 0
+    table['a_lower_column'] = np.arange(13)[::-1]
+    selected = diagnostic_indices(table, 3)
+    assert len(selected) == 6 and 0 not in selected
+    assert set(selected[:3]) == {1, 5, 9}
+    assert set(selected[3:]) == {10, 11, 12}
+    np.testing.assert_array_equal(selected, diagnostic_indices(table, 3))
+
+
+@pytest.mark.parametrize('budget', [0, 1, 65, 2.5, True])
+def test_diagnostic_plan_rejects_unbounded_or_invalid_budgets(budget):
+    with pytest.raises(ValueError):
+        diagnostic_indices(np.empty(0), budget)
+
+
+def test_diagnostic_plan_rejects_empty_evidence():
+    table = np.zeros(2, dtype=[('window', 'i4'), ('inlier', 'i1'), ('a_lower_column', 'f8')])
+    with pytest.raises(ValueError, match='no inlier'):
+        diagnostic_indices(table, 8)
 
 
 @pytest.mark.parametrize('kind', ['optical', 'raw_identity', 'tampered_report'])

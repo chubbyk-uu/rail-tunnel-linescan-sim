@@ -101,7 +101,23 @@ def signed_summary(delta, table, pitch):
         by_a_native_column=by_column)
 
 
-def run(session_root, matches_root, output, mesh_reference=True, scene=None):
+def diagnostic_indices(table, per_window):
+    """Fixed native-column quantiles chosen before loading any truth."""
+    if type(per_window) is not int or not 2 <= per_window <= 64:
+        raise ValueError('diagnostic sample budget must be an integer in [2,64]')
+    selected = []
+    for window in np.unique(table['window']):
+        ids = np.flatnonzero((table['window'] == window) & table['inlier'].astype(bool))
+        if len(ids):
+            ids = ids[np.argsort(table['a_lower_column'][ids], kind='stable')]
+            ranks = np.linspace(0, len(ids)-1, min(per_window, len(ids))).round().astype(int)
+            selected.extend(ids[ranks].tolist())
+    if not selected:
+        raise ValueError('no inlier windows for diagnostic sampling')
+    return np.asarray(selected, np.int64)
+
+
+def run(session_root, matches_root, output, mesh_reference=True, scene=None, diagnostic_per_window=None):
     started = time.monotonic(); session = Session(session_root)
     output = Path(output).resolve()
     if 'evaluation' not in output.parts: raise ValueError('truth-side outputs must be inside evaluation/')
@@ -124,7 +140,19 @@ def run(session_root, matches_root, output, mesh_reference=True, scene=None):
     truth_path = session.root/'evaluation/truth.json'
     if session.summary['files'].get('evaluation/truth.json') != sha256_file(truth_path):
         raise ValueError('evaluation truth identity mismatch')
-    table = np.load(table_path); table = table[table['inlier'].astype(bool)]
+    table = np.load(table_path)
+    diagnostic = None
+    if diagnostic_per_window is not None:
+        ids = diagnostic_indices(table, diagnostic_per_window)
+        output.mkdir(parents=True, exist_ok=False)
+        # Persist the public selection BEFORE opening row truth or tracing rays.
+        np.save(output/'diagnostic_match_indices.npy', ids)
+        diagnostic = dict(per_window=diagnostic_per_window, full_inliers=int(np.count_nonzero(table['inlier'])),
+            selected=len(ids), rule='native-column quantiles of each inlier window; selected before truth',
+            scope='bounded bias diagnosis, not full-match or independent acceptance')
+        table = table[ids]
+    else:
+        table = table[table['inlier'].astype(bool)]
     if not len(table): raise ValueError('no image-derived inlier matches to evaluate')
     rows = session.evaluation('row_truth'); truth = session.truth()
     a = world_points(table, 'a', rows, config['camera'], truth)
@@ -166,7 +194,10 @@ def run(session_root, matches_root, output, mesh_reference=True, scene=None):
         assumption='centre rays of native pixels at exposure-centre truth poses; the renderer integrates pixel area and exposure',
         limitation='reference correspondence error, not optimized seam accuracy; never fed back to matching',
         wall_s=time.monotonic()-started)
-    output.mkdir(parents=True, exist_ok=False)
+    if diagnostic is None:
+        output.mkdir(parents=True, exist_ok=False)
+    else:
+        report['diagnostic_sampling'] = diagnostic
     np.save(output/'reference_scores.npy', scores)
     (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
     manifest = read_json(session.root/'evaluation/manifest.json')
@@ -184,8 +215,11 @@ def main():
     for name in ('session', 'matches', 'output'): parser.add_argument('--'+name, required=True)
     parser.add_argument('--no-mesh', action='store_true', help='cylinder reference only')
     parser.add_argument('--scene', help='relocated optical scene; must hash-match the capture record')
+    parser.add_argument('--diagnostic-per-window', type=int,
+                        help='bounded bias diagnosis only; save public column-quantile plan before truth')
     args = parser.parse_args()
-    report = run(args.session, args.matches, args.output, not args.no_mesh, args.scene)
+    report = run(args.session, args.matches, args.output, not args.no_mesh, args.scene,
+                 args.diagnostic_per_window)
     print(json.dumps({k: report[k] for k in ('matches', 'cylindrical_reference_error_px', 'mesh_reference')}))
     for name, summary in report['signed_b_minus_a'].items():
         print(name, json.dumps(dict(mean=summary['mean_px'], std=summary['std_px'], window_mean=summary['window_mean_px'])))
