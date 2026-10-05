@@ -89,3 +89,13 @@ def test_refuses_fusion_across_completely_missing_scan_circle():
     sampler = BandSampler(p, old.native, old.offsets, old.output_offsets, old.geometry_valid, old.footprint)
     model = Trajectory(sampler,1.,.7)
     with pytest.raises(ValueError, match='missing circle'): CpuFusionRaster(model,np.zeros(model.size),identity(model))
+
+
+def test_weak_brightness_difference_is_measured_but_never_turns_into_false_gain():
+    sampler=analytic_sampler();sampler.image[11:] *= 1.004
+    model=Trajectory(sampler,1.,.7);record=estimate(model,np.zeros(model.size),target_grid([.53,.58],1.,[-.08,.08],.004))
+    assert record['pairs'][0]['status']=='measured'
+    assert not record['pairs'][0]['gain_enabled']
+    assert record['pairs'][0]['applied_edge_log_ratio']==0.
+    np.testing.assert_array_equal(record['gains'],[1.,1.])
+    assert record['heldout']['before_median_dn']==record['heldout']['after_median_dn']

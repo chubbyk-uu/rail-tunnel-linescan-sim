@@ -19,12 +19,16 @@ class FusionSettings:
     minimum_dn: float = 25.
     maximum_dn: float = 230.
     maximum_gradient_dn: float = 6.
+    minimum_relative_change: float = .01
+    minimum_sign_agreement: float = .75
 
     def validate(self):
         if (not np.isfinite([self.feather_width_m, self.gain_limit, self.minimum_dn,
-                             self.maximum_dn, self.maximum_gradient_dn]).all() or
+                             self.maximum_dn, self.maximum_gradient_dn, self.minimum_relative_change,
+                             self.minimum_sign_agreement]).all() or
                 not 0 < self.feather_width_m <= .004 or not 1 <= self.gain_limit <= 1.08 or
-                not 0 < self.minimum_dn < self.maximum_dn < 255 or self.maximum_gradient_dn <= 0):
+                not 0 < self.minimum_dn < self.maximum_dn < 255 or self.maximum_gradient_dn <= 0 or
+                not 0 <= self.minimum_relative_change <= .08 or not .5 <= self.minimum_sign_agreement <= 1.):
             raise ValueError('invalid bounded fusion settings')
         for name, low, high in (('angular_samples', 8, 256), ('axial_samples', 9, 257),
                                 ('minimum_samples', 8, 65536)):
@@ -111,7 +115,16 @@ def estimate(model, coefficients, grid, settings=FusionSettings()):
                      heldout_samples=sum(len(a) for row, a, _ in data if row % 2 == 1))
         if count >= settings.minimum_samples:
             ratios = np.concatenate(train); ratio = float(np.median(ratios))
-            edges.append((band, band+1, ratio))
+            # Gate only from TRAINING angular blocks. A large pixel count must
+            # not give thousands of votes to a single differently lit row.
+            block_medians = np.asarray([np.median(r) for r in train])
+            sign_agreement = float(np.mean(block_medians*np.sign(ratio) > 0))
+            reliable = (abs(ratio) >= np.log1p(settings.minimum_relative_change) and
+                        sign_agreement >= settings.minimum_sign_agreement and len(train) >= 4)
+            applied = ratio if reliable else 0.
+            edges.append((band, band+1, applied))
+            entry.update(gain_enabled=bool(reliable), training_angular_blocks=len(train),
+                         training_sign_agreement=sign_agreement, applied_edge_log_ratio=applied)
             entry.update(status='measured', median_log_b_over_a=ratio,
                          log_ratio_mad=float(np.median(abs(ratios-ratio))))
         else:
