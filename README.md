@@ -133,7 +133,7 @@ python3 -m http.server 8765 --bind 0.0.0.0 --directory sessions/review_NEW
 
 打开 `http://localhost:8765/review.html`；WSL 转发不可用时改用 `hostname -I` 的地址。页面保留原始条带、名义展开和优化三种状态，以及板缝/裂缝局部。详细参数、搬家后的原图定位、全分辨率输出与资源见 [重建文档](docs/STAGE_D.md)。
 
-D1 默认产物约 25 MB / 3 m、137 MB / 20 m，仍依赖原图；不要因此删除采集块。3 m 名义/优化全图另需约 4.8 GiB。当前处理不融合、不补洞；真值只进入生成与 `evaluation/`，RViz 显示姿态不作为拼接输入。
+D1 默认产物约 25 MB / 3 m、137 MB / 20 m，仍依赖原图；不要因此删除采集块。3 m 名义/优化全图另需约 4.8 GiB。正式默认输出为优化后未融合图；[接缝融合](docs/SEAM_FUSION.md) 可选、默认关闭，需要时单独运行。不补洞；真值只进入生成与 `evaluation/`，RViz 显示姿态不作为拼接输入。
 
 ## 验收、测试与排障
 
