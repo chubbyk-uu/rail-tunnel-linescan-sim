@@ -933,5 +933,318 @@
     "full_pixels": 863940000,
     "missing_pixels": 0,
     "limitation": "One combined mount, one independent track seed; not all mount signs/magnitudes or wheel/noise combinations."
+  },
+  "milestone_previous_media": {
+    "reconstruction_figures": {
+      "date": "2026-10-04",
+      "session": "sessions/boundary_crop81_holdout_20261004",
+      "capture_commit": "7abfc5bf7c3740948f1552c1e26484e6ba5ac05c",
+      "feature_review_commit": "7abfc5bf7c3740948f1552c1e26484e6ba5ac05c",
+      "source": "sessions/boundary_crop81_holdout_20261004/features",
+      "response_gain": 2.4,
+      "assumed_sensor_noise": false,
+      "track_seed": 20261029,
+      "true_wheel_mm": 81,
+      "calibrated_wheel_mm": 80,
+      "summary": {
+        "schema": "ssb.readme_summary.v1",
+        "source": "/home/jerry/robot_ws/Subway_scan_bot_sim/sessions/boundary_crop81_holdout_20261004/features",
+        "target_x_m": [
+          8.0,
+          11.0
+        ],
+        "overview_theta_deg": [
+          -29.991666087922777,
+          29.879158274880186
+        ],
+        "selection": "first wide/thin public-image candidates with centre inside original target; no evaluation input",
+        "candidates": [
+          {
+            "shape": [
+              512,
+              512
+            ],
+            "seam_column": 256,
+            "bands": [
+              3,
+              4
+            ],
+            "x_first_m": 9.703524737570758,
+            "q_first_m": 3.420613467951012,
+            "grid_pitch_m": [
+              0.0002,
+              0.00019999953231409427
+            ],
+            "presentation_order": [
+              "raw",
+              "nominal",
+              "optimized"
+            ],
+            "raw_anchors": [
+              {
+                "band": 3,
+                "reference_x_m": 9.454632518071111,
+                "anchor_sequence": 224554,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              },
+              {
+                "band": 4,
+                "reference_x_m": 10.054631935635099,
+                "anchor_sequence": 283813,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              }
+            ],
+            "invalid_pixels": [
+              0,
+              0,
+              0
+            ],
+            "candidate": {
+              "kind": "wide",
+              "centre_px": [
+                512,
+                217
+              ],
+              "bbox_px": [
+                0,
+                191,
+                1024,
+                36
+              ],
+              "thickness_px": 10.0,
+              "score": 24505.27734375,
+              "window": {
+                "id": 483,
+                "bands": [
+                  3,
+                  4
+                ],
+                "q_center_m": 3.4717133484572633,
+                "status": "planned",
+                "shape": [
+                  512,
+                  1024
+                ],
+                "x_first_m": 9.652324737570758,
+                "q_first_m": 3.420613467951012
+              },
+              "x_m": 9.754724737570758,
+              "q_m": 3.4640133664631705
+            },
+            "id": 0
+          },
+          {
+            "shape": [
+              512,
+              512
+            ],
+            "seam_column": 256,
+            "bands": [
+              4,
+              5
+            ],
+            "x_first_m": 10.056635660378406,
+            "q_first_m": -3.6893865320489767,
+            "grid_pitch_m": [
+              0.0002,
+              0.00019999953231409427
+            ],
+            "presentation_order": [
+              "raw",
+              "nominal",
+              "optimized"
+            ],
+            "raw_anchors": [
+              {
+                "band": 4,
+                "reference_x_m": 9.807737229126475,
+                "anchor_sequence": 248699,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              },
+              {
+                "band": 5,
+                "reference_x_m": 10.40774145724337,
+                "anchor_sequence": 307959,
+                "placement": "one fixed encoder anchor per band; no within-band motion compensation"
+              }
+            ],
+            "invalid_pixels": [
+              0,
+              0,
+              0
+            ],
+            "candidate": {
+              "kind": "thin",
+              "centre_px": [
+                512,
+                258
+              ],
+              "bbox_px": [
+                0,
+                249,
+                1024,
+                140
+              ],
+              "thickness_px": 4.0,
+              "score": 44586.66015625,
+              "window": {
+                "id": 531,
+                "bands": [
+                  4,
+                  5
+                ],
+                "q_center_m": -3.6382866515427255,
+                "status": "planned",
+                "shape": [
+                  512,
+                  1024
+                ],
+                "x_first_m": 10.005435660378406,
+                "q_first_m": -3.6893865320489767
+              },
+              "x_m": 10.107835660378406,
+              "q_m": -3.6377866527119402
+            },
+            "id": 2
+          }
+        ],
+        "panels": [
+          {
+            "source_file": "raw_helix.png",
+            "source_box": [
+              0,
+              675,
+              469,
+              1125
+            ],
+            "destination_box": [
+              21,
+              98,
+              490,
+              548
+            ]
+          },
+          {
+            "source_file": "geometry/optimized.png",
+            "source_box": [
+              0,
+              675,
+              469,
+              1125
+            ],
+            "destination_box": [
+              557,
+              98,
+              1026,
+              548
+            ]
+          },
+          {
+            "source_file": "feature_0_raw.png",
+            "source_box": [
+              0,
+              121,
+              512,
+              313
+            ],
+            "destination_box": [
+              0,
+              604,
+              512,
+              796
+            ]
+          },
+          {
+            "source_file": "feature_0_optimized.png",
+            "source_box": [
+              0,
+              121,
+              512,
+              313
+            ],
+            "destination_box": [
+              536,
+              604,
+              1048,
+              796
+            ]
+          },
+          {
+            "source_file": "feature_2_raw.png",
+            "source_box": [
+              0,
+              162,
+              512,
+              354
+            ],
+            "destination_box": [
+              0,
+              852,
+              512,
+              1044
+            ]
+          },
+          {
+            "source_file": "feature_2_optimized.png",
+            "source_box": [
+              0,
+              162,
+              512,
+              354
+            ],
+            "destination_box": [
+              536,
+              852,
+              1048,
+              1044
+            ]
+          }
+        ],
+        "source_pixels_identical": true,
+        "raw_correction": false,
+        "within_band_travel_compensation": false,
+        "fusion": false,
+        "sharpening": false
+      },
+      "output_hashes": {
+        "reconstruction_comparison.png": "acdaa4139be5669b0b32756cbef6041927441c5c14371dc407279c06dd246e06",
+        "reconstruction_crack_optimized.png": "811c0d15b8527309af8b1b37a62b5a62ded1fddc33a33b00ede95ae9201c0c13",
+        "reconstruction_crack_raw.png": "7157f141baf6b8ba9f3ff85b84a4224a0818ee7fcfc44c77e44f1eb4b81b4d73",
+        "reconstruction_joint_optimized.png": "612c24b94a867c9a6c3a0941f94ee6ea554133eb8ef8cbac68b29ac9514017ef",
+        "reconstruction_joint_raw.png": "8318908e5aaea3f8cdb9cfec5cd5f3eb30bc17798d9ac3e4cbb131d809e3f541"
+      },
+      "export_provenance_sha256": "2d1e935ef764a65d44e63ae52aa987d37b16cd956e3553c2ef11caef068265a9",
+      "export_report_sha256": "456f7da2425073a51be71ec486a8791e69d2b72b3d9e499c7414b701c0de88c3",
+      "export_source": "tools/export_readme_summary.py",
+      "exporter_sha256": "07457aad0937a16372fefc5f8b78ca2099810dda428af263b9b2d55d672f7f20",
+      "exporter_commit": "7abfc5bf7c3740948f1552c1e26484e6ba5ac05c",
+      "export_directory": "local_data/boundary_readme_export_20261004",
+      "interpretation": "uncorrected raw helix vs calibrated globally optimized shared-depth reconstruction; no fusion, sharpening or automatic contrast; independent 3 m geometry P95 0.475/0.645 px"
+    }
+  },
+  "milestone20_figures": {
+    "source": "sessions/milestone20_review3_aligned_20261005",
+    "export": "local_data/readme_export_milestone20_aligned_20261005",
+    "capture_commit": "03cde91",
+    "display_commit": "6a1265b",
+    "seed": 20270119,
+    "capture_target_x_m": [
+      0,
+      20
+    ],
+    "display_target_x_m": [
+      8,
+      11
+    ],
+    "source_pixels_identical": true,
+    "display_alignment": "Public native feature mapped by fitted trajectory; independently translated crop origins, no image warp or truth alignment.",
+    "fusion": false,
+    "images": {
+      "docs/media/reconstruction_crack_optimized.png": "06cbbb7537992c849b4cf7ec9f303818c1651251fe434037b497db8557a3b323",
+      "docs/media/reconstruction_joint_raw.png": "206eb291ea970f2da77b7c443b89b56f07b4b51a25f99fe58741ca4746b59111",
+      "docs/media/reconstruction_comparison.png": "4ad80407a490cdc047bf222486513fbdb8d700d748e3d81d4e00e03e712076c0",
+      "docs/media/reconstruction_joint_optimized.png": "3a235beed88dafa82566931f82fc2cb7dd5f27856e9f077d0e572bf5e2e4bbf4",
+      "docs/media/reconstruction_crack_raw.png": "4504cb847c704062df8f65336232a6faa40d78b5d411ca9d57e537c3163372ca"
+    }
   }
 }
