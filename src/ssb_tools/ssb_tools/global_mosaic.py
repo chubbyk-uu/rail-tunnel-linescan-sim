@@ -58,7 +58,7 @@ def write_preview(output, cover_min, stride):
 
 
 def run(unroll, trajectory, output, raw_root=None, backend='cuda', comparison=True,
-        angular_tile_rows=32, tile_columns=8192):
+        angular_tile_rows=32, tile_columns=8192, fusion=None):
     started = time.monotonic()
     output = Path(output).resolve()
     if any(output.is_relative_to(Path(p).resolve()) for p in (unroll, trajectory)):
@@ -78,14 +78,20 @@ def run(unroll, trajectory, output, raw_root=None, backend='cuda', comparison=Tr
         if shutil.disk_usage(output.parent).free < required*1.1:
             raise ValueError('insufficient disk for requested full-resolution mosaics and margin')
         # Fail before creating output if CUDA is unavailable or the trajectory is invalid.
+        if fusion is not None and comparison:
+            raise ValueError('fusion requires optimized-only; preserve a separate unblended baseline')
         if backend == 'cuda':
             from .global_cuda import GlobalCudaRaster
             from .unroll_cuda import CudaRaster
-            accelerator = GlobalCudaRaster(model, coefficients)
+            accelerator = GlobalCudaRaster(model, coefficients, fusion)
             if comparison:
                 nominal = CudaRaster(sampler)
         else:
-            accelerator = CpuGlobalRaster(model, coefficients)
+            if fusion is None:
+                accelerator = CpuGlobalRaster(model, coefficients)
+            else:
+                from .seam_fusion import CpuFusionRaster
+                accelerator = CpuFusionRaster(model, coefficients, fusion)
         output.mkdir(exist_ok=False)
         stride = max(1, math.ceil(max(nq, nx)/1800))
         products = {}
@@ -116,11 +122,14 @@ def run(unroll, trajectory, output, raw_root=None, backend='cuda', comparison=Tr
             limitations=['coverage does not certify geometric accuracy', 'nominal surface coordinates; no actual poses or optical mesh',
                          'no seam fusion, inpainting, sharpening or contrast adjustment', 'noise robustness requires independent capture evidence'],
             performance=dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
+        if fusion is not None:
+            report['fusion'] = fusion
+            report['limitations'][2] = 'bounded gains and narrow feather only; no inpainting, sharpening or spatial contrast adjustment'
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
         page = ['<!doctype html><meta charset="utf-8"><title>Full-resolution D3 comparison</title>',
                 '<style>body{background:#202124;color:#eee;font:16px sans-serif;margin:24px} img{width:100%;image-rendering:auto} table{width:100%;table-layout:fixed}td{vertical-align:top}</style>',
                 '<h1>Full-resolution D3 output</h1>',
-                '<p>Same 0.2 mm grid and fixed DN display; no blending. Images below are overview samples. Full pixel data and coverage are linked.</p>',
+                f'<p>Same grid and fixed DN display; {"bounded narrow feather" if fusion else "no blending"}. Images below are overview samples. Full pixel data and coverage are linked.</p>',
                 '<table><tr>']
         for name, item in products.items():
             page.append(f'<td><h2>{html.escape(name)}</h2><p>Missing pixels: {item["coverage"]["missing_pixels"]}</p>'
@@ -133,7 +142,7 @@ def run(unroll, trajectory, output, raw_root=None, backend='cuda', comparison=Tr
         record = stage_record('global_mosaic', inputs+trajectory_inputs, files,
                               dict(backend=backend, grid=grid, comparison=comparison,
                                    angular_tile_rows=angular_tile_rows, tile_columns=tile_columns,
-                                   cuda=accelerator.describe()))
+                                   cuda=accelerator.describe(), fusion=fusion))
         record['performance'] = dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes())
         (output/'provenance.json').write_text(json.dumps(record, indent=2)+'\n')
         return report

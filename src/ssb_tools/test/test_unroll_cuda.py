@@ -462,3 +462,80 @@ def test_global_cuda_matches_cpu_at_declared_motion_bounds_and_large_native_wind
             np.testing.assert_allclose(actual, expected[i:i+1], atol=3e-5, rtol=0, equal_nan=True)
     finally:
         engine.close()
+
+
+@pytest.mark.parametrize('missing', [False, True])
+@pytest.mark.parametrize('relief', [False, True])
+def test_narrow_fusion_cuda_matches_independent_cpu_and_preserves_coverage(missing, relief):
+    from ssb_tools.global_geometry import Trajectory
+    from ssb_tools.global_cuda import GlobalCudaRaster
+    from ssb_tools.seam_fusion import CpuFusionRaster
+    from test_seam_fusion import identity
+    model = Trajectory(analytic_sampler(remove_centre=missing, raw=True), 1., .7)
+    if relief:
+        from ssb_tools.surface_relief import SurfaceRelief
+        model.relief = SurfaceRelief([dict(grid=[.4, -.2, .4, .4], depth=np.full((2, 2), .015, np.float32))])
+    c = np.zeros(model.size)
+    for field, value in enumerate([.3, -.2, .8, -.6]): c[model.starts[field]:model.starts[field+1]] = value
+    angles = np.linspace(-.08, .08, 17); xs = np.linspace(.38, .73, 800)
+    calibration = identity(model, [1.02, 1/1.02])
+    ref = CpuFusionRaster(model, c, calibration)
+    expected, counts, _, _, weights = ref.components(angles, xs)
+    raster = GlobalCudaRaster(model, c, calibration); ordinary = GlobalCudaRaster(model, c)
+    try:
+        actual, number, source = raster.tile(angles, xs)
+        plain, plain_count, plain_source = ordinary.tile(angles, xs)
+        np.testing.assert_array_equal(number, counts); np.testing.assert_array_equal(number, plain_count)
+        np.testing.assert_array_equal(source, plain_source)
+        np.testing.assert_allclose(actual, expected, atol=4e-5, rtol=0, equal_nan=True)
+        assert np.any(weights < 1)
+        repeat = raster.tile(angles, xs)[0]
+        np.testing.assert_array_equal(repeat, actual)
+        assert raster.describe()['allocated_peak_bytes'] < 256 << 20
+        # Tile shape changes cannot change gain/feather/source selection.
+        tiled = np.vstack([raster.tile(angles[a:a+3], xs)[0] for a in range(0,len(angles),3)])
+        np.testing.assert_array_equal(tiled, actual)
+    finally:
+        raster.close(); ordinary.close()
+
+
+def test_fusion_full_output_validator_and_baseline_tamper_rejection(tmp_path):
+    from ssb_tools.global_geometry import Trajectory, GeometrySettings
+    from ssb_tools.global_mosaic import run as mosaic_run
+    from ssb_tools.seam_fusion import run as fusion_run, FusionSettings
+    from ssb_tools.match_bands import verified_bands
+    from ssb_tools.provenance import stage_record
+    from ssb_tools.session import sha256_file
+    from ssb_tools.validate_global_mosaic import validate
+    root = tmp_path/'public'; cal, _ = public_fixture(root)
+    config = json.loads((root/'config/observable_config.json').read_text())
+    config['inspection']['theta_rad'] = [-.04, .04]
+    (root/'config/observable_config.json').write_text(json.dumps(config))
+    summary = json.loads((root/'session.json').read_text())
+    summary['files']['config/observable_config.json'] = sha256_file(root/'config/observable_config.json')
+    (root/'session.json').write_text(json.dumps(summary))
+    d1 = tmp_path/'d1'; reconstruct(root, cal, d1, pitch=.001)
+    sampler, upstream, _ = verified_bands(d1); settings = GeometrySettings()
+    model = Trajectory(sampler,1.,.7,settings); fit=tmp_path/'fit';fit.mkdir()
+    (fit/'trajectory.json').write_text(json.dumps(model.serialize(np.zeros(model.size))))
+    (fit/'windows.json').write_text('[]')
+    (fit/'report.json').write_text(json.dumps(dict(schema='ssb.global_optimization.v1',
+        settings=vars(settings),grid=upstream['grid'],optical_signature=upstream['optical_signature'],
+        source_observation_hashes=upstream['source_observation_hashes'])))
+    (fit/'provenance.json').write_text(json.dumps(stage_record('global_optimization',
+        [d1/name for name in ('projection.npy','mapping.npz','bands.json')],sorted(fit.iterdir()),{})))
+    sampler.native.close()
+    baseline=tmp_path/'baseline';mosaic_run(d1,fit,baseline,comparison=False)
+    before={p:sha256_file(p) for directory in (d1,fit,baseline) for p in directory.rglob('*') if p.is_file()}
+    fused=tmp_path/'fused'
+    result=fusion_run(d1,fit,baseline,fused,settings=FusionSettings(minimum_samples=8))
+    assert result['unchanged_coverage'] and result['unchanged_trajectory']
+    assert all(sha256_file(p)==digest for p,digest in before.items())
+    checked=validate(d1,fit,fused,tmp_path/'validation')
+    assert checked['status']=='pass' and checked['fusion_reference']
+    assert checked['cpu_reference']['fusion_probes'] > 0
+    assert checked['cpu_reference']['maximum_code_error'] <= 1
+    with (baseline/'optimized/mosaic_u16.npy').open('r+b') as file:
+        file.seek(-2,2);file.write(b'xx')
+    with pytest.raises(ValueError,match='baseline product hash mismatch'):
+        fusion_run(d1,fit,baseline,tmp_path/'rejected')

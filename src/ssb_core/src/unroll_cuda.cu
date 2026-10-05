@@ -52,9 +52,15 @@ struct Context {
   Buffer pixels, axes, row_sources, xs;
   Buffer image, count, source, best;
   Buffer global_rays, global_qs, global_depth;
+  Buffer runner_image, runner_score, runner_source;
+  bool fusion = false;
+  double fusion_gain = 1., feather_columns = 0.;
+  size_t fusion_capacity() const {
+    return runner_image.capacity+runner_score.capacity+runner_source.capacity;
+  }
   bool use_depth = false;
   void reserve_begin(size_t n, size_t columns) {
-    size_t total = native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
+    size_t total = fusion_capacity()+native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
                    flat_offset.capacity+flat_gain.capacity+flat_valid.capacity+
                    pixels.capacity+axes.capacity+row_sources.capacity+global_rays.capacity+global_qs.capacity+global_depth.capacity;
     total += std::max(xs.capacity, columns*sizeof(double))+
@@ -65,7 +71,7 @@ struct Context {
     if (total > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
   }
   void reserve_check(size_t pixels_bytes, size_t axes_bytes, size_t row_bytes) {
-    size_t total = native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
+    size_t total = fusion_capacity()+native_offsets.capacity+output_offsets.capacity+geometry_valid.capacity+
         flat_offset.capacity+flat_gain.capacity+flat_valid.capacity+
         xs.capacity+image.capacity+count.capacity+source.capacity+best.capacity+
         global_rays.capacity+global_qs.capacity+global_depth.capacity;
@@ -76,7 +82,7 @@ struct Context {
   void account() {
     size_t total = 0;
     for (auto* b : {&native_offsets, &output_offsets, &geometry_valid, &flat_offset, &flat_gain, &flat_valid, &pixels,
-                    &axes, &row_sources, &xs, &image, &count, &source, &best, &global_rays, &global_qs, &global_depth})
+                    &axes, &row_sources, &xs, &image, &count, &source, &best, &global_rays, &global_qs, &global_depth, &runner_image, &runner_score, &runner_source})
       total += b->capacity;
     peak = std::max(peak, total);
     if (total > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
@@ -129,6 +135,24 @@ __global__ void initialize(float* image, uint16_t* count, int16_t* source,
   const int i = blockIdx.x*blockDim.x+threadIdx.x;
   if (i >= pixels) return;
   image[i] = nanf(""); count[i] = 0; source[i] = -1; best[i] = -INFINITY;
+}
+
+__global__ void initialize_runner(float* image, float* score, int16_t* source, int pixels) {
+  int i = blockIdx.x*blockDim.x+threadIdx.x;
+  if (i >= pixels) return;
+  image[i] = nanf(""); score[i] = -INFINITY; source[i] = -1;
+}
+
+__global__ void feather(float* image, const float* best, const int16_t* source,
+    const float* runner_image, const float* runner_score, const int16_t* runner_source,
+    int pixels, double width_columns) {
+  int i = blockIdx.x*blockDim.x+threadIdx.x;
+  if (i >= pixels || runner_source[i] < 0 || abs(source[i]-runner_source[i]) != 1) return;
+  double difference = static_cast<double>(best[i])-runner_score[i];
+  if (difference >= width_columns) return;
+  double weight = .5+difference/(2.*width_columns);
+  image[i] = static_cast<float>(static_cast<double>(image[i])*weight+
+                               static_cast<double>(runner_image[i])*(1.-weight));
 }
 
 __global__ void sample_band(const uint8_t* pixels, const double* axes, const Row* rows,
@@ -220,7 +244,8 @@ __global__ void global_band(const uint8_t* pixels, const double* axes,
     const GlobalRay* rays, int n, const double* qs, const double* xs,
     const double* native, const double* output, const uint8_t* geometry, Flat flat,
     int width, int nq, int nx, int left, int right, int band, double radius,
-    double footprint, const double* depths, float* image, uint16_t* count, int16_t* source, float* best) {
+    double footprint, const double* depths, float* image, uint16_t* count, int16_t* source, float* best,
+    float* runner_image, float* runner_score, int16_t* runner_source, double gain) {
   int i = blockIdx.x*blockDim.x+threadIdx.x, span = right-left;
   if (i >= nq*span) return;
   int q_index = i/span, column = left+i%span;
@@ -245,11 +270,20 @@ __global__ void global_band(const uint8_t* pixels, const double* axes,
   int target = q_index*nx+column;
   ++count[target];
   float score = static_cast<float>(fmin(a.column, width-1.-a.column));
+  float value = static_cast<float>(static_cast<double>(a.value)*(1.-row.weight)+
+                                   static_cast<double>(b.value)*row.weight);
+  if (runner_image) value = static_cast<float>(static_cast<double>(value)*gain);
   if (score > best[target]) {
-    image[target] = static_cast<float>(static_cast<double>(a.value)*(1.-row.weight)+
-                                       static_cast<double>(b.value)*row.weight);
-    best[target] = static_cast<float>(score);
+    if (runner_image) {
+      runner_image[target] = image[target]; runner_score[target] = best[target];
+      runner_source[target] = source[target];
+    }
+    image[target] = value;
+    best[target] = score;
     source[target] = static_cast<int16_t>(band);
+  } else if (runner_image && score > runner_score[target]) {
+    runner_image[target] = value; runner_score[target] = score;
+    runner_source[target] = static_cast<int16_t>(band);
   }
 }
 }  // namespace
@@ -290,7 +324,7 @@ int ssb_unroll_begin(void* handle, int rows, int columns, const double* xs) {
     if (rows <= 0 || columns <= 0 || static_cast<int64_t>(rows)*columns > kMaxPixels)
       throw std::runtime_error("invalid CUDA tile dimensions");
     c.rows = rows; c.columns = columns;
-    c.use_depth = false;
+    c.use_depth = false; c.fusion = false;
     const size_t n = static_cast<size_t>(rows)*columns;
     c.reserve_begin(n, columns);
     c.image.grow(n*sizeof(float)); c.count.grow(n*sizeof(uint16_t));
@@ -342,7 +376,8 @@ int ssb_unroll_global_depth(void* handle, const double* depths) {
     size_t total = 0;
     for (auto* b : {&c.native_offsets, &c.output_offsets, &c.geometry_valid, &c.flat_offset,
         &c.flat_gain, &c.flat_valid, &c.pixels, &c.axes, &c.row_sources, &c.xs,
-        &c.image, &c.count, &c.source, &c.best, &c.global_rays, &c.global_qs}) total += b->capacity;
+        &c.image, &c.count, &c.source, &c.best, &c.global_rays, &c.global_qs,
+        &c.runner_image, &c.runner_score, &c.runner_source}) total += b->capacity;
     if (total+std::max(c.global_depth.capacity, n*sizeof(double)) > kBudget)
       throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
     c.global_depth.upload(depths, n*sizeof(double)); c.account();
@@ -378,7 +413,8 @@ int ssb_unroll_global_band(void* handle, int native_rows, const uint8_t* pixels,
     size_t retained = 0;
     for (auto* b : {&c.native_offsets, &c.output_offsets, &c.geometry_valid, &c.flat_offset,
         &c.flat_gain, &c.flat_valid, &c.xs, &c.image, &c.count, &c.source, &c.best,
-        &c.row_sources, &c.global_rays, &c.global_qs, &c.global_depth}) retained += b->capacity;
+        &c.row_sources, &c.global_rays, &c.global_qs, &c.global_depth,
+        &c.runner_image, &c.runner_score, &c.runner_source}) retained += b->capacity;
     retained += std::max(c.pixels.capacity, bytes)+std::max(c.axes.capacity, native_rows*sizeof(double));
     if (retained+extra > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
     c.pixels.upload(pixels, bytes); c.axes.upload(axes, native_rows*sizeof(double));
@@ -391,15 +427,54 @@ int ssb_unroll_global_band(void* handle, int native_rows, const uint8_t* pixels,
         c.native_offsets.as<double>(), c.output_offsets.as<double>(), c.geometry_valid.as<uint8_t>(),
         flat, c.width, c.rows, c.columns, left, right, band, radius, footprint,
         c.use_depth ? c.global_depth.as<double>() : nullptr,
-        c.image.as<float>(), c.count.as<uint16_t>(), c.source.as<int16_t>(), c.best.as<float>());
+        c.image.as<float>(), c.count.as<uint16_t>(), c.source.as<int16_t>(), c.best.as<float>(),
+        c.fusion ? c.runner_image.as<float>() : nullptr,
+        c.fusion ? c.runner_score.as<float>() : nullptr,
+        c.fusion ? c.runner_source.as<int16_t>() : nullptr, c.fusion_gain);
     checked(cudaGetLastError());
+  });
+}
+int ssb_unroll_fusion_abi() { return 1; }
+int ssb_unroll_fusion_begin(void* handle, double width_columns) {
+  return guarded([&] {
+    auto& c = *static_cast<Context*>(handle);
+    const size_t n = static_cast<size_t>(c.rows)*c.columns;
+    if (!n || !std::isfinite(width_columns) || width_columns <= 0. || width_columns > c.width/4.)
+      throw std::runtime_error("invalid CUDA feather width");
+    size_t extra = std::max(c.runner_image.capacity, n*sizeof(float))-c.runner_image.capacity+
+                   std::max(c.runner_score.capacity, n*sizeof(float))-c.runner_score.capacity+
+                   std::max(c.runner_source.capacity, n*sizeof(int16_t))-c.runner_source.capacity;
+    c.account();
+    // account() records the high-water mark; it is also a conservative preallocation bound.
+    if (c.peak+extra > kBudget) throw std::runtime_error("CUDA unroll allocation exceeds 256 MiB");
+    c.runner_image.grow(n*sizeof(float)); c.runner_score.grow(n*sizeof(float));
+    c.runner_source.grow(n*sizeof(int16_t)); c.account();
+    c.fusion = true; c.feather_columns = width_columns; c.fusion_gain = 1.;
+    initialize_runner<<<(n+255)/256,256>>>(c.runner_image.as<float>(), c.runner_score.as<float>(),
+                                       c.runner_source.as<int16_t>(), n);
+    checked(cudaGetLastError());
+  });
+}
+int ssb_unroll_fusion_gain(void* handle, double gain) {
+  return guarded([&] {
+    auto& c = *static_cast<Context*>(handle);
+    if (!c.fusion || !std::isfinite(gain) || gain < 1./1.08-1e-12 || gain > 1.08+1e-12)
+      throw std::runtime_error("invalid CUDA bounded radiometric gain");
+    c.fusion_gain = gain;
   });
 }
 int ssb_unroll_finish(void* handle, float* image, uint16_t* count, int16_t* source) {
   return guarded([&] {
     auto& c = *static_cast<Context*>(handle);
-    checked(cudaDeviceSynchronize());
     const size_t n = static_cast<size_t>(c.rows)*c.columns;
+    if (c.fusion) {
+      feather<<<(n+255)/256,256>>>(c.image.as<float>(), c.best.as<float>(), c.source.as<int16_t>(),
+          c.runner_image.as<float>(), c.runner_score.as<float>(), c.runner_source.as<int16_t>(),
+          n, c.feather_columns);
+      checked(cudaGetLastError());
+      c.fusion = false;  // finish is repeatable: never feather an already feathered tile.
+    }
+    checked(cudaDeviceSynchronize());
     checked(cudaMemcpy(image, c.image.pointer, n*sizeof(float), cudaMemcpyDeviceToHost));
     checked(cudaMemcpy(count, c.count.pointer, n*sizeof(uint16_t), cudaMemcpyDeviceToHost));
     checked(cudaMemcpy(source, c.source.pointer, n*sizeof(int16_t), cudaMemcpyDeviceToHost));

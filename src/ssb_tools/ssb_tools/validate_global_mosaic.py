@@ -77,6 +77,10 @@ def validate(unroll, trajectory, mosaic, output):
                 raise ValueError('mosaic belongs to different verified public inputs')
         if report['grid'] != upstream['grid']:
             raise ValueError('mosaic grid differs from declared target')
+        fusion_reference = None
+        if report.get('fusion') is not None:
+            from .seam_fusion import CpuFusionRaster
+            fusion_reference = CpuFusionRaster(model, coefficients, report['fusion'])
         grid = report['grid']; nq, nx = grid['shape']; angles, xs = grid_axes(grid)
         values = np.load(confined_file(mosaic, 'optimized/mosaic_u16.npy'), mmap_mode='r')
         count = np.load(confined_file(mosaic, 'optimized/mosaic_count.npy'), mmap_mode='r')
@@ -117,9 +121,19 @@ def validate(unroll, trajectory, mosaic, output):
             positions.update(zip(rng.integers(0, nq, 64).tolist(), rng.integers(0, nx, 64).tolist()))
             relief_positions = relief_reference_positions(model, angles, xs)
             positions.update(relief_positions)
+            fusion_positions = set()
+            if fusion_reference is not None:
+                from .seam_fusion import reference_positions
+                fusion_positions = reference_positions(model, coefficients, grid)
+                if not fusion_positions:
+                    raise ValueError('no measurable narrow-feather reference probes')
+                positions.update(fusion_positions)
             maximum = 0; probes = []
             for q, x in sorted(positions):
-                v, n = corrected_tile(model, coefficients, np.array([angles[q]*model.radius]), np.array([xs[x]]))
+                if fusion_reference is None:
+                    v, n = corrected_tile(model, coefficients, np.array([angles[q]*model.radius]), np.array([xs[x]]))
+                else:
+                    v, n, primary, secondary, weights = fusion_reference.components(np.array([angles[q]]), np.array([xs[x]]))
                 actual = int(values[q, x]); valid = int(n[0, 0]) > 0
                 expected_code = int(np.clip(np.rint(float(v[0, 0])*MOSAIC_SCALE), 0, MOSAIC_INVALID-1)) if valid else MOSAIC_INVALID
                 error = abs(actual-expected_code)
@@ -127,15 +141,18 @@ def validate(unroll, trajectory, mosaic, output):
                     raise ValueError(f'CPU native reference differs at ({q}, {x})')
                 maximum = max(maximum, error)
                 probes.append(dict(q_bin=q, x_bin=x, count=int(n[0, 0]), code_error=error,
-                                   relief_probe=(q, x) in relief_positions))
+                                   relief_probe=(q, x) in relief_positions, fusion_probe=(q, x) in fusion_positions))
+                if fusion_reference is not None:
+                    probes[-1]['fusion_sources'] = dict(primary_band=int(primary[0,0]),
+                        secondary_band=int(secondary[0,0]), primary_weight=float(weights[0,0]))
         finally:
             values._mmap.close(); count._mmap.close()
         result = dict(schema='ssb.global_mosaic_validation.v2',
             status='pass' if not histogram.get(0, 0) else 'fail',
-            full_pixel_consistency=True, total_pixels=nq*nx, missing_pixels=histogram.get(0, 0),
+            fusion_reference=report.get('fusion') is not None, full_pixel_consistency=True, total_pixels=nq*nx, missing_pixels=histogram.get(0, 0),
             coverage_gate='pass' if not histogram.get(0, 0) else 'fail',
             cpu_reference=dict(seed=20261003, probes=probes, maximum_code_error=maximum,
-                               relief_probes=len(relief_positions),
+                               relief_probes=len(relief_positions), fusion_probes=len(fusion_positions),
                                tolerance_code=1, role='independent NumPy resampling, not true-geometry evaluation'),
             wall_s=time.monotonic()-started)
         output.mkdir(parents=True, exist_ok=False)

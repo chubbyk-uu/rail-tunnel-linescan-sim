@@ -30,8 +30,10 @@ def row_rays(model, coefficients):
 
 
 class GlobalCudaRaster(CudaRaster):
-    def __init__(self, model, coefficients):
+    def __init__(self, model, coefficients, fusion=None):
         self.model = model
+        self.fusion = fusion
+        self.gains = None
         coefficients = np.asarray(coefficients, float)
         if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all():
             raise ValueError('finite fitted trajectory coefficients required')
@@ -52,6 +54,16 @@ class GlobalCudaRaster(CudaRaster):
             self.lib.ssb_unroll_global_band.argtypes = [ct.c_void_p, ct.c_int, ct.c_void_p,
                 ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_int, ct.c_int, ct.c_double, ct.c_double]
             self.lib.ssb_unroll_global_band.restype = ct.c_int
+            if fusion is not None:
+                from .seam_fusion import calibration_values
+                self.gains, self.feather_columns = calibration_values(fusion, model)
+                self.lib.ssb_unroll_fusion_abi.restype = ct.c_int
+                if self.lib.ssb_unroll_fusion_abi() != 1:
+                    raise RuntimeError('unsupported CUDA fusion ABI')
+                for name in ('begin', 'gain'):
+                    function = getattr(self.lib, 'ssb_unroll_fusion_'+name)
+                    function.argtypes = [ct.c_void_p, ct.c_double]
+                    function.restype = ct.c_int
         except BaseException:
             self.close()
             raise
@@ -61,7 +73,7 @@ class GlobalCudaRaster(CudaRaster):
                 if hi+self.margin >= xs[0] and lo-self.margin <= xs[-1]]
 
     def describe(self):
-        return dict(super().describe(), global_abi=2, surface_relief=self.model.relief is not None,
+        return dict(super().describe(), fusion_abi=1 if self.fusion is not None else None, global_abi=2, surface_relief=self.model.relief is not None,
                     geometry='fitted Ry(pitch) Rx(roll); double inverse, 10 iterations, 1e-8 m support threshold')
 
     def tile(self, angles, xs, bands=None):
@@ -71,6 +83,8 @@ class GlobalCudaRaster(CudaRaster):
                 not np.isfinite(angles).all() or not np.isfinite(xs).all() or np.any(np.diff(xs) < 0)):
             raise ValueError('finite ordered one-dimensional CUDA grid required')
         self.check(self.lib.ssb_unroll_begin(self.handle, len(angles), len(xs), pointer(xs)))
+        if self.fusion is not None:
+            self.check(self.lib.ssb_unroll_fusion_begin(self.handle, self.feather_columns))
         qs = np.ascontiguousarray(angles*self.model.radius)
         if self.model.relief is not None:
             depth = np.ascontiguousarray(self.model.relief.depth(xs[None, :], qs[:, None]), np.float64)
@@ -96,6 +110,8 @@ class GlobalCudaRaster(CudaRaster):
             samples = np.ascontiguousarray(self.sampler.native.raw(np.arange(first, last)))
             axes = np.ascontiguousarray(self.sampler.projection['x_axis_m'][first:last])
             rays = np.ascontiguousarray(self.rays[first:last])
+            if self.fusion is not None:
+                self.check(self.lib.ssb_unroll_fusion_gain(self.handle, float(self.gains[band])))
             self.check(self.lib.ssb_unroll_global_band(self.handle, last-first, pointer(samples), pointer(axes),
                 pointer(rays), pointer(qs), left, right, band, self.model.radius, self.sampler.footprint))
         shape = (len(angles), len(xs))
