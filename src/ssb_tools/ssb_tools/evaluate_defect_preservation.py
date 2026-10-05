@@ -40,6 +40,30 @@ def path_samples(path, fractions):
     return points, normal, float(distance[-1])
 
 
+def locate(target, initial, trace, tolerance=1e-5, iterations=5):
+    target, initial = np.asarray(target, float), np.asarray(initial, float)
+    if (target.ndim != 2 or target.shape[1] != 2 or not len(target) or
+            initial.shape != target.shape or not np.isfinite(target).all() or
+            not np.isfinite(tolerance) or tolerance <= 0 or
+            type(iterations) is not int or iterations <= 0):
+        raise ValueError('finite N by 2 targets and matching seed coordinates required')
+    supported = np.isfinite(initial).all(1)
+    location = np.where(supported[:, None], initial, [10., 0.])
+    for _ in range(iterations):
+        actual, material, band = trace(location)
+        valid = supported & (band >= 0) & np.isfinite(actual).all(1)
+        residual = np.linalg.norm(actual-target, axis=1)
+        if np.all(residual[supported] < min(tolerance, 1e-6)):
+            break
+        location[valid] -= actual[valid]-target[valid]
+    # Re-trace the returned coordinates: band, material and residual describe the
+    # final point, rather than the point before the last Newton update.
+    actual, material, band = trace(location)
+    residual = np.linalg.norm(actual-target, axis=1)
+    valid = supported & (band >= 0) & np.isfinite(actual).all(1) & (residual < tolerance)
+    return location, valid, residual, material, band
+
+
 def intensity_width(offsets, values, minimum_contrast_dn=5.):
     offsets, values = np.asarray(offsets, float), np.asarray(values, float)
     if (offsets.ndim != 1 or offsets.shape != values.shape or len(offsets) < 9 or
@@ -142,25 +166,18 @@ def run(session_root, unroll, trajectory, mosaic, geometry, output, workers=4):
         target = np.vstack((centres, chain, edges.reshape(-1,2)))
         profile_count = len(specimens)+len(chain)
         initial = np.asarray(seed(target))
-        measurable = np.isfinite(initial).all(1)
-        location = np.where(measurable[:,None], initial, [10.,0.])
         rows, truth = session.evaluation('row_truth'), session.truth()
         truth_path = session.root/'evaluation/truth.json'
         if sha256_file(truth_path) != session.summary['files']['evaluation/truth.json']:
             raise ValueError('archived defect evaluation truth was changed')
         mesh = OpticalMesh.from_session(session)
         camera = session.config()['camera']
-        band = np.full(len(target), -1)
-        remaining = np.full(len(target), np.inf)
-        for iteration in range(5):
-            actual, _, band = map_points(model, coefficients, location[:,0], location[:,1],
-                                        rows, camera, truth, mesh, workers)
-            ok = measurable & (band >= 0) & np.isfinite(actual).all(1)
-            remaining[ok] = np.linalg.norm(actual[ok]-target[ok], axis=1)
-            location[ok] -= actual[ok]-target[ok]
-            if np.max(remaining[measurable], initial=0.) < 1e-6:
-                break
-        ok = measurable & (band >= 0) & (remaining < 1e-5)
+        calls = [0]
+        def trace(location):
+            calls[0] += 1
+            return map_points(model, coefficients, location[:,0], location[:,1],
+                              rows, camera, truth, mesh, workers)
+        location, ok, remaining, _, band = locate(target, initial, trace)
         if not ok.any():
             raise ValueError('no independently located defect specimens')
         normals = np.vstack(([v['normal'] for v in specimens], chain_normals))
@@ -192,7 +209,7 @@ def run(session_root, unroll, trajectory, mosaic, geometry, output, workers=4):
                 source_band_transitions=int(np.count_nonzero(np.diff(band[len(specimens):profile_count]))),
                 measures=chain_measure),
             location=dict(method='evaluation-only inversion of independently traced native footprints',
-                          tolerance_m=1e-5, iterations=iteration+1),
+                          tolerance_m=1e-5, iterations=calls[0]-1, final_location_retraced=True),
             limitations=['Truth only locates specimens; no saved or production image is corrected.',
                 'Apparent intensity FWHM is not a physical subpixel crack-width measurement.',
                 'Geometric body strips measure the mapping of specified normal offsets, not the union of intersecting crack branches.',

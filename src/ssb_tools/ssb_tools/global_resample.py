@@ -14,6 +14,7 @@ from .global_geometry import GeometrySettings, Trajectory
 from .initial_unroll import cpu_tile, display, grid_axes
 from .match_bands import verified_bands
 from .provenance import stage_record
+from .review_grid import display_grid, overview_stride
 from .public_capture import confined_file
 from .session import read_json, sha256_file
 from .stage_b_scene import peak_rss_bytes
@@ -179,7 +180,7 @@ def corrected_tile(model, coefficients, qs, xs):
     return values, count
 
 
-def run(unroll, trajectory, output, raw_root=None):
+def run(unroll, trajectory, output, raw_root=None, target_x=None):
     started = time.monotonic()
     output = Path(output).resolve()
     if any(output.is_relative_to(Path(p).resolve()) for p in (unroll, trajectory)):
@@ -189,8 +190,8 @@ def run(unroll, trajectory, output, raw_root=None):
         model, coefficients, optimized, trajectory_inputs = load_global(trajectory, sampler, upstream, unroll)
         windows = read_json(Path(trajectory)/'windows.json')
         output.mkdir(parents=True, exist_ok=False)
-        grid = upstream['grid']; angles, xs = grid_axes(grid)
-        stride = max(1, math.ceil(max(grid['shape'])/1800))
+        grid = display_grid(upstream['grid'], target_x); angles, xs = grid_axes(grid)
+        stride = overview_stride(grid['shape'])
         qs = angles[::stride]*model.radius; xs = xs[::stride]
         before = np.full((len(qs), len(xs)), np.nan, np.float32); after = before.copy()
         for start in range(0, len(qs), 16):
@@ -251,6 +252,7 @@ def run(unroll, trajectory, output, raw_root=None):
         page.append('<p><a href="report.json">资源、范围与限制</a> · <a href="provenance.json">输入输出哈希</a></p>')
         (output/'review.html').write_text('\n'.join(page))
         report = dict(schema='ssb.global_comparison.v1', grid=grid, preview_stride=stride,
+            declared_target_x_m=upstream['grid']['target_x_m'], diagnostic_roi=grid != upstream['grid'],
             preview_invalid=dict(nominal=int(np.count_nonzero(~np.isfinite(before))),
                                  optimized=int(np.count_nonzero(~np.isfinite(after)))),
             crops=crops, selection='largest nominal displacement, largest remaining holdout residual, middle window',
@@ -259,7 +261,7 @@ def run(unroll, trajectory, output, raw_root=None):
             performance=dict(wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss_bytes()))
         (output/'report.json').write_text(json.dumps(report, indent=2)+'\n')
         (output/'provenance.json').write_text(json.dumps(stage_record('global_resampling_review',
-            inputs+trajectory_inputs, sorted(output.iterdir()), dict(preview_stride=stride, blend=False)), indent=2)+'\n')
+            inputs+trajectory_inputs, sorted(output.iterdir()), dict(preview_stride=stride, blend=False, target_x=target_x)), indent=2)+'\n')
         return report
     finally:
         if hasattr(sampler.native, 'close'):

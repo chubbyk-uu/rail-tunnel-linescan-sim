@@ -12,7 +12,7 @@ from ssb_tools.provenance import stage_record
 from ssb_tools.session import read_json, sha256_file
 
 
-def export(features, output):
+def export(features, output, overview_x=None):
     features, output = Path(features).resolve(), Path(output).resolve()
     report, record = read_json(features/'report.json'), read_json(features/'provenance.json')
     if report.get('schema') != 'ssb.feature_review.v2' or record.get('stage') != 'feature_review':
@@ -39,14 +39,22 @@ def export(features, output):
     if raw.shape != optimized.shape:
         raise ValueError('overview grids differ')
     grid, stride = report['grid'], report['preview_stride']
+    view_lo, view_hi = (lo, hi) if overview_x is None else map(float, overview_x)
+    if not np.isfinite([view_lo, view_hi]).all() or not lo <= view_lo < view_hi <= hi:
+        raise ValueError('overview interval must be finite, ordered and inside the original target')
+    xs = lo+(np.arange(raw.shape[1])*stride+.5)*grid['dx_m']
+    columns = np.flatnonzero((xs >= view_lo)&(xs < view_hi))
+    if not len(columns) or len(columns) > 512:
+        raise ValueError('select an overview interval containing 1..512 saved preview columns')
+    first_x, end_x = int(columns[0]), int(columns[-1]+1)
     q = grid['radius_m']*grid['theta_rad'][0]+(np.arange(raw.shape[0])*stride+.5)*grid['dq_m']
     rows = np.flatnonzero(abs(q/grid['radius_m']) <= math.radians(30))
     if not len(rows):
         raise ValueError('top sector absent')
-    panels = [dict(label=f'{lo:g}–{hi:g} m | top 60 deg | overview, stride {stride}',
-                   images=[raw[rows[0]:rows[-1]+1], optimized[rows[0]:rows[-1]+1]],
+    panels = [dict(label=f'{view_lo:g}–{view_hi:g} m | top 60 deg | overview, stride {stride}',
+                   images=[raw[rows[0]:rows[-1]+1, first_x:end_x], optimized[rows[0]:rows[-1]+1, first_x:end_x]],
                    source_files=['raw_helix.png', 'geometry/optimized.png'],
-                   source_box=[0, int(rows[0]), raw.shape[1], int(rows[-1]+1)])]
+                   source_box=[first_x, int(rows[0]), end_x, int(rows[-1]+1)])]
     crops = []
     for kind, label in (('wide', 'Joint candidate'), ('thin', 'Crack candidate')):
         crop = selected[kind]
@@ -89,14 +97,14 @@ def export(features, output):
         if not np.array_equal(stored[y:w,x:z],source[b:d,a:c]):
             raise ValueError('figure changed source pixel values')
     summary=dict(schema='ssb.readme_summary.v1',source=str(features),target_x_m=[lo,hi],
-        overview_theta_deg=[float(np.degrees(q[rows[0]]/grid['radius_m'])),float(np.degrees(q[rows[-1]]/grid['radius_m']))],
+        overview_x_m=[view_lo,view_hi], overview_theta_deg=[float(np.degrees(q[rows[0]]/grid['radius_m'])),float(np.degrees(q[rows[-1]]/grid['radius_m']))],
         selection='first wide/thin public-image candidates with centre inside original target; no evaluation input',
         candidates=crops,panels=positions,source_pixels_identical=True,
         raw_correction=False,within_band_travel_compensation=False,fusion=False,sharpening=False)
     (output/'report.json').write_text(json.dumps(summary,indent=2)+'\n')
     files=sorted(output.iterdir())
     (output/'provenance.json').write_text(json.dumps(stage_record('readme_summary',
-        list(dict.fromkeys(inputs)),files,dict(overview_stride=stride,detail_pixel_scale=1)),indent=2)+'\n')
+        list(dict.fromkeys(inputs+[Path(__file__).resolve()])),files,dict(overview_stride=stride,detail_pixel_scale=1)),indent=2)+'\n')
     print(json.dumps(dict(size=[width,height],candidate_ids=[c['id'] for c in crops],source_pixels_identical=True)))
 
 
@@ -104,4 +112,5 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--features',required=True)
     parser.add_argument('--output',required=True)
+    parser.add_argument('--overview-x',type=float,nargs=2,help='crop saved overview only; never change the reconstruction or its acceptance target')
     export(**vars(parser.parse_args()))

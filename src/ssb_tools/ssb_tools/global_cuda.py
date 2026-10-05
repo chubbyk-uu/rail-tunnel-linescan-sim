@@ -79,7 +79,7 @@ class GlobalCudaRaster(CudaRaster):
 
     def describe(self):
         return dict(super().describe(), fusion_abi=1 if self.fusion is not None else None, global_abi=3, surface_relief=self.model.relief is not None,
-                    geometry='fitted Ry(pitch) Rx(roll); double inverse, 10 iterations, 1e-8 m support threshold')
+                    geometry='fitted Rz(constant axis yaw) Ry(pitch) Rx(roll); independent lateral/heave origin; double inverse, 10 iterations, 1e-8 m support threshold')
 
     def tile(self, angles, xs, bands=None):
         angles = np.asarray(angles, np.float64)

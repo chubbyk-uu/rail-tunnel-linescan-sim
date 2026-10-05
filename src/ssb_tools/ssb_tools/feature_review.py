@@ -20,6 +20,7 @@ from .provenance import stage_record
 from .session import read_json
 from .stage_b_scene import peak_rss_bytes
 from .unroll_cuda import CudaRaster
+from .review_grid import display_grid, overview_stride
 
 
 def raw_overview(sampler, angles, xs, nominal_offsets):
@@ -119,15 +120,6 @@ def search_spacing(grid, adjacent_pairs):
         span = np.diff(grid['theta_rad'])[0]*grid['radius_m']-511*grid['dq_m']
         spacing = max(spacing, float(np.nextafter(span/per_pair, np.inf)))
     return spacing
-
-
-def overview_stride(shape):
-    """Keep both display extent and the existing raw megapixel budget."""
-    nq, nx = shape
-    stride = max(1, math.ceil(max(shape)/1800), math.ceil(math.sqrt(nq*nx/(1 << 20))))
-    while math.ceil(nq/stride)*math.ceil(nx/stride) > 1 << 20:
-        stride += 1
-    return stride
 
 
 def find_features(sampler, grid, raster):
@@ -234,7 +226,7 @@ def feature_raster(sampler):
         raster.close()
 
 
-def run(unroll, trajectory, observable, output, raw_root=None):
+def run(unroll, trajectory, observable, output, raw_root=None, target_x=None):
     started = time.monotonic()
     output = Path(output).resolve()
     if any(output.is_relative_to(Path(p).resolve()) for p in (unroll, trajectory)):
@@ -253,7 +245,7 @@ def run(unroll, trajectory, observable, output, raw_root=None):
             raise ValueError('nominal camera geometry differs from native rows')
         nominal_offsets = (np.arange(width)-(width-1)/2)*pitch
         output.mkdir(parents=True, exist_ok=False)
-        grid = upstream['grid']
+        grid = display_grid(upstream['grid'], target_x)
         angles, xs = grid_axes(grid)
         stride = overview_stride(grid['shape'])
         raw, valid, references = raw_overview(sampler, angles[::stride], xs[::stride], nominal_offsets)
@@ -279,7 +271,7 @@ def run(unroll, trajectory, observable, output, raw_root=None):
                 Image.fromarray(display(pixels)).save(output/f'feature_{identifier}_{name}.png')
             crops.append(record)
         # Keep the previous error-based diagnostics and metrics beside feature-selected crops.
-        geometry = geometry_review(unroll, trajectory, output/'geometry', raw_root)
+        geometry = geometry_review(unroll, trajectory, output/'geometry', raw_root, target_x)
         scores = optimized['image_consistency']
         gate = geometry['image_consistency_gate']
         gate_label = '通过' if gate['status'] == 'pass' else '未通过'
@@ -309,6 +301,7 @@ def run(unroll, trajectory, observable, output, raw_root=None):
         page.append('<p><a href="geometry/review.html">保留的最大原始误差 / 最大剩余误差窗口与完整对比</a> · <a href="report.json">选择规则与资源报告</a> · <a href="provenance.json">输入输出哈希</a></p></html>')
         (output/'review.html').write_text('\n'.join(page), encoding='utf-8')
         report = dict(schema='ssb.feature_review.v2', grid=grid, preview_stride=stride,
+            declared_target_x_m=upstream['grid']['target_x_m'], diagnostic_roi=grid != upstream['grid'],
             raw=dict(selection='nearest original row and column; fixed first available x per band',
                      optical_correction=False, within_band_travel_compensation=False,
                      nominal_column_pitch_m=pitch, invalid_pixels=int(np.count_nonzero(~valid)),
@@ -322,7 +315,7 @@ def run(unroll, trajectory, observable, output, raw_root=None):
         files = sorted(p for p in output.rglob('*') if p.is_file())
         (output/'provenance.json').write_text(json.dumps(stage_record('feature_review',
             inputs+trajectory_inputs+[observable], files,
-            dict(raw_correction=False, source_selection='public image only', fusion=False)), indent=2)+'\n')
+            dict(raw_correction=False, source_selection='public image only', fusion=False, target_x=target_x)), indent=2)+'\n')
         return report
     finally:
         if hasattr(sampler.native, 'close'):
@@ -336,8 +329,9 @@ def main():
     parser.add_argument('--observable', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--raw')
+    parser.add_argument('--target-x',type=float,nargs=2,help='display subset only; retains the complete fitted trajectory and original acceptance target')
     args = parser.parse_args()
-    print(json.dumps(run(args.unroll, args.trajectory, args.observable, args.output, args.raw)))
+    print(json.dumps(run(args.unroll, args.trajectory, args.observable, args.output, args.raw, args.target_x)))
 
 
 if __name__ == '__main__':
