@@ -329,9 +329,12 @@ def regularizer(model):
     prior = [settings.position_prior_mm]*2+[settings.attitude_prior_mrad]*2
     curvature = [settings.position_curvature_mm]*2+[settings.attitude_curvature_mrad]*2
     if settings.fit_translation or settings.fit_heave:
-        extra = len(model.fields)-4
+        extra = len(model.fields)-4-int(settings.fit_axis_yaw)
         prior += [settings.translation_prior_mm]*extra
         curvature += [settings.translation_curvature_mm]*extra
+    if settings.fit_axis_yaw:
+        prior.append(settings.axis_yaw_prior_mrad)
+        curvature.append(settings.attitude_curvature_mrad)
     rows = []; cols = []; values = []; row = 0
     for k, size in enumerate(model.sizes):
         start = int(model.starts[k])
@@ -680,7 +683,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                 [upstream['grid']['dx_m'], upstream['grid']['dq_m']])))
         (output/'windows.json').write_text(json.dumps(per_window, indent=2)+'\n')
         extended = settings.fit_translation or settings.fit_heave
-        report = dict(schema=('ssb.global_optimization.v3' if settings.relative_encoder_scale else
+        report = dict(schema=('ssb.global_optimization.v4' if settings.fit_axis_yaw else
+                              'ssb.global_optimization.v3' if settings.relative_encoder_scale else
                               'ssb.global_optimization.v2' if extended else 'ssb.global_optimization.v1'),
             stage='D3', status='complete',
             optical_signature=upstream['optical_signature'], source_observation_hashes=upstream['source_observation_hashes'],
@@ -695,7 +699,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                 'no IMU; fitted attitudes and positions are prior-dependent image corrections, not measured body poses',
                 'absolute scale, common deformation and photometric matching bias are not recovered from truth',
                 'cubic trajectory cannot recover unobserved bottom-sector or high-frequency motion',
-                ('yaw and fixed mounting parameters are not independently recovered; relative encoder scale is prior-dependent'
+                ('constant axis yaw is an image-fitted direction correction; physical mount and body yaw remain prior-dependent'
+                 if settings.fit_axis_yaw else 'yaw and fixed mounting parameters are not independently recovered; relative encoder scale is prior-dependent'
                  if settings.relative_encoder_scale else 'yaw, mounting errors and wheel scale are not independently fitted; absolute translation modes remain prior-dependent'
                  if extended else 'yaw, lateral motion, heave, mounting errors and wheel scale are not independently fitted in this first model'),
                 'no seam blending; geometry, coverage and noisy-image robustness require independent acceptance'],

@@ -14,7 +14,8 @@ def test_declared_slow_model_adds_only_coarse_translation_nodes(adaptive):
     model=Trajectory(base.sampler,1.,.7,settings)
     np.testing.assert_array_equal(model.knots[4],model.knots[0])
     np.testing.assert_array_equal(model.knots[5],model.knots[1])
-    assert model.size==sum(model.sizes[:4])+2*model.sizes[0]
+    assert model.size==sum(model.sizes[:4])+2*model.sizes[0]+1
+    assert model.fields[-1]=='axis_yaw_rad' and model.sizes[-1]==1
     prior=regularizer(model)
     # A linear low-frequency translation has zero curvature, finite nominal prior.
     coefficients=np.zeros(model.size)
@@ -23,7 +24,7 @@ def test_declared_slow_model_adds_only_coarse_translation_nodes(adaptive):
         coefficients[model.starts[field]:model.starts[field+1]]=2+3*greville
     penalty=prior@coefficients
     assert np.isfinite(penalty).all() and np.linalg.norm(penalty)>0
-    assert np.count_nonzero(abs(penalty)>1e-10)==sum(model.sizes[4:])
+    assert np.count_nonzero(abs(penalty)>1e-10)==sum(model.sizes[4:6])
 
 
 @pytest.mark.parametrize('settings',[

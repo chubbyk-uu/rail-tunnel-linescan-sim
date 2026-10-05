@@ -64,8 +64,8 @@ def ray_values(axis, phase, tangent, correction, radius, height, derivatives=Fal
     arrays = [np.ascontiguousarray(a, np.float64) for a in (axis, phase, tangent, correction)]
     count = len(arrays[0])
     if (any(a.shape != (count,) for a in arrays[:3]) or arrays[3].ndim != 2 or
-            arrays[3].shape[0] != count or arrays[3].shape[1] not in (4, 5, 6)):
-        raise ValueError('matching public ray arrays and four to six correction fields required')
+            arrays[3].shape[0] != count or arrays[3].shape[1] not in (4, 5, 6, 7)):
+        raise ValueError('matching public ray arrays and four to seven correction fields required')
     fields = arrays[3].shape[1]
     result = np.empty((count, fields, 2) if derivatives else (count, 2), np.float64)
     code = backend()[0].ssb_ray_hits(count, fields, radius, height,

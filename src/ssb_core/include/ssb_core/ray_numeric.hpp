@@ -14,7 +14,7 @@
 namespace ssb::numeric {
 struct RayResult {
   double x, q;
-  double derivative[6][2];
+  double derivative[7][2];
 };
 
 SSB_RAY_FUNCTION inline bool Ray(double axis, double theta, double tangent,
@@ -29,9 +29,13 @@ SSB_RAY_FUNCTION inline bool Ray(double axis, double theta, double tangent,
   theta+=dq/radius;
   const double sy=std::sin(theta), sz=std::cos(theta);
   const double ry=ca*sy-sa*sz, rz=sa*sy+ca*sz;
-  const double vx=cb*tangent+sb*rz, vy=ry, vz=-sb*tangent+cb*rz;
-  const double lateral=fields==6 ? correction[4] : 0.;
-  const double vertical=fields>4 ? correction[fields-1] : 0.;
+  const double raw_vx=cb*tangent+sb*rz, raw_vy=ry, vz=-sb*tangent+cb*rz;
+  const double cy=fields==7 ? std::cos(correction[6]) : 1.;
+  const double syaw=fields==7 ? std::sin(correction[6]) : 0.;
+  const double vx=fields==7 ? cy*raw_vx-syaw*raw_vy : raw_vx;
+  const double vy=fields==7 ? syaw*raw_vx+cy*raw_vy : raw_vy;
+  const double lateral=fields>=6 ? correction[4] : 0.;
+  const double vertical=fields>=6 ? correction[5] : fields==5 ? correction[4] : 0.;
   const double ox=axis+dx+height*sb*ca, oy=lateral-height*sa;
   const double oz=vertical+height*(cb*ca-1.);
   const double aa=vy*vy+vz*vz, bb=2.*(oy*vy+oz*vz);
@@ -53,9 +57,15 @@ SSB_RAY_FUNCTION inline bool Ray(double axis, double theta, double tangent,
         dox=-height*sb*sa; doy=-height*ca; doz=-height*cb*sa;
         dvx=sb*ry; dvy=-rz; dvz=cb*ry;
         break;
-      case 3: dox=height*cb*ca; doz=-height*sb*ca; dvx=vz; dvz=-vx; break;
-      case 4: if (fields==6) doy=1.; else doz=1.; break;
+      case 3: dox=height*cb*ca; doz=-height*sb*ca; dvx=vz; dvz=-raw_vx; break;
+      case 4: if (fields>=6) doy=1.; else doz=1.; break;
       case 5: doz=1.; break;
+      case 6: dvx=-vy; dvy=vx; break;
+    }
+    if (fields==7 && field!=6) {
+      const double x=cy*dvx-syaw*dvy;
+      dvy=syaw*dvx+cy*dvy;
+      dvx=x;
     }
     const double dl=-(py*(doy+length*dvy)+pz*(doz+length*dvz))/slope;
     const double dpy=doy+dl*vy+length*dvy, dpz=doz+dl*vz+length*dvz;

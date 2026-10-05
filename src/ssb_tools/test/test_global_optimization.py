@@ -18,7 +18,7 @@ def independent_hits(axis, theta, tangent, corrections, radius, height):
     result = []
     for x, angle, u, correction in zip(axis, theta, tangent, corrections):
         dx, dq, roll, pitch = correction[:4]
-        dy, dz = correction[4:] if len(correction) == 6 else (0., correction[4]) if len(correction) == 5 else (0., 0.)
+        dy, dz = correction[4:6] if len(correction) >= 6 else (0., correction[4]) if len(correction) == 5 else (0., 0.)
         a, b = roll, pitch
         rx = np.array([[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]])
         ry = np.array([[math.cos(b), 0, math.sin(b)], [0, 1, 0], [-math.sin(b), 0, math.cos(b)]])
@@ -26,6 +26,11 @@ def independent_hits(axis, theta, tangent, corrections, radius, height):
         origin = np.array([x+dx, dy, dz-height])+rotation @ np.array([0., 0., height])
         angle += dq/radius
         direction = rotation @ np.array([u, math.sin(angle), math.cos(angle)])
+        if len(correction) == 7:
+            yaw = correction[6]
+            rz = np.array([[math.cos(yaw), -math.sin(yaw), 0],
+                           [math.sin(yaw), math.cos(yaw), 0], [0, 0, 1]])
+            direction = rz @ direction
         coefficients = [direction[1:] @ direction[1:], 2*(origin[1:] @ direction[1:]),
                         origin[1:] @ origin[1:]-radius**2]
         distance = max(np.roots(coefficients))
@@ -34,7 +39,7 @@ def independent_hits(axis, theta, tangent, corrections, radius, height):
     return np.asarray(result)
 
 
-def synthetic_matches(translations=False):
+def synthetic_matches(translations=False, yaw=0.):
     phase = np.linspace(-1., 1., 401)
     offsets = np.linspace(-.22, .22, 512)
     projection = np.zeros(3*len(phase), PROJECTION)
@@ -51,7 +56,7 @@ def synthetic_matches(translations=False):
         fit_translation=translations in (True,'fixed'),fit_heave=translations=='heave',
         coarse_translation=translations=='fixed',
         translation_prior_mm=10. if translations=='fixed' else 2.,
-        translation_bound_mm=30. if translations=='fixed' else 5.))
+        translation_bound_mm=30. if translations=='fixed' else 5., fit_axis_yaw=bool(yaw)))
 
     def truth_at(axis):
         # Nonzero coupled position, phase, roll and pitch; no production function creates truth.
@@ -65,6 +70,8 @@ def synthetic_matches(translations=False):
             values = np.column_stack((values, np.full_like(s,.02),np.full_like(s,-.015)))
         elif translations=='heave':
             values = np.column_stack((values,.001+.0007*s-.0003*s*s))
+        if yaw:
+            values = np.column_stack((values, np.full_like(s, yaw)))
         return values
 
     def measured_point(band, x, q):

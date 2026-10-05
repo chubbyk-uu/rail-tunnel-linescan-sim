@@ -37,11 +37,14 @@ class GeometrySettings:
     relative_encoder_scale: bool = False
     relative_scale_prior_fraction: float = .01
     relative_scale_bound_fraction: float = RELATIVE_SCALE_BOUND
+    fit_axis_yaw: bool = False
+    axis_yaw_prior_mrad: float = 2.
+    axis_yaw_bound_mrad: float = 3.
     geometry_backend: str = 'cpu'
 
     def validate(self):
         switches = ('fit_translation', 'fit_heave', 'observed_knots', 'adaptive_attitude', 'coarse_translation',
-                    'relative_encoder_scale')
+                    'relative_encoder_scale', 'fit_axis_yaw')
         numbers = [v for k, v in vars(self).items() if k not in ('max_irls', 'geometry_backend', *switches)]
         if self.geometry_backend not in ('numpy', 'cpu', 'cuda'):
             raise ValueError('explicit numpy, cpu or cuda geometry backend required')
@@ -69,6 +72,10 @@ class GeometrySettings:
             raise ValueError('coarse translation requires a Boolean switch and the lateral/heave model')
         if type(self.relative_encoder_scale) is not bool:
             raise ValueError('relative encoder scale switch must be Boolean')
+        if type(self.fit_axis_yaw) is not bool or (self.fit_axis_yaw and not self.fit_translation):
+            raise ValueError('constant axis yaw requires the lateral/heave model')
+        if not self.axis_yaw_prior_mrad <= self.axis_yaw_bound_mrad <= 10:
+            raise ValueError('axis yaw prior/bound must be within 10 mrad')
         if not self.relative_scale_prior_fraction <= self.relative_scale_bound_fraction <= RELATIVE_SCALE_BOUND:
             raise ValueError('relative encoder scale prior/bound must be within 3 percent')
         if self.adaptive_attitude and (not self.observed_knots or self.fit_heave or
@@ -82,7 +89,8 @@ def reconstruction_settings(attitude_spacing_m=.02, adaptive_attitude=False, slo
     return GeometrySettings(geometry_backend=geometry_backend, attitude_spacing_m=attitude_spacing_m, observed_knots=True,
         adaptive_attitude=adaptive_attitude, fit_translation=slow_translation,
         coarse_translation=slow_translation, translation_bound_mm=30. if slow_translation else 5.,
-        translation_prior_mm=10. if slow_translation else 2., relative_encoder_scale=relative_encoder_scale)
+        translation_prior_mm=10. if slow_translation else 2., relative_encoder_scale=relative_encoder_scale,
+        fit_axis_yaw=slow_translation)
 
 
 def spline_knots(lower, upper, spacing):
@@ -189,15 +197,16 @@ def cylinder_points(axis, theta, tangent, correction, radius, height, radial_dep
     """Exact Ry(pitch) Rx(roll) rays, including rotation of the upright support.
 
     correction columns: carriage dx [m], scan phase dq [m], roll/pitch [rad],
-    optional heave [m] (five fields), or lateral/heave [m] (six fields).
+    optional heave [m] (five fields), lateral/heave [m] (six fields),
+    or lateral/heave plus axis yaw [rad] (seven fields).
     The cylinder axis is the nominal origin in y,z. No actual tunnel mesh is read.
     """
     correction = np.asarray(correction)
-    if correction.ndim != 2 or correction.shape[1] not in (4, 5, 6) or not np.isfinite(correction).all():
-        raise ValueError('finite four-, five- or six-component ray correction required')
+    if correction.ndim != 2 or correction.shape[1] not in (4, 5, 6, 7) or not np.isfinite(correction).all():
+        raise ValueError('finite four to seven component ray correction required')
     dx, dq, roll, pitch = correction[:, :4].T
-    lateral = correction[:, 4] if correction.shape[1] == 6 else 0.
-    vertical = correction[:, -1] if correction.shape[1] > 4 else 0.
+    lateral = correction[:, 4] if correction.shape[1] >= 6 else 0.
+    vertical = correction[:, 5] if correction.shape[1] >= 6 else correction[:, 4] if correction.shape[1] == 5 else 0.
     theta = np.asarray(theta)+dq/radius
     ca, sa = np.cos(roll), np.sin(roll)
     cb, sb = np.cos(pitch), np.sin(pitch)
@@ -206,6 +215,10 @@ def cylinder_points(axis, theta, tangent, correction, radius, height, radial_dep
     vx = cb*tangent+sb*rz
     vy = ry
     vz = -sb*tangent+cb*rz
+    raw_vx = vx
+    if correction.shape[1] == 7:
+        cy, syaw = np.cos(correction[:, 6]), np.sin(correction[:, 6])
+        vx, vy = cy*vx-syaw*vy, syaw*vx+cy*vy
     ox = axis+dx+height*sb*ca
     oy = lateral-height*sa
     oz = vertical+height*(cb*ca-1)
@@ -226,11 +239,11 @@ def cylinder_derivatives(axis, theta, tangent, correction, radius, height):
     The hit length follows from the implicit cylinder equation, so no finite step.
     """
     correction = np.asarray(correction)
-    if correction.ndim != 2 or correction.shape[1] not in (4, 5, 6) or not np.isfinite(correction).all():
-        raise ValueError('finite four-, five- or six-component ray correction required')
+    if correction.ndim != 2 or correction.shape[1] not in (4, 5, 6, 7) or not np.isfinite(correction).all():
+        raise ValueError('finite four to seven component ray correction required')
     dx, dq, roll, pitch = correction[:, :4].T
-    lateral = correction[:, 4] if correction.shape[1] == 6 else 0.
-    vertical = correction[:, -1] if correction.shape[1] > 4 else 0.
+    lateral = correction[:, 4] if correction.shape[1] >= 6 else 0.
+    vertical = correction[:, 5] if correction.shape[1] >= 6 else correction[:, 4] if correction.shape[1] == 5 else 0.
     theta = np.asarray(theta)+dq/radius
     tangent = np.asarray(tangent)
     ca, sa = np.cos(roll), np.sin(roll)
@@ -240,6 +253,10 @@ def cylinder_derivatives(axis, theta, tangent, correction, radius, height):
     vx = cb*tangent+sb*rz
     vy = ry
     vz = -sb*tangent+cb*rz
+    raw_vx = vx
+    if correction.shape[1] == 7:
+        cy, syaw = np.cos(correction[:, 6]), np.sin(correction[:, 6])
+        vx, vy = cy*vx-syaw*vy, syaw*vx+cy*vy
     oy = lateral-height*sa
     oz = vertical+height*(cb*ca-1)
     aa = vy*vy+vz*vz
@@ -257,11 +274,14 @@ def cylinder_derivatives(axis, theta, tangent, correction, radius, height):
     fields = [(one, zero, zero, zero, zero, zero),
               (zero, zero, zero, -sb*ry/radius, rz/radius, -cb*ry/radius),
               (-height*sb*sa, -height*ca, -height*cb*sa, sb*ry, -rz, cb*ry),
-              (height*cb*ca, zero, -height*sb*ca, vz, zero, -vx)]
-    if correction.shape[1] == 6:
+              (height*cb*ca, zero, -height*sb*ca, vz, zero, -raw_vx)]
+    if correction.shape[1] >= 6:
         fields.append((zero, one, zero, zero, zero, zero))
     if correction.shape[1] > 4:
         fields.append((zero, zero, one, zero, zero, zero))
+    if correction.shape[1] == 7:
+        fields = [(a, b, c, cy*d-syaw*e, syaw*d+cy*e, f) for a, b, c, d, e, f in fields]
+        fields.append((zero, zero, zero, -vy, vx, zero))
     result = np.empty((len(length), len(fields), 2))
     for k, (dox, doy, doz, dvx, dvy, dvz) in enumerate(fields):
         dl = -(py*(doy+length*dvy)+pz*(doz+length*dvz))/slope
@@ -293,15 +313,23 @@ class Trajectory:
                 knots += [translation, translation]
             elif settings.fit_heave:
                 knots += [attitude]
+            if settings.fit_axis_yaw:
+                knots += [np.asarray(self.domain)]
         self.fields = ['carriage_dx_m', 'scan_phase_dq_m', 'roll_rad', 'pitch_rad']
         if settings.fit_translation:
             self.fields += ['carriage_lateral_m', 'carriage_vertical_m']
         elif settings.fit_heave:
             self.fields += ['carriage_vertical_m']
+        if settings.fit_axis_yaw:
+            self.fields += ['axis_yaw_rad']
         if len(knots) != len(self.fields):
             raise ValueError('trajectory fields differ from configured rigid-body model')
         self.knots = [np.asarray(k, float) for k in knots]
-        self.sizes = [len(k)-4 for k in self.knots]
+        if settings.fit_axis_yaw and (self.knots[-1].shape != (2,) or
+                                     not np.array_equal(self.knots[-1], self.domain)):
+            raise ValueError('axis yaw has exactly one constant coefficient on the public domain')
+        self.degrees = [0 if field == 'axis_yaw_rad' else 3 for field in self.fields]
+        self.sizes = [len(k)-degree-1 for k, degree in zip(self.knots, self.degrees)]
         self.starts = np.r_[0, np.cumsum(self.sizes)]
         self.spline_size = int(self.starts[-1])
         self.scale_index = self.spline_size if settings.relative_encoder_scale else None
@@ -311,7 +339,17 @@ class Trajectory:
             raise ValueError('trajectory exceeds 2048-coefficient resource budget')
 
     def bases(self, axis):
-        return [csr_matrix(BSpline.design_matrix(axis, k, 3, extrapolate=False)) for k in self.knots]
+        result = []
+        for knot, degree in zip(self.knots, self.degrees):
+            if degree == 0:
+                # One coefficient, represented in the fixed four-entry numeric
+                # block format. Explicit zeros do not add fitted variables.
+                n = len(axis)
+                result.append(csr_matrix((np.tile([1., 0., 0., 0.], n), np.zeros(4*n, int),
+                                          np.arange(n+1)*4), shape=(n, 1)))
+            else:
+                result.append(csr_matrix(BSpline.design_matrix(axis, knot, degree, extrapolate=False)))
+        return result
 
     def apply_encoder_scale(self, local, axis, coefficients):
         if self.scale_index is not None:
@@ -330,6 +368,8 @@ class Trajectory:
             self.settings.translation_bound_mm if k > 3 else 30.) for k, size in enumerate(self.sizes)])
         if self.scale_index is not None:
             bounds = np.r_[bounds, self.settings.relative_scale_bound_fraction/self.scale]
+        if self.settings.fit_axis_yaw:
+            bounds[self.starts[-2]] = self.settings.axis_yaw_bound_mrad
         return bounds
 
     def scale_margin_m(self):
@@ -358,7 +398,7 @@ class Trajectory:
 
     def points(self, axis, theta, tangent, coefficients, bases=None):
         if bases is None:
-            local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
+            local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, self.degrees[i],
                                              extrapolate=False)(axis) for i, k in enumerate(self.knots)])
             local = self.apply_encoder_scale(local, axis, coefficients)
         else:
@@ -385,7 +425,7 @@ class Trajectory:
             self._ray_cache = None
             return 0
         table = np.empty((len(axis), len(self.fields)), np.float64)
-        splines = [BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
+        splines = [BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, self.degrees[i],
                           extrapolate=False) for i, k in enumerate(self.knots)]
         for first in range(0, len(axis), CHUNK_RAYS):
             sl = slice(first, first+CHUNK_RAYS)
@@ -407,7 +447,7 @@ class Trajectory:
                 len(self.knots) == len(cached[3]) and
                 all(np.array_equal(k, old) for k, old in zip(self.knots, cached[3]))):
             return cached[0][ids]
-        local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, 3,
+        local = np.column_stack([BSpline(k, coefficients[self.starts[i]:self.starts[i+1]]*self.scale, self.degrees[i],
                                         extrapolate=False)(axis) for i, k in enumerate(self.knots)])
         return self.apply_encoder_scale(local, axis, coefficients)
 
@@ -483,7 +523,8 @@ class Trajectory:
 
     def serialize(self, coefficients):
         extended = self.settings.fit_translation or self.settings.fit_heave
-        result = dict(schema=('ssb.global_trajectory.v3' if self.scale_index is not None else
+        result = dict(schema=('ssb.global_trajectory.v4' if self.settings.fit_axis_yaw else
+                              'ssb.global_trajectory.v3' if self.scale_index is not None else
                               'ssb.global_trajectory.v2' if extended else 'ssb.global_trajectory.v1'),
                     radius_m=self.radius, support_height_m=self.height,
                     progress_domain_m=self.domain, degree=3, knots=[k.tolist() for k in self.knots],
@@ -491,6 +532,9 @@ class Trajectory:
                     fields=self.fields, sizes=self.sizes,
                     model=('Ry(pitch) Rx(roll), upright support, '+('lateral/heave' if self.settings.fit_translation else 'heave')+' and nominal cylinder'
                            if extended else 'Ry(pitch) Rx(roll), upright support and nominal cylinder'))
+        if self.settings.fit_axis_yaw:
+            result['field_degrees'] = self.degrees
+            result['model'] = 'Rz(constant image-fitted axis yaw) Ry(pitch) Rx(roll); independent lateral/heave support'
         if self.scale_index is not None:
             result['relative_encoder_scale'] = dict(reference_m=self.scale_reference_m,
                 correction_fraction=float(coefficients[self.scale_index]*self.scale),

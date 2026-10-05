@@ -2,7 +2,7 @@
 
 namespace {
 bool Geometry(int fields, double radius, double height) {
-  return fields>=4 && fields<=6 && std::isfinite(radius) && radius>0. &&
+  return fields>=4 && fields<=7 && std::isfinite(radius) && radius>0. &&
          std::isfinite(height) && height>0.;
 }
 }

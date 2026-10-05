@@ -129,7 +129,7 @@ def test_feature_search_failure_releases_real_cuda_context():
 
 
 @pytest.mark.parametrize('missing', [False, True])
-@pytest.mark.parametrize('fields', [4, 5, 6, 'coarse6'])
+@pytest.mark.parametrize('fields', [4, 5, 6, 'coarse6', 7])
 def test_global_cuda_matches_cpu_coupled_rays_and_invalid_native_samples(tmp_path, missing, fields):
     from ssb_tools.global_geometry import Trajectory, GeometrySettings
     from ssb_tools.global_cuda import GlobalCudaRaster
@@ -140,7 +140,7 @@ def test_global_cuda_matches_cpu_coupled_rays_and_invalid_native_samples(tmp_pat
     sampler.geometry_valid[7] = False
     sampler.native.valid[22] = False
     model = Trajectory(sampler, 1., .7, GeometrySettings(fit_heave=fields == 5,
-        fit_translation=fields in (6,'coarse6'),coarse_translation=fields=='coarse6'))
+        fit_translation=fields in (6,'coarse6',7),coarse_translation=fields=='coarse6', fit_axis_yaw=fields==7))
     coefficients = np.empty(model.size)
     for k in range(len(model.fields)):
         coefficients[model.starts[k]:model.starts[k+1]] = (.7-.25*k)+.12*np.sin(np.arange(model.sizes[k]))
@@ -308,20 +308,21 @@ def test_cuda_row_centre_ignores_only_zero_weight_neighbours():
         raster.close()
 
 
-def test_global_cuda_row_vectors_match_independent_matrix_ray_equations():
+@pytest.mark.parametrize('yaw', [False, True])
+def test_global_cuda_row_vectors_match_independent_matrix_ray_equations(yaw):
     from test_global_optimization import independent_hits
     from ssb_tools.global_geometry import Trajectory, GeometrySettings
     from ssb_tools.global_cuda import row_rays
     sampler = analytic_sampler(raw=True)
-    model = Trajectory(sampler, 1., .7, GeometrySettings(fit_translation=True))
-    constants = np.array([.0007, -.0004, .0013, -.0009, .0008, -.0011])
+    model = Trajectory(sampler, 1., .7, GeometrySettings(fit_translation=True, fit_axis_yaw=yaw))
+    constants = np.array([.0007, -.0004, .0013, -.0009, .0008, -.0011]+([.0017] if yaw else []))
     c = np.concatenate([np.full(n, value/model.scale) for n, value in zip(model.sizes, constants)])
     rays = row_rays(model, c)
     tangent = np.linspace(-.1, .1, len(rays))
     expected = independent_hits(rays['axis'], rays['phase'], tangent,
                                 np.tile(constants, (len(rays), 1)), 1., .7)
     origin = np.column_stack([rays[k] for k in ('ox', 'oy', 'oz')])
-    direction = np.column_stack((rays['tx']*tangent+rays['rx'], rays['ry'], rays['tz']*tangent+rays['rz']))
+    direction = np.column_stack((rays['tx']*tangent+rays['rx'], rays['ty']*tangent+rays['ry'], rays['tz']*tangent+rays['rz']))
     aa = np.sum(direction[:, 1:]**2, axis=1)
     bb = 2*np.sum(origin[:, 1:]*direction[:, 1:], axis=1)
     cc = np.sum(origin[:, 1:]**2, axis=1)-1

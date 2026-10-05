@@ -36,13 +36,14 @@ def load_global(root, sampler, upstream, d1_root):
         if len(hashes) != 1 or hashes[0] != sha256_file(Path(d1_root)/name):
             raise ValueError('trajectory belongs to different D1 geometry')
     report, record = read_json(paths[1]), read_json(paths[2])
-    if (report.get('schema') not in ('ssb.global_optimization.v1', 'ssb.global_optimization.v2', 'ssb.global_optimization.v3') or report.get('grid') != upstream['grid'] or
+    if (report.get('schema') not in ('ssb.global_optimization.v1', 'ssb.global_optimization.v2', 'ssb.global_optimization.v3', 'ssb.global_optimization.v4') or report.get('grid') != upstream['grid'] or
             report.get('optical_signature') != upstream['optical_signature'] or
             report.get('source_observation_hashes') != upstream['source_observation_hashes']):
         raise ValueError('D3 public observation identity mismatch')
     settings = GeometrySettings(**report['settings'])
     extended = settings.fit_translation or settings.fit_heave
-    if report['schema'] != ('ssb.global_optimization.v3' if settings.relative_encoder_scale else
+    if report['schema'] != ('ssb.global_optimization.v4' if settings.fit_axis_yaw else
+                           'ssb.global_optimization.v3' if settings.relative_encoder_scale else
                            'ssb.global_optimization.v2' if extended else 'ssb.global_optimization.v1'):
         raise ValueError('optimization schema differs from configured rigid-body model')
     expected_fields = ['carriage_dx_m', 'scan_phase_dq_m', 'roll_rad', 'pitch_rad']
@@ -50,7 +51,10 @@ def load_global(root, sampler, upstream, d1_root):
         expected_fields += ['carriage_lateral_m', 'carriage_vertical_m']
     elif settings.fit_heave:
         expected_fields += ['carriage_vertical_m']
-    expected_schema = ('ssb.global_trajectory.v3' if settings.relative_encoder_scale else
+    if settings.fit_axis_yaw:
+        expected_fields += ['axis_yaw_rad']
+    expected_schema = ('ssb.global_trajectory.v4' if settings.fit_axis_yaw else
+                       'ssb.global_trajectory.v3' if settings.relative_encoder_scale else
                        'ssb.global_trajectory.v2' if extended else 'ssb.global_trajectory.v1')
     if (record.get('schema') != expected_schema or record.get('degree') != 3 or
             record.get('radius_m') != upstream['grid']['radius_m'] or
@@ -81,9 +85,13 @@ def load_global(root, sampler, upstream, d1_root):
         raise ValueError('undeclared relative encoder scale')
     if coefficients.shape != (model.size,) or not np.isfinite(coefficients).all() or model.sizes != record['sizes']:
         raise ValueError('invalid global trajectory coefficients')
+    if settings.fit_axis_yaw and record.get('field_degrees') != model.degrees:
+        raise ValueError('axis yaw must be declared as one constant field')
     for field, knot in enumerate(model.knots):
+        degree = model.degrees[field]
         if (not np.isfinite(knot).all() or np.any(np.diff(knot) < 0) or
-                knot[3] != model.domain[0] or knot[-4] != model.domain[1]):
+                knot[degree] != model.domain[0] or knot[-degree-1] != model.domain[1] or
+                (degree == 0 and len(knot) != 2)):
             raise ValueError('global trajectory knot domain differs from source progress')
     if np.any(abs(coefficients) > model.coefficient_bounds()+1e-7):
         raise ValueError('global trajectory exceeds declared physical bounds')

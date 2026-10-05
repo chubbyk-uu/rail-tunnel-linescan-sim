@@ -11,9 +11,9 @@ from test_global_optimization import synthetic_matches
 
 
 @pytest.mark.parametrize('relative', [False, True])
-@pytest.mark.parametrize('translation', [False, 'heave', 'fixed'])
+@pytest.mark.parametrize('translation', [False, 'heave', 'fixed', 'yaw'])
 def test_cuda_fused_geometry_matches_independent_sparse_chain_and_cpu(relative, translation):
-    original, table, grid = synthetic_matches(translation)
+    original, table, grid = synthetic_matches('fixed', yaw=-.0015) if translation == 'yaw' else synthetic_matches(translation)
     cpu = Trajectory(original.sampler, original.radius, original.height,
                      replace(original.settings, geometry_backend='cpu', relative_encoder_scale=relative))
     gpu = Trajectory(cpu.sampler, cpu.radius, cpu.height, replace(cpu.settings, geometry_backend='cuda'))

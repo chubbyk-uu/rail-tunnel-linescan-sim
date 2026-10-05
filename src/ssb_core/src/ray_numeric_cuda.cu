@@ -143,14 +143,14 @@ void* ssb_ray_cuda_create(int64_t count, int fields, double radius, double heigh
     const int* columns, int coefficient_count, double coefficient_scale,
     int scale_index, double scale_reference, size_t budget) {
   try {
-    if (count<1 || count>2100000 || fields<4 || fields>6 || !std::isfinite(radius) || radius<=0. ||
+    if (count<1 || count>2100000 || fields<4 || fields>7 || !std::isfinite(radius) || radius<=0. ||
         !std::isfinite(height) || height<=0. || !axes || !phases || !tangents || !weights || !starts ||
         !blocks || block_count!=2*fields || starts[0]!=0 || !columns || coefficient_count<1 ||
         coefficient_count>2048 || !(coefficient_scale>0.) || !std::isfinite(coefficient_scale) ||
         scale_index < -1 || scale_index>=coefficient_count || !std::isfinite(scale_reference) ||
         (scale_positions && !scale_derivative)) throw std::runtime_error("invalid CUDA ray plan");
     for (int64_t row=0; row<count; ++row)
-      if (starts[row+1]<=starts[row] || starts[row+1]-starts[row]>193)
+      if (starts[row+1]<=starts[row] || starts[row+1]-starts[row]>194)
         throw std::runtime_error("invalid CUDA ray CSR pattern");
     auto context=std::make_unique<Context>();
     auto& c=*context;
@@ -172,7 +172,7 @@ void* ssb_ray_cuda_create(int64_t count, int fields, double radius, double heigh
     }
     c.starts=c.Upload(starts,count+1);
     std::vector<ssb::numeric::JacobianBlock> device_blocks;
-    bool seen[2][6]={{false}};
+    bool seen[2][7]={{false}};
     for (int index=0; index<block_count; ++index) {
       auto block=blocks[index];
       if (block.side<0 || block.side>1 || block.field<0 || block.field>=fields ||

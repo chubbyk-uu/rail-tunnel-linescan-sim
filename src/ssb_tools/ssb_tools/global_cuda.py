@@ -5,7 +5,7 @@ from .reconstruction_support import correction_reach_m
 from .unroll_cuda import CudaRaster, pointer
 
 RAY = np.dtype([(name, '<f8') for name in
-                ('axis', 'phase', 'ox', 'oy', 'oz', 'tx', 'tz', 'rx', 'ry', 'rz')]+[('lattice', '<i8')])
+                ('axis', 'phase', 'ox', 'oy', 'oz', 'tx', 'ty', 'tz', 'rx', 'ry', 'rz')]+[('lattice', '<i8')])
 
 
 def row_rays(model, coefficients):
@@ -21,10 +21,15 @@ def row_rays(model, coefficients):
     ry = ca*np.sin(theta)-sa*np.cos(theta)
     rz = sa*np.sin(theta)+ca*np.cos(theta)
     rays['ox'] = axis+dx+model.height*sb*ca
-    rays['oy'] = (local[:, 4] if local.shape[1] == 6 else 0.)-model.height*sa
-    rays['oz'] = (local[:, -1] if local.shape[1] > 4 else 0.)+model.height*(cb*ca-1.)
+    rays['oy'] = (local[:, 4] if local.shape[1] >= 6 else 0.)-model.height*sa
+    rays['oz'] = (local[:, 5] if local.shape[1] >= 6 else local[:, 4] if local.shape[1] == 5 else 0.)+model.height*(cb*ca-1.)
     rays['tx'], rays['tz'] = cb, -sb
     rays['rx'], rays['ry'], rays['rz'] = sb*rz, ry, cb*rz
+    rays['ty'] = 0.
+    if local.shape[1] == 7:
+        cy, syaw = np.cos(local[:, 6]), np.sin(local[:, 6])
+        rays['tx'], rays['ty'] = cy*cb, syaw*cb
+        rays['rx'], rays['ry'] = cy*(sb*rz)-syaw*ry, syaw*(sb*rz)+cy*ry
     rays['lattice'] = p['lattice_row']
     return rays
 
@@ -47,7 +52,7 @@ class GlobalCudaRaster(CudaRaster):
         try:
             self.lib.ssb_unroll_global_abi.argtypes = []
             self.lib.ssb_unroll_global_abi.restype = ct.c_int
-            if self.lib.ssb_unroll_global_abi() != 2:
+            if self.lib.ssb_unroll_global_abi() != 3:
                 raise RuntimeError('unsupported CUDA global ABI')
             self.lib.ssb_unroll_global_depth.argtypes = [ct.c_void_p, ct.c_void_p]
             self.lib.ssb_unroll_global_depth.restype = ct.c_int
@@ -73,7 +78,7 @@ class GlobalCudaRaster(CudaRaster):
                 if hi+self.margin >= xs[0] and lo-self.margin <= xs[-1]]
 
     def describe(self):
-        return dict(super().describe(), fusion_abi=1 if self.fusion is not None else None, global_abi=2, surface_relief=self.model.relief is not None,
+        return dict(super().describe(), fusion_abi=1 if self.fusion is not None else None, global_abi=3, surface_relief=self.model.relief is not None,
                     geometry='fitted Ry(pitch) Rx(roll); double inverse, 10 iterations, 1e-8 m support threshold')
 
     def tile(self, angles, xs, bands=None):

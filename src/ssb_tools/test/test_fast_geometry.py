@@ -10,7 +10,7 @@ from ssb_tools.optimize_bands import FixedJacobian, regularizer
 from test_global_optimization import independent_hits, synthetic_matches
 
 
-@pytest.mark.parametrize('fields', [4, 5, 6])
+@pytest.mark.parametrize('fields', [4, 5, 6, 7])
 def test_native_rays_and_analytic_derivatives_match_independent_coupled_geometry(fields):
     rng = np.random.default_rng(230)
     axis = rng.uniform(-2.5, 52.5, 41)
@@ -32,9 +32,9 @@ def test_native_rays_and_analytic_derivatives_match_independent_coupled_geometry
 
 
 @pytest.mark.parametrize('relative', [False, True])
-@pytest.mark.parametrize('translation', [False, 'heave', 'fixed'])
+@pytest.mark.parametrize('translation', [False, 'heave', 'fixed', 'yaw'])
 def test_fused_sparse_jacobian_matches_separate_sparse_chain_and_finite_differences(relative, translation):
-    original, table, grid = synthetic_matches(translation)
+    original, table, grid = synthetic_matches('fixed', yaw=-.0015) if translation == 'yaw' else synthetic_matches(translation)
     model = Trajectory(original.sampler, original.radius, original.height,
                         replace(original.settings, geometry_backend='cpu', relative_encoder_scale=relative))
     a, b = (model.native_side(table, side) for side in ('a', 'b'))

@@ -183,10 +183,10 @@ __global__ void sample_band(const uint8_t* pixels, const double* axes, const Row
 // These vectors represent the same Ry(pitch) Rx(roll) cylinder rays as D3;
 // neither actual vehicle poses nor renderer geometry are accepted by this ABI.
 struct GlobalRay {
-  double axis, phase, ox, oy, oz, tx, tz, rx, ry, rz;
+  double axis, phase, ox, oy, oz, tx, ty, tz, rx, ry, rz;
   int64_t lattice;
 };
-static_assert(sizeof(GlobalRay) == 88);
+static_assert(sizeof(GlobalRay) == 96);
 
 __device__ Row global_rows(const GlobalRay* rays, int n, double phase, double footprint) {
   int a = 0, b = n;
@@ -217,11 +217,11 @@ __device__ double2 global_hit(const GlobalRay& r, double x, double radius,
   double rx = r.rx, ry = r.ry, rz = r.rz;
   if (angular_offset != 0.) {
     double cs = cos(angular_offset), sn = sin(angular_offset);
-    rx = cs*r.rx+sn*r.tz*r.ry;
+    rx = cs*r.rx+sn*(r.tz*r.ry-r.ty*r.rz);
     ry = cs*r.ry+sn*(r.tx*r.rz-r.tz*r.rx);
-    rz = cs*r.rz-sn*r.tx*r.ry;
+    rz = cs*r.rz+sn*(r.ty*r.rx-r.tx*r.ry);
   }
-  double vx = r.tx*tangent+rx, vy = ry, vz = r.tz*tangent+rz;
+  double vx = r.tx*tangent+rx, vy = r.ty*tangent+ry, vz = r.tz*tangent+rz;
   double aa = vy*vy+vz*vz, bb = 2.*(r.oy*vy+r.oz*vz);
   double surface_radius = radius+depth;
   double cc = r.oy*r.oy+r.oz*r.oz-surface_radius*surface_radius;
@@ -364,7 +364,7 @@ int ssb_unroll_band(void* handle, int native_rows, const uint8_t* pixels,
   });
 }
 
-int ssb_unroll_global_abi() { return 2; }
+int ssb_unroll_global_abi() { return 3; }
 int ssb_unroll_global_depth(void* handle, const double* depths) {
   return guarded([&] {
     auto& c = *static_cast<Context*>(handle);
@@ -396,7 +396,7 @@ int ssb_unroll_global_band(void* handle, int native_rows, const uint8_t* pixels,
     const auto* rays = static_cast<const GlobalRay*>(ray_data);
     for (int i = 0; i < native_rows; ++i) {
       const double* values = &rays[i].axis;
-      for (int j = 0; j < 10; ++j)
+      for (int j = 0; j < 11; ++j)
         if (!std::isfinite(values[j])) throw std::runtime_error("nonfinite CUDA global ray");
       if (axes[i] != rays[i].axis || (i && (rays[i].phase <= rays[i-1].phase ||
                                           rays[i].lattice <= rays[i-1].lattice)))
