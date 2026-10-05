@@ -60,7 +60,10 @@ def build(demo, sources, work, output, seed, reuse_lining=False):
             # and portable export; source buffers must already be present.
             world_input=demo/'world/world.sdf'
             config_input=demo/'capture.yaml'
-            calibration_args=['--calibration',str(demo/'calibration.json')]
+            # Reusing the lining does not preserve the optical identity: this
+            # preparation changes the mount and response gain of a nominal rig.
+            # Calibrate the modified rig rather than copying its old signature.
+            calibration_args=['--calibrate']
         else:
             prepare_set(REPO/'src/ssb_tools/config/stage_b_material_set.yaml', sources,
                         config_path, spec, work/'surface')

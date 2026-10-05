@@ -13,6 +13,28 @@ from ssb_tools.reconstruction_budget import plan
 from test_wall_coverage import nominal
 
 
+def test_reused_nominal_lining_recalibrates_the_modified_rig(tmp_path, monkeypatch):
+    tool = Path(__file__).resolve().parents[3]/'tools/prepare_combined_20m.py'
+    build = runpy.run_path(str(tool))['build']
+    demo = tmp_path/'demo'; demo.mkdir()
+    (demo/'scene.json').write_text('{}')
+    (demo/'capture.yaml').write_text(yaml.safe_dump(dict(
+        tunnel=dict(x_min_m=-2.5, x_max_m=22.5), render=dict(optical_scene='scene.json'))))
+    from ssb_tools.session import sha256_file
+    (demo/'bundle.json').write_text(json.dumps(dict(schema='ssb.demo_bundle.v1',
+        files={'capture.yaml':sha256_file(demo/'capture.yaml'), 'scene.json':sha256_file(demo/'scene.json')})))
+    class CommandCaptured(Exception): pass
+    calls = []
+    def contact(command, **kwargs):
+        calls.append(command)
+        raise CommandCaptured()
+    monkeypatch.setattr(build.__globals__['subprocess'], 'run', contact)
+    with pytest.raises(CommandCaptured):
+        build(demo, tmp_path/'sources', tmp_path/'work', tmp_path/'output', 20261223, True)
+    assert len(calls) == 1
+    assert '--calibrate' in calls[0] and '--calibration' not in calls[0]
+
+
 @pytest.mark.parametrize('bad_source',['domain','hash'])
 def test_reused_combined_lining_rejects_bad_inputs_before_work(tmp_path,bad_source):
     tool=Path(__file__).resolve().parents[3]/'tools/prepare_combined_20m.py'
