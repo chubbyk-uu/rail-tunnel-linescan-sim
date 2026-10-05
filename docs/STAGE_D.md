@@ -2,7 +2,7 @@
 
 综合装配与噪声场景采用匹配 0.1 m / 256 行、姿态 0.02 m、粗节点横向/升沉和共享表面深度；下文 0.2 m 命令仍是名义基线。
 
-更新：2026-10-05。D1、D2、D3 已实现，3 m 及 20 m 综合新采均通过。最新 20 m 窗口内／间 P95 0.607／0.662 px、计划点零缺测、完整优化全图零缺口。相对尺度、支撑、物理修复及核验器勘误见 [RELATIVE_SCALE](RELATIVE_SCALE.md)，当前门限见 [EVALUATION](EVALUATION.md)。下一步先优化 D3 离线求解，再做亮度融合与最多 50 m 的分段扩展，见 [ROADMAP](ROADMAP.md)。旧模型、失败与门限保留在 [开发归档](history/STAGE_D_DEVLOG_2026-10-03.md)，不与现行结论混用。
+更新：2026-10-05。D1、D2、D3 已实现，3 m 及 20 m 综合新采均通过。最新 20 m 窗口内／间 P95 0.607／0.662 px、计划点零缺测、完整优化全图零缺口。相对尺度、支撑、物理修复及核验器勘误见 [RELATIVE_SCALE](RELATIVE_SCALE.md)，当前门限见 [EVALUATION](EVALUATION.md)。[第一轮 D3 提速](D3_PERFORMANCE.md) 已完成并复核，下一步做亮度融合与最多 50 m 的分段扩展，见 [ROADMAP](ROADMAP.md)。旧模型、失败与门限保留在 [开发归档](history/STAGE_D_DEVLOG_2026-10-03.md)，不与现行结论混用。
 
 ## 输入与几何
 

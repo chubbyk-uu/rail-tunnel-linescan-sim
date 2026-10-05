@@ -1,5 +1,17 @@
 # 数据保留与清理
 
+## D3 提速与新种子复核（2026-10-05）
+
+| 保留内容 | 位置 |
+|---|---|
+| 同数据前后性能、独立几何及完整成图 | `sessions/d3_perf_baseline_20261005/`、`sessions/d3_perf_candidate_20261005/`；汇总在 `local_data/evaluation/d3_speed_20261005/summary.json`，候选完整数组保留 |
+| 冻结后的新 3 m 综合采集 | `sessions/d3_speed_holdout_seed20261213_20261005/`；原图、实际独立重成像、公开重建、完整成图都保留，对应 evaluation 保存协议及独立评分 |
+| 新采生成包 | `local_data/stage_b/d3_speed_seed20261213_bundle/`，完整哈希及运行引用闭包已核对，不依赖已清理的准备目录 |
+| 代表性公开正规方程 | `sessions/d3_normal_probe_20261005/`；保留矩阵、向量及实际分解对照，便于复核条件数和性能 |
+| 本轮测试、准备与启动失败记录 | `local_data/evaluation/d3_speed_20261005/test_and_preparation_records.tar.gz`，逐项回读验证；清单与删除范围见 `archive_hashes.json`、`cleanup.json` |
+
+只删除本轮两个已结束的准备目录（含一次外层 OptiX 包装清空 Gazebo 库路径的失败）和四个测试临时夹具。按独立 inode 估算释放约 **0.54 GiB**，正式新旧原图、独立重成像与全图均未删除或去重。归档是记录，不是完整可运行的准备树。速度回归和新种子验证的范围见 [D3_PERFORMANCE](D3_PERFORMANCE.md)。
+
 ## 20 m 综合验收与本轮清理（2026-10-05）
 
 | 用途 | 保留位置与范围 |
