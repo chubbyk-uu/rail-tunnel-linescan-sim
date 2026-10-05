@@ -1,6 +1,6 @@
 # 历史文档
 
-这里存放已完成或已被取代的过程记录，分批归档，最近一次为 2026-10-04；内容保持归档时的证据和状态，只调整相对链接并加归档说明。
+这里存放已完成或已被取代的过程记录，分批归档，最近一次为 2026-10-05；内容保持归档时的证据和状态，只调整相对链接并加归档说明。
 现行设计见 [DESIGN.md](../../DESIGN.md)，阶段 B 现状与操作见 [STAGE_B.md](../STAGE_B.md)。
 
 | 文件 | 内容 |
@@ -31,3 +31,27 @@
 位姿流、资产、成像配置与运行环境均保持相同的情况。
 
 当前原图和成果保留范围以 [DATA_RETENTION](../DATA_RETENTION.md) 为准，不在历史索引重复维护会话列表。
+
+## 2026-10-05 里程碑文档整理
+
+以下快照保存整理前原文，只调整链接并加历史标记；不重写失败、旧门限和首次数据身份。当前结果统一在 [MILESTONE_20M](../MILESTONE_20M.md)。
+
+| 快照 | 用途 |
+|---|---|
+| [DESIGN](DESIGN_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [DATA_RETENTION](DATA_RETENTION_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [EVALUATION](EVALUATION_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [D3_PERFORMANCE](D3_PERFORMANCE_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [STAGE_B](STAGE_B_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [STAGE_C](STAGE_C_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [STAGE_D](STAGE_D_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [WHEEL_ERROR](WHEEL_ERROR_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [MOUNT_ERROR](MOUNT_ERROR_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [RELATIVE_SCALE](RELATIVE_SCALE_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [SENSOR_NOISE](SENSOR_NOISE_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [COMBINED_ERROR](COMBINED_ERROR_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [ROADMAP](ROADMAP_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [DEPLOYMENT](DEPLOYMENT_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+| [ASSETS](ASSETS_SNAPSHOT_2026-10-05.md) | 整理前设计、操作或历次证据记录；不是现行入口 |
+
+媒体历史补充：[MEDIA 快照](MEDIA_SNAPSHOT_2026-10-05.md)，含旧版对比来源和导出说明。

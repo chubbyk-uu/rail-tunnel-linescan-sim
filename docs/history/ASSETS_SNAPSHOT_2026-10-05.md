@@ -1,3 +1,5 @@
+> 2026-10-05 整理前快照。文中的“当前”“最新”“待完成”及路径只代表当时记录；现行状态以 [20米里程碑](../MILESTONE_20M.md) 为准。旧失败及首次报告不改写；文件存在性以现行数据清单为准。
+
 # 素材下载与从零生成演示
 
 首次部署先完成 README 的环境安装、构建和对应平台的 OptiX 自检，再按本页获取公开原图和生成资产。不需要旧机器的 `local_data`，也不需要已有演示包。当前默认生成 20 m；后续扩展最多 50 m，尚未完成 50 m 整场生成及采集验收。
@@ -10,7 +12,7 @@
 | `painted_plaster_wall` | [Poly Haven Painted Plaster Wall](https://polyhaven.com/a/painted_plaster_wall) | 4K Diffuse PNG | 2×2 m；仅使用 ≥20 mm 明暗层 |
 | `grey_plaster` | [Poly Haven Grey Plaster](https://polyhaven.com/a/grey_plaster) | 8K Diffuse PNG | 1×1 m；仅作砂浆填缝细节 |
 
-三者使用 CC0 许可。尺寸与下载规格来自上述官方页面及其 API，固定文件地址、字节数和 SHA-256 记录在 [demo_sources.json](../assets/materials/demo_sources.json)。主背景不是 Wall 04，也不是 Concrete030；不需要下载历史选材实验中的其他纹理。
+三者使用 CC0 许可。尺寸与下载规格来自上述官方页面及其 API，固定文件地址、字节数和 SHA-256 记录在 [demo_sources.json](../../assets/materials/demo_sources.json)。主背景不是 Wall 04，也不是 Concrete030；不需要下载历史选材实验中的其他纹理。
 
 ### 自动下载（推荐）
 
@@ -65,10 +67,10 @@ python3 tools/build_demo_from_sources.py --runtime wsl \
 4. 用 `stage_b_scene` 生成隧道网格并做漏光审计。
 5. 用 `stage_b_optics` 绑定新资产；3 个曝光时刻、临界几何 16 条射线、复杂裂缝 64 条射线、2×2 纹理足迹积分，生成新的私密光学密钥。
 6. 用 `stage_b_gui` 生成有界预算的同源低分辨率 GUI 预览。
-7. 用 `prepare_contact_demo.py` 显式传入新世界、配置和规格，生成前驱、双测量轮、2 mm 竖向起伏/左右高差、0.2 mm 车轮柔性的世界，校验物理装配。
+7. 用 `prepare_contact_demo.py` 显式传入新世界、配置和规格，生成前驱、双测量轮、2 mm 竖向/水平轨道起伏、0.2 mm 车轮柔性的世界，校验物理装配。
 8. 准备并渲染独立标靶，拟合当前演示的镜头/暗场/平场标定，核对光学身份，再由 `demo_bundle` 导出全部运行依赖并改成相对引用。
 
-这些步骤的具体参数可查 [build_demo_from_sources.py](../tools/build_demo_from_sources.py)；逐模块命令见 [历史逐模块生成记录](history/STAGE_B_SNAPSHOT_2026-10-03.md#4-重新生成资产)。首次部署使用本页入口，它处理了历史裂缝目录中的原机器绝对路径，并避免演示生成器的默认旧资产输入。
+这些步骤的具体参数可查 [build_demo_from_sources.py](../../tools/build_demo_from_sources.py)；逐模块命令见 [历史逐模块生成记录](STAGE_B_SNAPSHOT_2026-10-03.md#4-重新生成资产)。首次部署使用本页入口，它处理了历史裂缝目录中的原机器绝对路径，并避免演示生成器的默认旧资产输入。
 
 ## 3. 输出与验证边界
 
@@ -91,4 +93,15 @@ local_data/stage_b/contact_demo_buffered/
 
 文件放在 WSL 的 Linux 文件系统。下载、原图解码和二进制资产采用顺序大块 I/O；阶段日志集中写入一个文件，不生成逐像素或逐行小文件。GUI 预览仍有有限数量的网格/图片，不能据此宣称生成阶段完全没有小文件。
 
-生成链的 2026-10-02 本机验证与清理范围见 [历史快照](history/ASSETS_SNAPSHOT_2026-10-05.md)；该记录不替代本次生成包的短程采集检查。
+## 4. 本轮验证（2026-10-02，WSL）
+
+使用 `build_demo_from_sources.py --runtime wsl` 从已核对的官方下载原图重建全部派生资产，输出为 `local_data/stage_b/readme_source_demo_20261002`。工作目录为 `local_data/stage_b/readme_source_build_20261002`，不读取既有演示、旧网格或旧标定；默认演示未替换。
+
+- 三个官方下载地址的 HTTP 检查成功，五张原图的固定 SHA-256 校验通过；本轮复用了完整原图缓存，没有再次下载全部 652 MB。
+- 全部生成步骤、独立标靶渲染与标定完成；344 个包内文件哈希通过，文件总计 1,854,385,366 字节（约 1.73 GiB）。
+- 41 处 JSON 运行依赖及全部世界资源引用均为相对路径，并且指向新包内部；物理世界与采集配置、标定光学身份一致，衬面漏光边为 0。
+- 下载器的实际 curl/ZIP 流程使用本地测试文件验证了按需解压、完整缓存离线复用、损坏内容拒绝及临时文件清理；Python 测试合计 291 项通过。
+
+上述为生成流程验证，不是新包的 GUI、原始采集或 D3 接缝验收，也不是另一台原生 Linux 主机的部署结果。
+
+这次验证的 `readme_source_build_20261002` 和 `readme_source_demo_20261002` 已在后续数据清理中删除。报告、配置、标定和包内哈希清单保存在本地清理归档；公开原图和现行默认演示仍保留。重新验证需用新目录运行生成命令，详见 [数据保留与清理](../DATA_RETENTION.md)。

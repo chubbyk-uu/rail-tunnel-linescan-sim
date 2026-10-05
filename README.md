@@ -1,171 +1,83 @@
 # 地铁隧道轨道巡检机器人仿真
 
-轨道车沿钢轨前进，线阵相机与 COB 光源共同旋转，编码器逐行触发，形成连续螺旋扫描。Gazebo 负责轮轨接触与运动，OptiX 负责高速成像，ROS 2 / RViz 提供任务控制；采后通过标定、展开、特征匹配和全局优化复原隧道内壁。
+约 120 kg 轨道车沿钢轨行驶，4096 像素线阵相机与 COB 条光一起连续旋转，编码器逐行触发形成螺旋扫描。Gazebo 模拟轮轨接触，OptiX 加速成像，ROS 2 / RViz 提供任务控制；采后经标定、展开、特征匹配和全局优化复原隧道内壁全图。
 
-20米综合场景已完成采集、CUDA 展开、匹配、连续轨迹优化与公开图像估计的板缝深度补偿。最新未调参轨道种子的窗口内／间接缝 P95 为 **0.515／0.587 px**，完整 **57.596亿像素**优化图零覆盖缺口；Gazebo 与 RViz 同时开启时，成像实时率约 **0.990**。拼接不读取仿真真值；融合可选、默认关闭。整图形状、裂缝检查及证据范围见 [20米里程碑](docs/MILESTONE_20M.md)，后续最多扩展到 **50米**。
+**20 米综合误差里程碑已完成**：轮径偏差、扫描轴偏移与双轴倾斜、轨道起伏和假设噪声同时开启；未调参新轨道种子的窗口内/间接缝 P95 为 **0.515/0.587 px**。完整优化图 **57.596 亿像素、零覆盖空洞**，Gazebo 与 RViz 同开时成像实时率约 **0.990**。P95 通过不保证每点≤1 px，完整覆盖也不是逐像素精度证明。范围和证据见 [20米里程碑](docs/MILESTONE_20M.md)；50 米尚未建模/验收。
 
 ## 运行效果
 
-### Gazebo：轮轨接触与旋转扫描
+### Gazebo：轨道车与旋转扫描
 
-![Gazebo 扫描](docs/media/gazebo_scan.gif)
+![Gazebo 旋转扫描](docs/media/gazebo_scan.gif)
 
 [高清静态图](docs/media/gazebo.png)
 
 ### RViz：任务控制与原图预览
 
-![RViz 采集](docs/media/rviz_capture.gif)
+![RViz 采集与控制](docs/media/rviz_capture.gif)
 
 [高清静态图](docs/media/rviz.png)
 
-动图来自实际任务的视频录制，展示历史界面和机构运动；当前增益已改为用户确认的 2.4 并重新标定，旧动图不作为新画质或性能证据。来源见 [媒体说明](docs/media/README.md)。
+动图由真实任务的视频生成，展示历史界面与机构运动；它们采用旧光照配置，不作为当前增益 2.4 的画质或性能证据。[媒体来源与哈希](docs/media/README.md)。
 
-## 原始倾斜条带与重建结果
+## 原始倾斜条带与优化结果
 
-![原始螺旋条带与重建结果，含板缝和裂缝局部](docs/media/reconstruction_comparison.png)
+![原始螺旋条带与优化全图，含板缝和裂缝局部](docs/media/reconstruction_comparison.png)
 
-来自冻结代码 `03cde91` 后的新种子 20270119、[0,20]米综合采集：81/80毫米轮径、扫描轴偏移与双轴倾斜、轨道起伏及假设噪声同时启用，增益2.4。展示取8–11米顶部约60°和公开图像选出的板缝、裂缝原尺度局部；不是另一次3米盲验。左侧固定摆放原始条带，**不补偿螺旋位移、畸变或平场**；右侧包含采后校正、展开、匹配、全局优化和共享深度。固定 DN 0–255，无融合、锐化或自动对比度。
+取自最新完整 20 米综合采集的 **8–11 米**顶部概览，以及公开图像选出的板缝/裂缝原尺度局部，不是另一次 3 米验收。左侧摆放原始条带，**不补偿螺旋、畸变或平场**；右侧完成采后处理与优化，无融合、锐化或自动对比度。局部按公开拟合轨迹定位同一结构，裁切原点不同，不用真值对齐。
 
-螺旋倾斜主要由展开消除，D3 的定量基线是名义展开。这批完整20米窗口内／间 P95 为 **74.657／74.447 →0.515／0.587 px**，不表示每点都 ≤1 px。局部图按公开拟合轨迹定位同一结构，两侧裁切原点不同，不用裁切后的中心位置评价精度。来源见 [媒体说明](docs/media/README.md#20米里程碑对比2026-10-05)。
+去除螺旋倾斜主要来自展开；优化的定量基线是名义展开。这批窗口内/间 P95 为 **74.657/74.447 → 0.515/0.587 px**。环缝形状、整图漂移和长细裂缝另有 [专项诊断](docs/MILESTONE_20M_DIAGNOSTICS.md)，照片强度宽度不能当作真实裂缝宽度。
 
-## 当前参数
+## 场景与误差
 
-| 项目 | 设置 |
+| 项目 | 当前设置 |
 |---|---|
-| 隧道 | 有效 20 m、半径 2.75 m，两端各含 2.5 m 缓冲 |
-| 轨道车 | 约 120 kg；前轮驱动、后轮从动，双 80 mm 测量轮编码器 |
-| 相机 / 镜头 | Mono8、4096 像素、90 mm，0.6% 仿真畸变 |
-| 运动 / 触发 | 0.2 m/s，估计里程 0.6 m/圈；名义约 28.444 kHz |
-| 扫描范围 | 采集 250°，输出上方 240°，每侧 5° 保护区 |
-| 壁面 | Concrete034 背景、砂浆板缝、0.2–0.6 mm 裂缝 |
-| 误差与噪声 | 默认有轨道起伏；轮径＋偏移＋双轴倾斜＋噪声的综合 3 m、20 m 新采已通过，50 m 待验收；噪声默认关闭 |
+| 隧道与输出 | 半径 2.75 m，有效 20 m；两端各 2.5 m 缓冲；上方 240° |
+| 相机与扫描 | Mono8、4096 像素、90 mm；初始朝下，采集 250° |
+| 运动与触发 | 名义 0.2 m/s，**编码器估计** 0.6 m/圈；2500 PPR、AB 四边沿、×128÷15，约 28.444 kHz |
+| 光学与壁面 | 增益 2.4、8 µs、0.6% 假设畸变；Concrete034、砂浆板缝、细裂缝 |
+| 默认演示 | 80/80 mm 测量轮、名义装配、2 mm 档轨道起伏；噪声关闭 |
+| 20 m 综合验收 | 实际/标定轮径 81/80 mm；轴横向 +20 mm、竖向 −20 mm；绕 y +1 mrad、绕 z −1 mrad；轨道起伏、噪声开启 |
 
-真实轮径和标定轮径分开配置，默认均为80毫米；扫描和停车跟随估计里程。轮径试验见 [WHEEL_ERROR](docs/WHEEL_ERROR.md)，固定装配见 [MOUNT_ERROR](docs/MOUNT_ERROR.md)。最新综合场景新增一个由公开图像拟合的固定轴方向参数，位姿阶段约102秒；[D3提速](docs/D3_PERFORMANCE.md) 保留原有 CUDA 加速。当前20米里程碑已收尾，下一步先做50米容量预算和分段方案，见 [计划](docs/ROADMAP.md)。暂不加 IMU。
+轮径影响真实距离、真实螺距和停车点；固定装配误差与接触产生的动态横滚/俯仰分别建模。暂不加 IMU。重建仅使用原图、公开编码器/门控、名义配置和标靶估计结果，**不读取仿真位姿、真实轮径或安装真值**。误差参数、生成与运行命令见 [ERROR_SCENARIOS](docs/ERROR_SCENARIOS.md)。融合可选、默认关闭。
 
-## 安装：WSL 与原生 Linux 分开选择
+## 安装与快速运行
 
-公共依赖为 Ubuntu 24.04、ROS 2 Jazzy、Gazebo Harmonic、CUDA Toolkit 12.8、OptiX SDK 9.1.0 和系统 Python 3.12。完整验收来自 WSL / RTX 5080；原生 Linux 整套验收尚未完成。
+公共环境：Ubuntu 24.04、ROS 2 Jazzy、Gazebo Harmonic、CUDA Toolkit 12.8、OptiX SDK 9.1.0、系统 Python 3.12。
 
-| 环境 | 安装及启动路径 |
+| 系统 | 部署入口 |
 |---|---|
-| WSL2 / WSLg | Windows NVIDIA 驱动、CUDA Toolkit、隔离 OptiX 组件和私有 Mesa；不要在 WSL 安装 Linux 显卡驱动。见 [WSL 部署](docs/DEPLOYMENT.md#路线一wsl2--wslg) |
-| 原生 Ubuntu | 系统 NVIDIA / OpenGL / OptiX 运行库，不加载 WSL 组件；见 [原生部署](docs/DEPLOYMENT.md#路线二原生-ubuntu-linux) 和 [原生启动](docs/DEPLOYMENT.md#原生-linux-启动) |
+| WSL2 / WSLg | [WSL 安装](docs/deployment/WSL.md)：Windows NVIDIA 驱动、隔离 OptiX、私有 Mesa；数据放 Linux 文件系统 |
+| 原生 Ubuntu | [Linux 安装与启动](docs/deployment/LINUX.md)：系统 NVIDIA/OpenGL/OptiX；不加载 WSL 组件 |
 
-先按 [公共依赖安装](docs/DEPLOYMENT.md#两种环境共用ros依赖和源码) 完成软件源、系统包及 SDK，再克隆构建：
-
-```bash
-mkdir -p ~/robot_ws
-cd ~/robot_ws
-git clone https://github.com/chubbyk-uu/rail-tunnel-linescan-sim.git Subway_scan_bot_sim
-cd Subway_scan_bot_sim
-source /opt/ros/jazzy/setup.bash
-export COLCON_DEFAULTS_FILE="$PWD/colcon_defaults.yaml"
-colcon build > /tmp/ssb_build.log 2>&1
-source install/setup.bash
-```
-
-后续命令在仓库根目录执行。修改源码或更新 Git 提交后，采集前重建，包括文档提交。按环境选择实际射线后端自检：
+完整验收来自 WSL / RTX 5080；原生 Linux 尚未在另一台主机完成全套验收。先按 [公共部署](docs/DEPLOYMENT.md) 安装依赖、克隆、构建并通过真实射线自检，再从网站生成资产。
 
 ```bash
-# WSL
-bash tools/with_optix_runtime.sh install/ssb_core/lib/ssb_core/ssb_selfcheck \
-  src/ssb_core/config/stage_a.yaml > /tmp/ssb_selfcheck.log 2>&1
-# 原生 Linux：直接运行系统后端，不加载 WSL 包装器。
-install/ssb_core/lib/ssb_core/ssb_selfcheck \
-  src/ssb_core/config/stage_a.yaml > /tmp/ssb_selfcheck.log 2>&1
-```
-
-仅运行对应的一条。其他 SDK 路径、WSL 运行库和 Mesa 的获取、自检失败处理见 [完整部署文档](docs/DEPLOYMENT.md)。WSL 数据放 `/home` 等 Linux 文件系统，避免在 `/mnt/c` 高频读写。
-
-## 从网站下载并生成演示资产
-
-不需要从旧机器拷贝。主背景来自 [Concrete034](https://ambientcg.com/view?id=Concrete034)，低频变化与砂浆来源见 [官方下载规格](docs/ASSETS.md#1-公开素材与下载规格)。下载器支持当前终端的代理配置，校验文件哈希；默认下载约 652 MB。
-
-```bash
+# 仓库根目录，已 source ROS 和 install/setup.bash；下载支持终端代理配置。
 python3 tools/download_demo_sources.py --output local_data/stage_b/sources \
   > /tmp/ssb_download.log 2>&1
-# WSL：work/output 必须是新的目录。
 python3 tools/build_demo_from_sources.py --runtime wsl \
-  --sources local_data/stage_b/sources \
-  --work local_data/stage_b/build_NEW \
+  --sources local_data/stage_b/sources --work local_data/stage_b/build_NEW \
   --output local_data/stage_b/contact_demo_buffered > /tmp/ssb_assets.log 2>&1
-```
 
-生成内容含隧道、材质、裂缝、轨道车、世界、独立标靶及图像标定。原生 Linux 将 `--runtime wsl` 改为 `--runtime native`，该路线尚未在独立主机完整验收。网站手动下载、输出结构和生成边界见 [ASSETS](docs/ASSETS.md)。生成成功后仍需短程采集验证。
-
-## 快速采集
-
-### WSL：Gazebo + RViz
-
-```bash
+# WSL：Gazebo + RViz，点击 Start 才开始任务。
 tools/run_mission.sh --gz-gui > /tmp/ssb_mission.log 2>&1
 ```
 
-在 RViz 面板选择 **Wall coverage**，设置起点和壁面长度，点击 **Start**；支持暂停、继续和停止。最短任务 1 m。设置任务后车辆初始化到规划起点，壁面模式会自动增加前后超扫。**Vehicle travel** 是车体行程模式，不是当前正式重建入口。采集只保存原始图像，预览不做畸变或平场补偿。
+首次部署从 [Concrete034](https://ambientcg.com/view?id=Concrete034) 等公开网站下载原图并本机生成，不需要拷贝旧机器资产。手动下载规格与原生生成选项见 [ASSETS](docs/ASSETS.md)。输出目录须为新目录；提交或源码更新后采集前完整构建，包括文档提交。
 
-### WSL：无界面壁面任务
+RViz 用 **Wall coverage** 指定壁面起点/长度，最短 1 米，支持 Start/Pause/Resume/Stop；车辆初始化到派生的超扫起点。**Vehicle travel** 仅指定车体估计行程，不能当作同长度完整壁面。采集保存原图，畸变与平场留到拼接前处理。无界面采集、重建及浏览命令见 [快速运行](docs/QUICKSTART.md)；综合误差使用专门的资产与冻结参数。
 
-```bash
-bash tools/run_wall_capture.sh sessions/wall_NEW 12 3 \
-  > /tmp/ssb_capture.log 2>&1
-```
+## 文档与验证
 
-目标为壁面 `[12,15] m`，会话和派生输入目录必须是新的。只开 Gazebo 可用 `tools/run_gz_gui.sh`。**这些启动器默认面向 WSL**；原生 Linux 请使用 [独立启动步骤](docs/DEPLOYMENT.md#原生-linux-启动)，不要直接套用 WSL 包装器。
-
-## 重建与看图
-
-使用该会话光学条件对应的标定，输出目录均须是新的。下面从原始行完成采后校正、展开和公开输入匹配优化：
-
-```bash
-python3 -m ssb_tools.initial_unroll --session sessions/wall_NEW \
-  --calibration local_data/stage_b/contact_demo_buffered/calibration.json \
-  --backend cuda --output sessions/d1_NEW > /tmp/ssb_d1.log 2>&1
-python3 -m ssb_tools.public_reconstruction \
-  --unroll sessions/d1_NEW \
-  --observable sessions/wall_NEW/config/observable_config.json \
-  --root sessions/reconstruction_NEW --surface-relief --strict > /tmp/ssb_reconstruction.log 2>&1
-python3 -m ssb_tools.feature_review \
-  --unroll sessions/d1_NEW --trajectory sessions/reconstruction_NEW/fit \
-  --observable sessions/wall_NEW/config/observable_config.json \
-  --output sessions/review_NEW > /tmp/ssb_review.log 2>&1
-python3 -m http.server 8765 --bind 0.0.0.0 --directory sessions/review_NEW
-```
-
-打开 `http://localhost:8765/review.html`；WSL 转发不可用时改用 `hostname -I` 的地址。页面保留原始条带、名义展开和优化三种状态，以及板缝/裂缝局部。详细参数、搬家后的原图定位、全分辨率输出与资源见 [重建文档](docs/STAGE_D.md)。
-
-D1 默认产物约 25 MB / 3 m、137 MB / 20 m，仍依赖原图；不要因此删除采集块。3 m 名义/优化全图另需约 4.8 GiB。正式默认输出为优化后未融合图；[接缝融合](docs/SEAM_FUSION.md) 可选、默认关闭，需要时单独运行。不补洞；真值只进入生成与 `evaluation/`，RViz 显示姿态不作为拼接输入。
-
-## 验收、测试与排障
-
-正式冻结采集、独立重成像、协议核验（v6 为 15 项，含共享深度的 v7 为 16 项）和网格评价见 [EVALUATION](docs/EVALUATION.md)。阶段 B 报告禁止覆盖，复查用 `--read-only` 或新报告路径；已去重副本的比对不是新的独立验证。
-
-```bash
-python3 tools/run_tests.py > /tmp/ssb_test.log 2>&1
-colcon test-result --all
-```
-
-当前完整回归 **723 项通过，无失败/跳过**，其中 Python 639 项；实际采集、故障注入与独立评价另行执行，结果见验收文档。生产 D2/评价默认最多 8 个可用 CPU，测试入口默认 4 个工作进程。原生 GPU 测试边界见部署文档。
-
-| 现象 | 检查 |
+| 入口 | 内容 |
 |---|---|
-| 资产缺失 / 哈希不匹配 | 按 ASSETS 下载和生成成套包，不随意删依赖 |
-| OptiX 或 GUI 启动失败 | 检查对应平台运行库、WSL Mesa 和实际射线自检 |
-| 构建 / 标定身份不匹配 | 重建，加载当前 install；配置与标定必须成套 |
-| RViz 纹理不够清楚 | 它是轻量预览，画质看原尺度采集图 |
-| 收尾仍在排空 | 等完成状态并看日志，这不代表车辆继续行驶 |
+| [文档索引](docs/README.md) / [设计规范](DESIGN.md) | 当前规范、分章设计与各阶段操作 |
+| [里程碑](docs/MILESTONE_20M.md) / [验收协议](docs/EVALUATION.md) | 当前结果、取点、真值隔离与证据边界 |
+| [误差场景](docs/ERROR_SCENARIOS.md) / [性能](docs/D3_PERFORMANCE.md) | 误差如何加入、如何复现和阶段耗时 |
+| [后续计划](docs/ROADMAP.md) / [数据保留](docs/DATA_RETENTION.md) | 50 米前的容量方案、保留与安全清理 |
+| [开发守则](docs/DEVELOPMENT_RULES.md) / [历史归档](docs/history/README.md) | 构建溯源、WSL I/O 与旧失败/旧结果 |
 
-## 文档导航
+2026-10-05 里程碑回归为 **990 项通过**（906 Python、84 C++），零失败/跳过；这是已保存的测试记录，不保证未来版本的数量不变。运行 `python3 tools/run_tests.py > /tmp/ssb_test.log 2>&1`，结果查看 `colcon test-result --all`。采集、独立重成像和几何验收另行执行。
 
-| 文档 | 内容 |
-|---|---|
-| [DESIGN](DESIGN.md) | 统一设计规范、几何、时序与可观测性 |
-| [DEPLOYMENT](docs/DEPLOYMENT.md) / [ASSETS](docs/ASSETS.md) | 环境安装、从官网下载并生成资产 |
-| [STAGE_B](docs/STAGE_B.md) / [STAGE_C](docs/STAGE_C.md) | 场景操作、名义壁面任务与历史 20 m 采集记录 |
-| [STAGE_D](docs/STAGE_D.md) / [EVALUATION](docs/EVALUATION.md) | 现行重建流程、验收协议与证据 |
-| [WHEEL_ERROR](docs/WHEEL_ERROR.md) | 编码器里程停车与三档轮径误差试验 |
-| [ROADMAP](docs/ROADMAP.md) | 停车、轮径、扫描轴误差、融合及 50 m 扩展 |
-| [SENSOR_NOISE](docs/SENSOR_NOISE.md) | 可选噪声模型，参数为仿真假设 |
-| [DEVELOPMENT_RULES](docs/DEVELOPMENT_RULES.md) | 开发、真值隔离与 WSL I/O 约束 |
-| [DATA_RETENTION](docs/DATA_RETENTION.md) / [历史资料](docs/history/README.md) | 当前保留范围、清理和开发归档 |
-
-`src/ssb_core` 为时序/成像/存储，`ssb_gazebo` 为动力学与 GUI，`ssb_rviz` 为任务面板，`ssb_tools` 为生成、标定和重建。资产、会话、构建及日志目录不进 Git。
+`src/ssb_core` 负责时序/成像/存储，`ssb_gazebo` 负责动力学与 GUI，`ssb_rviz` 负责面板，`ssb_tools` 负责生成、标定和重建。资产、原始会话、构建和日志不进 Git。
