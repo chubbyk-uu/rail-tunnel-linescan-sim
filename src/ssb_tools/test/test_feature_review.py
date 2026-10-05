@@ -140,3 +140,26 @@ def test_feature_search_closes_cuda_on_success_and_exception(monkeypatch, fail):
     else:
         search()
     assert len(closed) == 1
+
+
+@pytest.mark.parametrize('shift',[(0.,0.),(.02,.01)])
+def test_feature_crops_locate_same_native_mark_after_public_trajectory_shift(monkeypatch,shift):
+    from types import SimpleNamespace
+    import ssb_tools.feature_review as module
+    sampler=helix_fixture()
+    shift=np.asarray(shift)
+    model=SimpleNamespace(radius=1.,relief=None,
+        forward=lambda band,x,q,c:(np.stack((x,q),axis=-1)+shift,np.ones(np.shape(x),bool)))
+    def corrected(model,c,band,qs,xs):
+        return sampler.sample(band,qs-shift[1],xs-shift[0])
+    monkeypatch.setattr(module,'sample_corrected',corrected)
+    window=dict(shape=[81,201],x_first_m=-.05,q_first_m=-.4,bands=[0,0])
+    item=dict(window=window,centre_px=[100,40],x_m=.05,q_m=0.)
+    images,record=module.feature_crop(sampler,model,np.zeros(1),dict(dx_m=.001,dq_m=.01),item,sampler.offsets)
+    np.testing.assert_allclose(images[1],images[2],atol=1e-8,equal_nan=True)
+    np.testing.assert_allclose(record['display_translation_m'],shift)
+    assert record['optimized_x_first_m']-record['x_first_m']==pytest.approx(shift[0])
+    assert record['optimized_q_first_m']-record['q_first_m']==pytest.approx(shift[1])
+    # Original pixels still show actual within-band slant; crop alignment must
+    # never turn the raw side into a motion-compensated image.
+    assert np.ptp(np.nanargmin(images[0],axis=1))>60

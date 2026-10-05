@@ -188,6 +188,26 @@ def feature_crop(sampler, model, coefficients, grid, item, nominal_offsets):
     begin = int(np.clip(cx-half, 0, width-2*half))
     xs = window['x_first_m']+np.arange(begin, begin+2*half)*grid['dx_m']
     qs = window['q_first_m']+np.arange(height)*grid['dq_m']
+    # The detector works in nominal coordinates. Locate that same observation
+    # in the fitted coordinate system instead of cropping unrelated content at
+    # the old coordinates. This only translates the display rectangle.
+    band = window['bands'][0]
+    nominal_centre = np.array([item['x_m'], item['q_m']])
+    centre, supported = model.forward(band, nominal_centre[None, 0],
+                                      nominal_centre[None, 1], coefficients)
+    if getattr(model, 'relief', None) is not None:
+        for _ in range(10):
+            depth = model.relief.depth(centre[:, 0], centre[:, 1])
+            next_centre, supported = model.forward(band, nominal_centre[None, 0],
+                nominal_centre[None, 1], coefficients, radial_depth=depth)
+            change = np.max(abs(next_centre-centre))
+            centre = next_centre
+            if change < 1e-9:
+                break
+    if not np.asarray(supported).all() or not np.isfinite(centre).all():
+        raise ValueError('image-selected feature lacks fitted display support')
+    shift = centre[0]-nominal_centre
+    optimized_xs, optimized_qs = xs+shift[0], qs+shift[1]
     raw = np.full((height, len(xs)), np.nan, np.float32)
     anchors = []
     for band, columns in zip(window['bands'], (slice(0, half), slice(half, None))):
@@ -203,7 +223,7 @@ def feature_crop(sampler, model, coefficients, grid, item, nominal_offsets):
             rows = slice(start, start+16)
             for band, columns in zip(window['bands'], (slice(0, half), slice(half, None))):
                 if corrected:
-                    result = sample_corrected(model, coefficients, band, qs[rows], xs[columns])[0]
+                    result = sample_corrected(model, coefficients, band, optimized_qs[rows], optimized_xs[columns])[0]
                 else:
                     result = sampler.sample(band, qs[rows]/model.radius, xs[columns])[0]
                 image[rows, columns] = result
@@ -211,6 +231,9 @@ def feature_crop(sampler, model, coefficients, grid, item, nominal_offsets):
         pairs.append(image)
     return pairs, dict(shape=[height, len(xs)], seam_column=half,
                        bands=window['bands'], x_first_m=float(xs[0]), q_first_m=float(qs[0]),
+                       optimized_x_first_m=float(optimized_xs[0]), optimized_q_first_m=float(optimized_qs[0]),
+                       display_translation_m=shift.tolist(),
+                       display_alignment='same public native observation, image-fitted trajectory; independent crop origins only',
                        grid_pitch_m=[grid['dx_m'], grid['dq_m']],
                        presentation_order=['raw', 'nominal', 'optimized'], raw_anchors=anchors,
                        invalid_pixels=[int(np.count_nonzero(~np.isfinite(p))) for p in pairs])
@@ -288,7 +311,7 @@ def run(unroll, trajectory, observable, output, raw_root=None, target_x=None):
             page.append(f'<figure><figcaption>{label}</figcaption><a href="{file}"><img src="{file}"></a></figure>')
         page.append('</div><details><summary>中间状态：编码器名义展开（精度比较基线）</summary><img style="width:100%" src="geometry/nominal.png"></details><h2 id="raw-band">单圈原始图：圈内前进造成的倾斜</h2>')
         page.append(f'<p>条带 {band}，原始 {width} 列 × {end-first} 曝光行；这一采集段编码器前进 {references[band]["observed_travel_m"]:.3f} m。横轴为曝光顺序，纵轴为传感器列；只转置并每隔 {raw_stride} 个像素抽样，不做图像变形。竖直板缝在此视图中呈斜线。</p><a href="raw_band.png"><img style="width:100%;height:auto" src="raw_band.png"></a>')
-        page.append('<h2 id="features">板缝 / 裂缝形态附近的硬接缝</h2><p>位置仅从公开图像的细长暗结构选取，未读取裂缝编号、场景坐标或真值。形态标签不是独立缺陷鉴定；这些图用于看连续性，不另报挑选区域的验收分数。接缝在每张图正中，左右分别取相邻圈。</p>')
+        page.append('<h2 id="features">板缝 / 裂缝形态附近的硬接缝</h2><p>位置仅从公开图像的细长暗结构选取，未读取裂缝编号、场景坐标或真值。局部右图按拟合轨迹定位同一原始观测，仅平移裁切框，不修改图像、旋转或拉直左图。两侧局部坐标原点不同，不能用裁切后的中心位置评价几何精度。形态标签不是独立缺陷鉴定；这些图用于看连续性，不另报挑选区域的验收分数。接缝在每张图正中，左右分别取相邻圈。</p>')
         for crop in crops:
             identifier = crop['id']
             item = crop['candidate']
