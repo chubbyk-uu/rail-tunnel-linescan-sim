@@ -129,6 +129,31 @@ def test_rejected_plan_preserves_completed_display(config, tmp_path, mode, start
     assert not fake.data_root.exists()
 
 
+@pytest.mark.parametrize('enabled', [False, True])
+def test_manager_wall_preflight_and_generation_use_identical_scale_support(tmp_path, monkeypatch, enabled):
+    pytest.importorskip('rclpy')
+    import threading
+    from types import SimpleNamespace
+    import ssb_tools.mission_manager as manager
+    demo = tmp_path/'demo'; demo.mkdir()
+    (demo/'calibration.json').write_text('{}')
+    calls = []
+    def preflight(*args, **kwargs):
+        calls.append(('preflight', kwargs['relative_encoder_scale']))
+    def generation(*args, **kwargs):
+        calls.append(('generation', kwargs['relative_encoder_scale']))
+        raise RuntimeError('stop after checking the generation policy')
+    monkeypatch.setattr(manager, 'wall_plan', preflight)
+    monkeypatch.setattr(manager, 'prepare', generation)
+    monkeypatch.setattr(manager, 'initial_state', lambda *args: {})
+    fake = SimpleNamespace(state='complete', lock=threading.RLock(), demo=demo,
+        config={'robot': {'base_reference_z_m': .3}}, data_root=tmp_path/'data',
+        args=SimpleNamespace(relative_encoder_scale=enabled))
+    with pytest.raises(RuntimeError, match='generation policy'):
+        manager.MissionManager.launch(fake, {'mode':'wall', 'start_m':0., 'distance_m':20.})
+    assert calls == [('preflight', enabled), ('generation', enabled)]
+
+
 def test_preview_head_follows_body_attitude_and_negative_scan_axis(tmp_path):
     pytest.importorskip('geometry_msgs')
     world = tmp_path/'world.sdf'

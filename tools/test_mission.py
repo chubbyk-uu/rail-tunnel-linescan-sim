@@ -32,6 +32,8 @@ def main():
     p.add_argument('--viewers', choices=('none', 'gz', 'rviz', 'both'), default='both')
     p.add_argument('--demo', type=Path, default=Path('local_data/stage_b/contact_demo_buffered'),
                    help='complete capture bundle, including its own world, optics and calibration')
+    p.add_argument('--relative-encoder-scale', action='store_true',
+                   help='plan the same bounded scale-support margins as the reconstruction protocol')
     a = p.parse_args(); output = a.output.resolve()
     demo = a.demo.resolve()
     for name in ('capture.yaml', 'gui.config', 'calibration.json'):
@@ -52,8 +54,11 @@ def main():
     def stop(proc):
         if proc.poll() is None: os.killpg(proc.pid, signal.SIGINT)
         proc.wait(timeout=180)
-    manager = spawn('manager', ['python3', '-m', 'ssb_tools.mission_manager',
-                               '--demo', str(demo), '--output-root', str(output/'sessions')])
+    manager_command = ['python3', '-m', 'ssb_tools.mission_manager',
+                       '--demo', str(demo), '--output-root', str(output/'sessions')]
+    if a.relative_encoder_scale:
+        manager_command.append('--relative-encoder-scale')
+    manager = spawn('manager', manager_command)
     rclpy.init(); node = rclpy.create_node('ssb_mission_test')
     latest = {}; history = []; peak = [0]; resources = []; sampled_at = [0.]
     monitor_started = time.monotonic()

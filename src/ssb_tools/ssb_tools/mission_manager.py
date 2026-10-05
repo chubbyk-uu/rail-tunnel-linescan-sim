@@ -198,6 +198,7 @@ class MissionManager(Node):
         if mode not in ('travel', 'wall'): raise ValueError('Unknown task mode')
         token = time.strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
         inputs = self.data_root/'mission_runs'/token
+        relative_scale = getattr(getattr(self, 'args', None), 'relative_encoder_scale', False)
         def begin_attempt():
             # Only an accepted plan or an unexpected preparation error owns a
             # new attempt. A rejected command leaves the last displayed result.
@@ -213,7 +214,8 @@ class MissionManager(Node):
                     [start, 0., self.config['robot']['base_reference_z_m'], 0., 0., 0., 1.])
         try:
             if mode == 'wall':
-                wall_plan(self.config, start, distance, json.loads((self.demo/'calibration.json').read_text()))
+                wall_plan(self.config, start, distance, json.loads((self.demo/'calibration.json').read_text()),
+                          relative_encoder_scale=relative_scale)
             else:
                 plan(self.config, start, distance)  # Reject before creating any files/processes.
         except (ValueError, KeyError):
@@ -223,7 +225,8 @@ class MissionManager(Node):
             begin_attempt()
             raise
         begin_attempt()
-        config, task = prepare(self.demo, inputs, start, distance, mode=mode)
+        config, task = prepare(self.demo, inputs, start, distance, mode=mode,
+                               relative_encoder_scale=relative_scale)
         check_calibration(inputs/'capture.yaml', self.demo/'calibration.json')
         from .physical_world import check as physical_check, spec_for
         physical = (physical_check(config, spec_for(inputs/'capture.yaml'), inputs/'world.sdf')
@@ -455,6 +458,8 @@ def main():
     p.add_argument('--data-root', default='local_data', help='writable assets/cache/lock root; Linux filesystem preferred')
     p.add_argument('--gz-gui', action='store_true')
     p.add_argument('--dynamics-only', action='store_true', help='test mode, NO image acquisition')
+    p.add_argument('--relative-encoder-scale', action='store_true',
+                   help='wall-task support margin for bounded image-derived encoder scale correction')
     p.add_argument('--status-timeout-s', type=positive_timeout, default=10.,
                    help='maximum wall-clock age of Gazebo telemetry while running or paused')
     p.add_argument('--drain-timeout-s', type=positive_timeout, default=180.,
