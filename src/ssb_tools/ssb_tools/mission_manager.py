@@ -56,7 +56,7 @@ def merge_capture(previous, incoming):
     if sequence >= old_sequence:
         merged.update(incoming)
         # A snapshot can observe updated rows before the work counter advances.
-        phases = ('capturing', 'draining', 'syncing', 'joining', 'finalizing', 'complete')
+        phases = ('capturing', 'draining', 'syncing', 'joining', 'finalizing', 'complete', 'failed')
         old_phase, new_phase = previous.get('phase'), incoming.get('phase')
         if sequence == old_sequence and old_phase in phases and new_phase in phases:
             if phases.index(old_phase) > phases.index(new_phase): merged['phase'] = old_phase

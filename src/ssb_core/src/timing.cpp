@@ -69,7 +69,10 @@ void TimingEngine::Push(const PoseSample& s, TimingOutput& out) {
   if(config_.contact_enabled){
     const Hermite right{last_.t,s.t,last_.right_wheel,s.right_wheel,last_.right_wheel_omega,s.right_wheel_omega};
     std::vector<Crossing> edges;right_odo_abs_=FindCrossings(right,0.,odo_spacing_,right_odo_abs_,edges);
-    for(auto& e:edges)out.right_odo_edges.push_back({e.t,e.index-right_odo_initial_,e.dir});
+    for (auto& e : edges) {
+      out.right_odo_edges.push_back({e.t, e.index - right_odo_initial_, e.dir});
+      ++stats_.right_odo_edges;
+    }
   }
   gate_start_idx_ = FindCrossings(theta, gate_start_offset_, kTwoPi, gate_start_idx_, starts);
   gate_end_idx_ = FindCrossings(theta, gate_end_offset_, kTwoPi, gate_end_idx_, ends);

@@ -279,6 +279,8 @@ TEST(Timing, BodyAndIndependentRearEncodersInterpolateThroughYawWrap) {
     right+=out.right_odo_edges.size();left+=out.odo_edges.size();out.Clear();
   }
   EXPECT_GT(rows,100);EXPECT_GT(right,100);EXPECT_NEAR(double(left),2.*right,2);
+  EXPECT_EQ(engine.Stats().right_odo_edges, static_cast<int64_t>(right));
+  EXPECT_EQ(engine.Stats().odo_edges, static_cast<int64_t>(left));
 }
 
 TEST(Config, AssemblyHeightsAreRequiredInsteadOfGuessed) {

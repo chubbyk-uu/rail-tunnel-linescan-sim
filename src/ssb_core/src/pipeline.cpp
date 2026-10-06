@@ -7,6 +7,7 @@
 #include <cstring>
 #include <deque>
 #include <exception>
+#include <fstream>
 #include <mutex>
 #include <thread>
 
@@ -63,6 +64,8 @@ struct Pipeline::Impl {
   // Completed work only: idle heartbeats must not keep a stuck drain alive.
   std::atomic<uint64_t> activity_sequence{0};
   std::atomic<bool> write_done{false}, finalizing{false}, complete{false};
+  // Set when Wait ends without a complete session (producer error or commit failure).
+  std::atomic<bool> ended_failed{false};
   Clock::time_point start_wall, finish_called_wall;
   double pushed_at_finish = 0, written_at_finish = 0;
   bool finish_called = false;
@@ -197,7 +200,8 @@ nlohmann::json Pipeline::Progress() const {
           {"sim_time_pushed", s.latest_pushed.load()},
           {"sim_time_written", s.latest_written_center.load()},
           {"activity_sequence", s.activity_sequence.load()},
-          {"phase", s.complete ? "complete" : s.finalizing ? "finalizing" :
+          {"phase", s.complete ? "complete" : s.ended_failed || s.failed ? "failed" :
+                    s.finalizing ? "finalizing" :
                     s.write_done ? "joining" : s.render_done ? "syncing" :
                     s.input_finished ? "draining" : "capturing"},
           {"failed", s.failed || !s.producer_error.empty()}};
@@ -297,6 +301,7 @@ void Pipeline::Impl::TimingLoop() {
     metadata_tables = meta;
     evaluation_tables = evalj;
     timing_stats = {{"samples", st.samples}, {"scan_edges", st.scan_edges}, {"odometer_edges", st.odo_edges},
+                    {"odometer_right_edges", st.right_odo_edges},
                     {"gate_events", st.gate_events}, {"triggers", st.triggers},
                     {"triggers_outside_gate", st.triggers_outside_gate}, {"rows", st.rows},
                     {"dropped_early_edge", st.dropped_early_edge}, {"dropped_no_period", st.dropped_no_period},
@@ -542,11 +547,17 @@ nlohmann::json Pipeline::Wait() {
       summary["motion"]["complete"] = false;
     }
     WriteJsonAtomic(s.root / "session.json", summary);
+    if (!s.producer_error.empty()) {
+      s.ended_failed = true;
+      ++s.activity_sequence;
+      throw std::runtime_error(s.producer_error);
+    }
     s.complete = true;
     ++s.activity_sequence;
-    if (!s.producer_error.empty()) throw std::runtime_error(s.producer_error);
     return summary;
   } catch(const std::exception& error) {
+    s.ended_failed = true;
+    ++s.activity_sequence;
     // Commit failures also leave an explicitly failed session when the filesystem
     // still permits it. Preserve any already-written recovery indices and counts.
     try {

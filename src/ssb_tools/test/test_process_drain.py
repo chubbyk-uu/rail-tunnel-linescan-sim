@@ -268,3 +268,11 @@ def test_older_failure_snapshot_remains_visible_and_cannot_be_cleared():
     healthy = dict(activity_sequence=21, rows_saved=201, failed=False, phase='finalizing')
     merged = merge_capture(merged, healthy)
     assert merged['failed'] and merged['error'] == 'step changed' and merged['rows_saved'] == 201
+
+
+@pytest.mark.parametrize('late', ['finalizing', 'complete'])
+def test_same_counter_snapshot_cannot_move_a_failed_capture_back_to_another_phase(late):
+    from ssb_tools.mission_manager import merge_capture
+    failed = dict(activity_sequence=30, rows_saved=300, failed=True, error='producer', phase='failed')
+    merged = merge_capture(failed, dict(activity_sequence=30, rows_saved=300, failed=False, phase=late))
+    assert merged['phase'] == 'failed' and merged['failed']

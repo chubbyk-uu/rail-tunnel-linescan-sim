@@ -55,6 +55,8 @@ TEST(PipelineFailure, StopsLocalPoseDrainAndNeverRepeatsTableRecords) {
     for(const auto& sample:samples) p.Push(sample);
     p.Finish();
     EXPECT_THROW(p.Wait(),std::runtime_error);
+    EXPECT_EQ(p.Progress().at("phase"),"failed");
+    EXPECT_TRUE(p.Progress().at("failed"));
     // Input after failure is discarded, including after Finish().
     p.Push(samples.back());
   }
@@ -105,6 +107,8 @@ TEST(PipelineFailure, ProducerFailureDrainsAcceptedInputAndKeepsTailIndex) {
   p.Finish("injected producer fault");
   EXPECT_TRUE(p.Progress().at("failed"));
   EXPECT_THROW(p.Wait(),std::runtime_error);
+  // A drained but failed session is never reported as a completed capture.
+  EXPECT_EQ(p.Progress().at("phase"),"failed");
   nlohmann::json summary,index;std::ifstream(root/"session.json")>>summary;
   std::ifstream(root/"raw/index.json")>>index;
   EXPECT_EQ(summary.at("status"),"failed");
@@ -128,6 +132,8 @@ TEST(PipelineCompletion, WaitFinishesInputWithoutExplicitFinish) {
   for(const auto& sample:samples)p.Push(sample);
   const auto summary=p.Wait();
   EXPECT_EQ(summary.at("status"),"complete");
+  EXPECT_EQ(p.Progress().at("phase"),"complete");
+  EXPECT_FALSE(p.Progress().at("failed"));
   EXPECT_GT(summary.at("rows").get<int64_t>(),0);
   EXPECT_THROW(p.Push(samples.back()),std::logic_error);
   p.Finish();p.Finish();
@@ -218,6 +224,10 @@ TEST(Pipeline, DistanceTaskDrainDoesNotImplyReachedTarget) {
     EXPECT_EQ(summary.at("status"),"complete");
     EXPECT_EQ(summary.at("motion").at("complete"),reached);
     EXPECT_EQ(summary.at("motion").at("completion_basis"),"dual_encoder_distance_and_park");
+    nlohmann::json manifest;
+    std::ifstream(root/"metadata"/"manifest.json")>>manifest;
+    for(const char* table:{"odometer_edges","odometer_right_edges"})
+      EXPECT_EQ(summary.at("timing").at(table),manifest.at(table).at("count"))<<table;
     std::filesystem::remove_all(root);
   }
 }

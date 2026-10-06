@@ -24,7 +24,7 @@ struct TimingOutput {
 };
 
 struct TimingStats {
-  int64_t samples = 0, scan_edges = 0, odo_edges = 0, gate_events = 0;
+  int64_t samples = 0, scan_edges = 0, odo_edges = 0, right_odo_edges = 0, gate_events = 0;
   int64_t triggers = 0, triggers_outside_gate = 0, rows = 0;
   int64_t dropped_early_edge = 0, dropped_no_period = 0, dropped_reverse = 0;
   int64_t dropped_overrun = 0, dropped_stream_end = 0;
