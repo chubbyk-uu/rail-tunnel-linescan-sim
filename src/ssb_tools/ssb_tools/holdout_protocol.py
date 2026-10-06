@@ -304,7 +304,9 @@ def verify(protocol_file, root, output, source_root=None):
         validator_sha256=sha256_file(__file__),
         matching_halo_contract='halo_m is base; relative policy adds 3% of half the public exposure span',
         capture_build=provenance.get('build'), capture_source_at_run=source,
-        interpretation='unchanged C++ code is explanatory evidence, not an exemption from build identity')
+        interpretation='unchanged C++ code is explanatory evidence, not an exemption from build identity',
+        informational=dict(irls_converged=read_json(root/'fit/report.json').get('irls_all_passes_converged'),
+                           note='robust-weight convergence is reported, not gated; absent (null) before 2026-10-06'))
     if relocation is not None:
         report['source_relocation'] = dict(relocation,
             scope='production source hashes read from this checkout; all other checks read archived records')

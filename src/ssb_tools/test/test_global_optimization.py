@@ -271,6 +271,9 @@ def test_public_only_end_to_end_optimizer_preserves_upstream_and_writes_hash_cha
     before = {str(p): sha256_file(p) for folder in (d1, d2) for p in folder.iterdir()}
     report = run(d1, d2, observable, output, settings)
     assert report['status'] == 'complete' and report['bands'] == 2
+    passes = report['performance']['fit_passes']
+    assert report['irls'] == passes[-1]['irls'] and report['irls']['iterations'] == len(report['solver'])
+    assert report['irls_all_passes_converged'] is all(item['irls']['converged'] for item in passes)
     if settings.adaptive_attitude:
         assert report['attitude_refinement']['training_only'] is True
         assert report['attitude_refinement']['after_coefficients'] == report['coefficients']

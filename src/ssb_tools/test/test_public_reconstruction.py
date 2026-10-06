@@ -21,7 +21,8 @@ def test_public_report_separates_completed_computation_audit_and_quality(tmp_pat
         return dict(status='complete', windows=1, matches=dict(total=12), worker_audits=[], performance=dict(wall_s=0.))
     def optimize(*args):
         (tmp_path/'fit').mkdir()
-        return dict(status='complete', image_consistency_gate=dict(status=gate), performance=dict(wall_s=0.))
+        return dict(status='complete', image_consistency_gate=dict(status=gate), performance=dict(wall_s=0.),
+                    irls_all_passes_converged=gate == 'pass')
     monkeypatch.setattr(module, 'stage', stage)
     monkeypatch.setattr(module, 'match', match)
     monkeypatch.setattr(module, 'optimize', optimize)
@@ -32,6 +33,7 @@ def test_public_report_separates_completed_computation_audit_and_quality(tmp_pat
     assert events == (['backend', 'audit'] if slow else ['audit'])
     assert report['status'] == 'complete' and report['audit_status'] == 'pass'
     assert report['quality_status'] == gate and report['d3']['image_consistency_gate'] == gate
+    assert report['d3']['irls_converged'] is (gate == 'pass')  # carried through, never a gate
     assert (tmp_path/'public_run/report.json').is_file()
 
 

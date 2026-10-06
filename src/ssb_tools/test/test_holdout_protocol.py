@@ -354,6 +354,7 @@ def test_relocated_source_root_reads_only_the_named_checkout(tmp_path, monkeypat
     assert result['checks']['production_sources_unchanged'] is (change in (None, 'commit'))
     assert result['checks']['source_checkout_matches_protocol'] is (change is None)
     assert result['status'] == ('pass' if change is None else 'fail')
+    assert result['informational']['irls_converged'] is None and 'irls_converged' not in result['checks']
     relocation = result['source_relocation']
     assert relocation['frozen_workspace'] == str(frozen)
     assert relocation['mapped'][str(frozen/'src/ssb_core/CMakeLists.txt')] == str(

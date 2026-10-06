@@ -19,6 +19,8 @@ from .public_capture import confined_file
 from .session import read_json, sha256_file
 from .stage_b_scene import peak_rss_bytes
 
+IRLS_WEIGHT_TOLERANCE = .005
+
 
 def verified_matches(root, d1_root, upstream, sampler):
     root = Path(root).resolve()
@@ -539,8 +541,10 @@ def _fit(model, table, grid, initial=None, prepared=None):
             window = 1/np.sqrt(1+(float(np.median(z))/3)**2)
             robust[ids] = np.sqrt(point*window)
         updated = base*robust[:, None]
-        history.append(dict(solver, iteration=iteration, minimum_window_weight=float(robust.min())))
-        if np.max(abs(updated-current)/np.maximum(base, 1e-12)) < .005:
+        change = float(np.max(abs(updated-current)/np.maximum(base, 1e-12)))
+        history.append(dict(solver, iteration=iteration, minimum_window_weight=float(robust.min()),
+                            max_relative_weight_change=change))
+        if change < IRLS_WEIGHT_TOLERANCE:
             break
         current = updated
     # Holdout points were never passed into the solver, weighting or convergence.
@@ -556,6 +560,22 @@ def _fit(model, table, grid, initial=None, prepared=None):
     if assembly.numeric is not None:
         model.numeric_report = assembly.numeric.describe()
     return coefficients, scores, descriptions, history, before, after, evidence
+
+
+def irls_summary(history, max_irls):
+    """Whether robust reweighting settled, read from one fit's solver history.
+
+    Each entry's weight change and minimum window weight describe the weights
+    computed after that solve; the reported coefficients were solved with the
+    weights of the previous entry. Reaching max_irls is reported, not hidden.
+    """
+    if not history or any('max_relative_weight_change' not in item for item in history):
+        raise ValueError('IRLS history with recorded weight changes required')
+    final = float(history[-1]['max_relative_weight_change'])
+    return dict(converged=final < IRLS_WEIGHT_TOLERANCE, iterations=len(history), max_irls=int(max_irls),
+                criterion_max_relative_weight_change=IRLS_WEIGHT_TOLERANCE,
+                final_max_relative_weight_change=final,
+                interpretation='informational: robust weights after the final solve; not an acceptance gate')
 
 
 def refine_attitude_knots(model, table, residual_m, grid, minimum_step_m):
@@ -646,7 +666,7 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
         coefficients, scores, noise, history, before, after, evidence = fit(
             model, table, upstream['grid'], prepared=prepared)
         fit_passes = [dict(coefficients=model.size, wall_s=time.monotonic()-fit_started,
-                          initialization='zero', solver=history)]
+                          initialization='zero', solver=history, irls=irls_summary(history, settings.max_irls))]
         refinement = None
         if settings.adaptive_attitude:
             knots, refinement = refine_attitude_knots(model, table, after, upstream['grid'],
@@ -661,7 +681,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
                     model, table, upstream['grid'], initial=initial, prepared=prepared)
                 refinement['initialization'] = 'exact_training_curve_knot_insertion_v1'
                 fit_passes.append(dict(coefficients=model.size, wall_s=time.monotonic()-fit_started,
-                                       initialization=refinement['initialization'], solver=history))
+                                       initialization=refinement['initialization'], solver=history,
+                                       irls=irls_summary(history, settings.max_irls)))
         output.mkdir(parents=True, exist_ok=False)
         (output/'trajectory.json').write_text(json.dumps(model.serialize(coefficients), indent=2)+'\n')
         np.savez(output/'match_residuals.npz', before_m=before, after_m=after,
@@ -689,7 +710,8 @@ def run(unroll, matches, observable, output, settings=GeometrySettings(), raw_ro
             stage='D3', status='complete',
             optical_signature=upstream['optical_signature'], source_observation_hashes=upstream['source_observation_hashes'],
             grid=upstream['grid'], bands=len(sampler.segments), coefficients=model.size, settings=asdict(settings),
-            image_consistency=scores, solver=history, observability=evidence,
+            image_consistency=scores, solver=history, irls=fit_passes[-1]['irls'],
+            irls_all_passes_converged=all(item['irls']['converged'] for item in fit_passes), observability=evidence,
             image_consistency_gate=dict(threshold_p95_px=SEAM_P95_PX,
                 status='pass' if scores['heldout_after']['norm_px']['p95'] <= SEAM_P95_PX else 'fail',
                 scope='held-out image consistency only; optical-mesh seam acceptance is still required'),
