@@ -19,7 +19,8 @@ D2 留出点测相对拟合残差，常量偏置会被平移吸收，不能单�
 曝光缺口不能从评分集合静默排掉。首尾只在公开曝光、整圈范围与最大修正包络证明共同域在目标外时排除；内部缺行仍失败。D1 保留可能到达目标的完整已记录圈，任务/预算/D1/D2/评价使用一致支撑。高环缝占比、姿态起伏和综合误差属于主要场景；不能靠改起点躲开环缝来宣称通过。
 
 四边支撑、接缝取点和完整内部覆盖分别检查，缩略图或少量 CPU 探针不能代替完整覆盖。D2 留出一致性不等于真实网格误差，evaluation 不回传调参。
-\n## 3. 运行入口
+
+## 3. 运行入口
 
 名义默认包的 WSL 冻结入口（输出须新目录）：
 
@@ -29,11 +30,16 @@ bash tools/run_d3_holdout.sh sessions/FROZEN_NEW local_data/evaluation/FROZEN_NE
 ```
 
 综合误差须用 [ERROR_SCENARIOS](ERROR_SCENARIOS.md#5-生成并运行综合场景wsl) 的完整开关和自己的资产/标定；上面默认命令不是里程碑方案。流程完整构建后才采集，实际独立重成像必须在 D1/D2/D3 前验收。完整优化图、整图漂移和裂缝专项另行核验，不由有限接缝点代替。原生主机的端到端协议尚未验收。
-\n## 4. 证据保护与状态解释
+
+## 4. 证据保护与状态解释
 
 协议绑定干净工作树、采集/运行提交、源码/数值库/资产身份、ROI、D2/D3 设置、公开输入运行审计、二进制来源、采集完成、阶段 B 报告哈希、实际独立重成像、取点及深度设置。检查数量随协议选项变化；本里程碑实际为 18 项，不能将历史 v7 的 16 项当作所有新流程固定数量。
 
 公开重建状态分别表达计算完成、读取审计和位姿图像一致性；只有独立网格评价证明主接缝门限。审计解析实际路径并检查主/工作进程，实际读取必须非零、违规零且产物身份一致；它不是操作系统级沙箱，不覆盖所有原生库、继承描述符或外部进程。
+
+代码前进后复核旧协议：`verify` 默认按协议记录的绝对路径读取当前工作区源码，生产源码一旦改动必然失败。改为在协议提交的干净检出中复核，例如 `git worktree add --detach ../ssb_m20 milestone-20m-code`，再加 `--source-root ../ssb_m20`。源码路径由协议条目自身推出工作区前缀，无法映射即报错，不回退到当前工作区；另加 `source_checkout_matches_protocol`（检出 HEAD 等于 `code_commit` 且无已跟踪改动）。只有源码哈希读检出，其余检查仍读归档记录；核验器本身为当前版本，其哈希写入报告。
+
+2026-10-06 复核：`b847ef9`（10-05 17:25，晚于首次核验 17:08）修改了 `global_resample.py` 对比预览与 `global_cuda.py` 描述字符串，因此此后在主工作区直接复核里程碑协议即失败（仅 `production_sources_unchanged`）。用 `milestone-20m-code` 检出复核 19 项全部通过，记录为 `local_data/evaluation/milestone20_holdout_seed20270119_20261005/protocol_verification_relocated_20261006.json`；首次 `protocol_verification.json` 未改动。
 
 首次阶段 B 报告及 identity 文件独占创建，拒绝覆盖和符号链接。复查用 `--read-only` 或新的报告路径。独立重成像先真正渲染再比对，后续硬链接副本的比对不是新的独立验证。首次失败/中断、核验器勘误与原哈希保留，不把补充核验改写成首次全过。
 
@@ -42,6 +48,7 @@ python3 -m ssb_tools.validate_stage_b SESSION --compare REIMAGE --read-only
 python3 -m ssb_tools.validate_stage_b SESSION --compare REIMAGE \
   --output SESSION/evaluation/reports/recheck_NEW.json
 ```
-\n## 5. 可发布结论
+
+## 5. 可发布结论
 
 20 m 指定综合场景的两组接缝 P95≤1 px、预定点零缺测、完整输出零覆盖空洞、联合 GUI 成像实时率≥0.6。整图漂移、环缝中心线及长细裂缝有限采样另报，方法与不可测点见 [专项诊断](MILESTONE_20M_DIAGNOSTICS.md)。不能推广为每点≤1 px、全部误差量级、绝对外参/位置恢复、可靠照片测宽或 50 m 支持。
