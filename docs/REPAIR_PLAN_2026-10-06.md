@@ -1,6 +1,6 @@
 # 2026-10-06 全面审核修复计划
 
-状态：阶段 0–3 完成，其余进行中（分支 `repair/2026-10-06`）。来源是 2026-10-06 全项目审核；用户已确认四项取舍（见 §0.2）。完成后按惯例移入 `docs/history/` 并在索引登记。
+状态：阶段 0–4 完成（GitHub 上的 CI 尚未实际运行），其余进行中（分支 `repair/2026-10-06`）。来源是 2026-10-06 全项目审核；用户已确认四项取舍（见 §0.2）。完成后按惯例移入 `docs/history/` 并在索引登记。
 
 审核基线：HEAD `6eba2ab`，工作树干净；`tools/run_tests.py` 全部通过，995 项（906 Python + 84 gtest + 5 ctest 包装），0 跳过，34 s。
 
@@ -265,6 +265,16 @@
 ### 4.5 门禁规则
 
 DEVELOPMENT_RULES 增加一条：合入 main 前必须本机跑 `tools/run_tests.py` 全套。CI 通过不等于 GPU、OptiX、Gazebo 通过；README 的测试数字只引用本机全套结果。
+
+### 阶段 4 执行记录（2026-10-06）
+
+- 4.1 `4cfd8b9`：根目录 LICENSE 取自系统自带的 Apache-2.0 原文（SHA-256 `cfc7749b…3d30`，与官方 LICENSE-2.0.txt 一致）；ASSETS 增加许可说明。新生成的裂缝目录只记录源文件名和 SHA-256；现有 v1 目录不改写。新增 1 项测试，回退检验会失败。
+- 4.2–4.5 `566e6ba`：
+  - `-DSSB_IMAGING=OFF` 只构建 CPU 部分；`ssb_capture` 是 OBJECT 库，同时编进 `libssb_core.so`。正式库的 `Pipeline` 符号仍导出（17 个），Gazebo 插件照常链接；provenance 的 `library` 字段仍指向 `libssb_core.so`。构建印记增加 `imaging`。
+  - CPU 构建在独立目录完成，`SSB_OPTIX_SDK` 指向不存在的路径，构建成功；没有生成渲染器和 CUDA 库，印记为 0；`test_pipeline_failure`（10 项）和 `test_timing`（18 项）通过。
+  - marker 审计：在无 GPU、仅装 CPU 构建的干净环境中跑完整 Python 套件，958 项里 54 项失败，全部是两个 CUDA 模块中加载 CUDA 库的用例；另有 3 项在这两个模块中却能在 CPU 上通过，因此不打标记。标记集合与失败集合逐项相同。
+  - `--profile cpu-ci` 端到端（模拟 CI 的工作区）：Python 911 项、gtest 33 项通过，剔除 54 项并全部列入 `deselected.txt`。本机默认 `full` 档 1055 项通过，剔除 0 项。
+  - `.github/workflows/ci.yml` 已写好，**未推送，GitHub 上未实际运行**；托管机上 rosdep 依赖是否齐全，要等首次运行才能确认。本机没有 docker/act，无法本地模拟。
 
 ## 阶段 5：代码风格（审核 P2-6、P2-9 部分）
 
