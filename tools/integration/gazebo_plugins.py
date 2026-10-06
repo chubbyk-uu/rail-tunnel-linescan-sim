@@ -132,9 +132,23 @@ def run(output):
         if contact:
             assert abs(poses['z']-.37).max()<.003
             assert poses['body_valid'].all()
+        moved=float(np.ptp(poses['z']))
+        if name=='contact':
+            flat_ptp=moved
         if 'track_irregularity' in truth:
             rails=[m for m in ET.parse(world).getroot().iter('model') if m.get('name','').startswith('rail_surface_')]
-            assert rails and np.ptp(poses['z'])>2e-4, 'irregular track must move the body'
+            # Judge this realization: its relief under the driven window depends on the seed and on
+            # the tunnel range the profile is synthesised over (a fixed 0.2 mm threshold failed
+            # once stage_b.yaml grew its buffers, although the body still followed the rails).
+            from ssb_tools.rail_irregularity import rails as rail_truth
+            xs,left,right,_=rail_truth(c)
+            inside=(xs>=poses['x'].min())&(xs<=poses['x'].max())
+            expected=float(np.ptp(((left+right)/2)[inside]))
+            assert rails and expected>5e-5, 'driven window must contain measurable rail relief'
+            assert moved>=.5*expected and moved>5*flat_ptp, \
+                f'irregular track must move the body: {moved:.3g} m vs relief {expected:.3g} m, flat {flat_ptp:.3g} m'
+            results.append({'name':name,'rows':s.summary['rows'],'complete':True,'body_z_ptp_m':moved,
+                            'rail_relief_ptp_m':expected,'flat_body_z_ptp_m':flat_ptp});continue
         results.append({'name':name,'rows':s.summary['rows'],'complete':True})
     (output/'report.json').write_text(json.dumps(results,indent=2)+'\n')
     print(json.dumps(results))
