@@ -1,0 +1,49 @@
+# Hosted CPU checks. Imaging (OptiX/CUDA), Gazebo and RViz need a GPU host: the full
+# suite stays a local gate (python3 tools/run_tests.py), see docs/DEVELOPMENT_RULES.md.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    name: CPU build and tests (SSB_IMAGING=OFF, no GPU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: jazzy
+
+      - name: Install declared dependencies
+        run: |
+          rosdep update
+          rosdep install --from-paths src/ssb_core src/ssb_tools --ignore-src -y --rosdistro jazzy
+
+      - name: Build CPU-only packages
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build --packages-select ssb_core ssb_tools --symlink-install \
+            --cmake-args -DSSB_IMAGING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Tests (cpu-ci profile; CUDA tests are listed as deselected)
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          python3 tools/run_tests.py --profile cpu-ci --output ci_test_logs
+
+      - name: Keep test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: ci_test_logs
+          if-no-files-found: ignore

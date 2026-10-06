@@ -45,3 +45,36 @@ def test_incomplete_or_duplicate_workers_cannot_overwrite_the_report(tmp_path, k
     with pytest.raises((OSError, ValueError)):
         merge_results([a, b], [{('sample', 'first')}, {('sample', 'second')}], output)
     assert output.read_bytes() == b'previous report'
+
+
+def test_cpu_profile_deselects_only_marked_cuda_module_tests():
+    from ssb_tools.test_runner import cpu_ci_selection
+    collected = ['test/test_unroll_cuda.py::gpu', 'test/test_unroll_cuda.py::cpu_check',
+                 'test/test_fast_geometry_cuda.py::gpu', 'test/test_timing.py::cpu']
+    selected = ['test/test_unroll_cuda.py::cpu_check', 'test/test_timing.py::cpu']
+    assert cpu_ci_selection(collected, selected) == ['test/test_fast_geometry_cuda.py::gpu',
+                                                     'test/test_unroll_cuda.py::gpu']
+
+
+@pytest.mark.parametrize('selected', [
+    [], ['test/test_timing.py::cpu', 'test/test_timing.py::cpu'], ['test/test_other.py::new'],
+    ['test/test_unroll_cuda.py::gpu', 'test/test_timing.py::cpu'],  # nothing deselected
+    ['test/test_unroll_cuda.py::gpu']])  # a CPU test marked away
+def test_cpu_profile_cannot_hide_cpu_tests_or_drift_from_the_full_collection(selected):
+    from ssb_tools.test_runner import cpu_ci_selection
+    with pytest.raises(ValueError):
+        cpu_ci_selection(['test/test_unroll_cuda.py::gpu', 'test/test_timing.py::cpu'], selected)
+
+
+def test_marker_is_confined_to_the_cuda_modules_in_the_real_collection():
+    """The real suite: every requires_cuda test lives in a CUDA module (plain pytest, no GPU needed)."""
+    import subprocess, sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    def collect(*extra):
+        out = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--collect-only',
+                              *extra, str(root/'test')], cwd=root, capture_output=True, text=True, check=True).stdout
+        return [line.strip() for line in out.splitlines() if line.startswith('test/') and '::' in line]
+    from ssb_tools.test_runner import cpu_ci_selection
+    deselected = cpu_ci_selection(collect(), collect('-m', 'not requires_cuda'))
+    assert len(deselected) >= 50

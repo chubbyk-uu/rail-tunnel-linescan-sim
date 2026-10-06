@@ -8,11 +8,17 @@ string(REPLACE " " ";" parts "${state}")
 list(GET parts 0 head)
 list(GET parts 1 dirty)
 list(GET parts 2 digest)
+if(IMAGING)
+  set(imaging 1)
+else()
+  set(imaging 0)
+endif()
 set(content "#pragma once
 #define SSB_BUILD_GIT_HEAD \"${head}\"
 #define SSB_BUILD_GIT_DIRTY ${dirty}
 #define SSB_BUILD_GIT_DIFF_SHA256 \"${digest}\"
 #define SSB_BUILD_TYPE \"${BUILD_TYPE}\"
+#define SSB_BUILD_IMAGING ${imaging}
 ")
 if(EXISTS "${OUTPUT}")
   file(READ "${OUTPUT}" old)

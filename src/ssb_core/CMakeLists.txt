@@ -32,76 +32,97 @@ target_include_directories(ssb_ray_numeric PRIVATE include)
 target_compile_options(ssb_ray_numeric PRIVATE -O3 -Wall -Wextra -Wpedantic -ffp-contract=off)
 install(TARGETS ssb_ray_numeric LIBRARY DESTINATION lib)
 
+# CPU-only builds exist for hosted CI and must be requested explicitly; they never
+# contain a renderer, so they cannot record a capture (DESIGN.md §12.1).
+option(SSB_IMAGING "Build the OptiX imaging and CUDA reconstruction backends" ON)
+
 # Source-tree identity baked in at every build (DESIGN.md §12.1).
 set(SSB_STAMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/stamp")
 add_custom_target(ssb_build_stamp ALL
   COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DBUILD_TYPE=${CMAKE_BUILD_TYPE}
+          -DIMAGING=${SSB_IMAGING}
           -DOUTPUT=${SSB_STAMP_DIR}/ssb_core/build_stamp.hpp -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/build_stamp.cmake
   BYPRODUCTS ${SSB_STAMP_DIR}/ssb_core/build_stamp.hpp
   COMMENT "Recording source tree state")
 
-# The imaging backend is mandatory: a missing CUDA or OptiX is a configure error,
-# never a silently reduced build (DESIGN.md §12.1).
-set(SSB_OPTIX_SDK "$ENV{HOME}/opt/optix-sdk-9.1.0" CACHE PATH "OptiX SDK root")
-if(NOT EXISTS "${SSB_OPTIX_SDK}/include/optix.h")
-  message(FATAL_ERROR "OptiX SDK not found at SSB_OPTIX_SDK=${SSB_OPTIX_SDK}")
+# Session storage and the threaded capture pipeline: renderer-agnostic, no CUDA.
+# Compiled once into libssb_core (so provenance still names that library) and
+# linked directly by CPU tests.
+add_library(ssb_capture OBJECT src/session.cpp src/pipeline.cpp)
+set_target_properties(ssb_capture PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_dependencies(ssb_capture ssb_build_stamp)
+target_include_directories(ssb_capture PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> PRIVATE ${SSB_STAMP_DIR})
+target_compile_options(ssb_capture PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(ssb_capture PRIVATE SSB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(ssb_capture PUBLIC ssb_timing ${CMAKE_DL_LIBS} pthread)
+
+if(SSB_IMAGING)
+  # The imaging backend is mandatory in an imaging build: a missing CUDA or OptiX is a
+  # configure error, never a silently reduced build (DESIGN.md §12.1).
+  set(SSB_OPTIX_SDK "$ENV{HOME}/opt/optix-sdk-9.1.0" CACHE PATH "OptiX SDK root")
+  if(NOT EXISTS "${SSB_OPTIX_SDK}/include/optix.h")
+    message(FATAL_ERROR "OptiX SDK not found at SSB_OPTIX_SDK=${SSB_OPTIX_SDK}")
+  endif()
+  if(NOT CUDAToolkit_ROOT AND EXISTS "/usr/local/cuda")
+    set(CUDAToolkit_ROOT "/usr/local/cuda")
+  endif()
+  find_package(CUDAToolkit REQUIRED)
+  set(CMAKE_CUDA_ARCHITECTURES 75)
+  set(CMAKE_CUDA_COMPILER "${CUDAToolkit_NVCC_EXECUTABLE}")
+  enable_language(CUDA)
+  set(CMAKE_CUDA_STANDARD 17)
+
+  # Reconstruction uses CUDA directly; no OptiX scene or private geometry enters
+  # this library. A small C ABI lets the installed Python tools pass NumPy tiles.
+  add_library(ssb_unroll_cuda SHARED src/unroll_cuda.cu)
+  target_compile_options(ssb_unroll_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
+  target_link_libraries(ssb_unroll_cuda PRIVATE CUDA::cudart)
+  install(TARGETS ssb_unroll_cuda LIBRARY DESTINATION lib)
+
+  add_library(ssb_ray_cuda SHARED src/ray_numeric_cuda.cu)
+  target_include_directories(ssb_ray_cuda PRIVATE include)
+  target_compile_options(ssb_ray_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
+  target_link_libraries(ssb_ray_cuda PRIVATE CUDA::cudart)
+  install(TARGETS ssb_ray_cuda LIBRARY DESTINATION lib)
+
+  set(SSB_PTX "${CMAKE_CURRENT_BINARY_DIR}/ssb_scan.ptx")
+  add_custom_command(OUTPUT "${SSB_PTX}"
+    COMMAND ${CUDAToolkit_NVCC_EXECUTABLE} --ptx -O3 -std=c++17 -arch=compute_75
+            -I${SSB_OPTIX_SDK}/include -I${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/optix/scan.cu -o "${SSB_PTX}"
+    DEPENDS src/optix/scan.cu src/optix/launch_params.h include/ssb_core/texture.hpp include/ssb_core/surface_types.hpp include/ssb_core/crack_integral.hpp include/ssb_core/sensor_noise.hpp
+    COMMENT "Compiling OptiX PTX")
+  add_custom_target(ssb_ptx ALL DEPENDS "${SSB_PTX}")
+
+  add_library(ssb_core SHARED src/optix/optix_renderer.cpp src/optix/surface_recipe.cu $<TARGET_OBJECTS:ssb_capture>)
+  add_dependencies(ssb_core ssb_ptx ssb_build_stamp)
+  target_include_directories(ssb_core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>
+    PRIVATE ${SSB_OPTIX_SDK}/include ${SSB_STAMP_DIR})
+  target_compile_options(ssb_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic> $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
+  target_compile_definitions(ssb_core PRIVATE
+    SSB_PTX_INSTALL_PATH="${CMAKE_INSTALL_PREFIX}/share/${PROJECT_NAME}/ptx/ssb_scan.ptx")
+  target_link_libraries(ssb_core PUBLIC ssb_timing CUDA::cudart ${CMAKE_DL_LIBS} pthread)
+
+  add_executable(ssb_render tools/ssb_render.cpp)
+  target_link_libraries(ssb_render ssb_core)
+  add_executable(ssb_selfcheck tools/ssb_selfcheck.cpp)
+  target_link_libraries(ssb_selfcheck ssb_core)
+  add_executable(ssb_probe tools/ssb_probe.cpp)
+  target_link_libraries(ssb_probe ssb_core)
+  add_executable(ssb_recipe_probe tools/ssb_recipe_probe.cpp)
+  target_link_libraries(ssb_recipe_probe ssb_core)
+  install(TARGETS ssb_render ssb_selfcheck ssb_probe ssb_recipe_probe DESTINATION lib/${PROJECT_NAME})
+  install(TARGETS ssb_core EXPORT export_ssb_core ARCHIVE DESTINATION lib LIBRARY DESTINATION lib)
+  install(FILES "${SSB_PTX}" DESTINATION share/${PROJECT_NAME}/ptx)
+else()
+  message(WARNING "SSB_IMAGING=OFF: CPU-only build without renderer or CUDA backends; it cannot capture")
 endif()
-if(NOT CUDAToolkit_ROOT AND EXISTS "/usr/local/cuda")
-  set(CUDAToolkit_ROOT "/usr/local/cuda")
-endif()
-find_package(CUDAToolkit REQUIRED)
-set(CMAKE_CUDA_ARCHITECTURES 75)
-set(CMAKE_CUDA_COMPILER "${CUDAToolkit_NVCC_EXECUTABLE}")
-enable_language(CUDA)
-set(CMAKE_CUDA_STANDARD 17)
 
-# Reconstruction uses CUDA directly; no OptiX scene or private geometry enters
-# this library. A small C ABI lets the installed Python tools pass NumPy tiles.
-add_library(ssb_unroll_cuda SHARED src/unroll_cuda.cu)
-target_compile_options(ssb_unroll_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
-target_link_libraries(ssb_unroll_cuda PRIVATE CUDA::cudart)
-install(TARGETS ssb_unroll_cuda LIBRARY DESTINATION lib)
-
-add_library(ssb_ray_cuda SHARED src/ray_numeric_cuda.cu)
-target_include_directories(ssb_ray_cuda PRIVATE include)
-target_compile_options(ssb_ray_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
-target_link_libraries(ssb_ray_cuda PRIVATE CUDA::cudart)
-install(TARGETS ssb_ray_cuda LIBRARY DESTINATION lib)
-
-set(SSB_PTX "${CMAKE_CURRENT_BINARY_DIR}/ssb_scan.ptx")
-add_custom_command(OUTPUT "${SSB_PTX}"
-  COMMAND ${CUDAToolkit_NVCC_EXECUTABLE} --ptx -O3 -std=c++17 -arch=compute_75
-          -I${SSB_OPTIX_SDK}/include -I${CMAKE_CURRENT_SOURCE_DIR}/include
-          ${CMAKE_CURRENT_SOURCE_DIR}/src/optix/scan.cu -o "${SSB_PTX}"
-  DEPENDS src/optix/scan.cu src/optix/launch_params.h include/ssb_core/texture.hpp include/ssb_core/surface_types.hpp include/ssb_core/crack_integral.hpp include/ssb_core/sensor_noise.hpp
-  COMMENT "Compiling OptiX PTX")
-add_custom_target(ssb_ptx ALL DEPENDS "${SSB_PTX}")
-
-add_library(ssb_core SHARED src/optix/optix_renderer.cpp src/optix/surface_recipe.cu src/session.cpp src/pipeline.cpp)
-add_dependencies(ssb_core ssb_ptx ssb_build_stamp)
-target_include_directories(ssb_core PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>
-  PRIVATE ${SSB_OPTIX_SDK}/include ${SSB_STAMP_DIR})
-target_compile_options(ssb_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic> $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
-target_compile_definitions(ssb_core PRIVATE
-  SSB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-  SSB_PTX_INSTALL_PATH="${CMAKE_INSTALL_PREFIX}/share/${PROJECT_NAME}/ptx/ssb_scan.ptx")
-target_link_libraries(ssb_core PUBLIC ssb_timing CUDA::cudart ${CMAKE_DL_LIBS} pthread)
-
-add_executable(ssb_render tools/ssb_render.cpp)
 add_executable(ssb_optical_identity tools/ssb_optical_identity.cpp)
 target_link_libraries(ssb_optical_identity ssb_timing)
 install(TARGETS ssb_optical_identity DESTINATION lib/${PROJECT_NAME})
-target_link_libraries(ssb_render ssb_core)
-add_executable(ssb_selfcheck tools/ssb_selfcheck.cpp)
-target_link_libraries(ssb_selfcheck ssb_core)
-add_executable(ssb_probe tools/ssb_probe.cpp)
-target_link_libraries(ssb_probe ssb_core)
-add_executable(ssb_recipe_probe tools/ssb_recipe_probe.cpp)
-target_link_libraries(ssb_recipe_probe ssb_core)
-install(TARGETS ssb_render ssb_selfcheck ssb_probe ssb_recipe_probe DESTINATION lib/${PROJECT_NAME})
-install(TARGETS ssb_core EXPORT export_ssb_core ARCHIVE DESTINATION lib LIBRARY DESTINATION lib)
-install(FILES "${SSB_PTX}" DESTINATION share/${PROJECT_NAME}/ptx)
 
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
@@ -115,21 +136,27 @@ if(BUILD_TESTING)
   target_link_libraries(test_timing ssb_timing)
   target_compile_definitions(test_timing PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
   ament_add_gtest(test_pipeline_failure test/test_pipeline_failure.cpp)
-  target_link_libraries(test_pipeline_failure ssb_core)
+  target_link_libraries(test_pipeline_failure ssb_capture)
   target_compile_definitions(test_pipeline_failure PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
 
-  # GPU tests run in the host's runtime (tools/ssb_runtime.sh) against the build-tree PTX.
-  set(SSB_WRAPPER "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/ssb_runtime.sh")
-  ament_add_gtest_executable(test_render test/test_render.cpp test/test_surface_render.cpp)
-  target_link_libraries(test_render ssb_core)
-  target_compile_definitions(test_render PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
-  set(SSB_RENDER_XML "${AMENT_TEST_RESULTS_DIR}/${PROJECT_NAME}/test_render.gtest.xml")
-  ament_add_test(test_render
-    COMMAND bash ${SSB_WRAPPER} $<TARGET_FILE:test_render> --gtest_output=xml:${SSB_RENDER_XML}
-    RESULT_FILE ${SSB_RENDER_XML}
-    ENV SSB_PTX=${SSB_PTX} TIMEOUT 600)
+  if(SSB_IMAGING)
+    # GPU tests run in the host's runtime (tools/ssb_runtime.sh) against the build-tree PTX.
+    set(SSB_WRAPPER "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/ssb_runtime.sh")
+    ament_add_gtest_executable(test_render test/test_render.cpp test/test_surface_render.cpp)
+    target_link_libraries(test_render ssb_core)
+    target_compile_definitions(test_render PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
+    set(SSB_RENDER_XML "${AMENT_TEST_RESULTS_DIR}/${PROJECT_NAME}/test_render.gtest.xml")
+    ament_add_test(test_render
+      COMMAND bash ${SSB_WRAPPER} $<TARGET_FILE:test_render> --gtest_output=xml:${SSB_RENDER_XML}
+      RESULT_FILE ${SSB_RENDER_XML}
+      ENV SSB_PTX=${SSB_PTX} TIMEOUT 600)
+  endif()
 endif()
 
 ament_export_targets(export_ssb_core)
-ament_export_dependencies(yaml-cpp nlohmann_json OpenSSL CUDAToolkit)
+if(SSB_IMAGING)
+  ament_export_dependencies(yaml-cpp nlohmann_json OpenSSL CUDAToolkit)
+else()
+  ament_export_dependencies(yaml-cpp nlohmann_json OpenSSL)
+endif()
 ament_package()

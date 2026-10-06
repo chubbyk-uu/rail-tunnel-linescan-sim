@@ -10,6 +10,9 @@ from ssb_tools.optimize_bands import FixedJacobian, regularizer, fit
 from test_global_optimization import synthetic_matches
 
 
+pytestmark = pytest.mark.requires_cuda  # every test here loads libssb_ray_cuda
+
+
 @pytest.mark.parametrize('relative', [False, True])
 @pytest.mark.parametrize('translation', [False, 'heave', 'fixed', 'yaw'])
 def test_cuda_fused_geometry_matches_independent_sparse_chain_and_cpu(relative, translation):

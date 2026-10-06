@@ -29,6 +29,23 @@ def pytest_configure(config):
 
 
 GPU_TEST_PREFIXES = ('test/test_unroll_cuda.py::', 'test/test_fast_geometry_cuda.py::')
+# Hosted CI has no GPU and builds with -DSSB_IMAGING=OFF. Its profile still collects
+# everything and only deselects this marker, which may live in the CUDA modules alone.
+PROFILES = {'full': None, 'cpu-ci': 'not requires_cuda'}
+
+
+def cpu_ci_selection(collected, selected):
+    """Deselected node ids for the CPU profile; any other difference is an error."""
+    collected, selected = list(collected), list(selected)
+    if not selected or not set(selected) <= set(collected) or len(set(selected)) != len(selected):
+        raise ValueError('CPU profile selection must be a nonempty unique subset of the full collection')
+    deselected = sorted(set(collected)-set(selected))
+    if not deselected:
+        raise ValueError('CPU profile deselected nothing: the requires_cuda marker is not applied')
+    stray = [node for node in deselected if not node.startswith(GPU_TEST_PREFIXES)]
+    if stray:
+        raise ValueError('requires_cuda outside the CUDA modules would hide CPU tests: '+', '.join(stray[:5]))
+    return deselected
 
 
 def partition(nodes, durations, workers):
@@ -78,10 +95,12 @@ def merge_results(paths, expected_cases, output):
     return len(seen)
 
 
-def run(workspace, workers=4, output=None):
+def run(workspace, workers=4, output=None, profile='full'):
     workspace = Path(workspace).resolve()
     if not 1 <= workers <= 16:
         raise ValueError('Python worker count must be between 1 and 16')
+    if profile not in PROFILES:
+        raise ValueError('unknown test profile: '+str(profile))
     test_root = workspace/'src/ssb_tools'
     report = workspace/'build/ssb_tools/pytest.xml'
     for required in (workspace/'install/setup.bash', workspace/'build/ssb_core/CTestTestfile.cmake'):
@@ -110,6 +129,18 @@ def run(workspace, workers=4, output=None):
     nodes = [line.strip() for line in collection.stdout.splitlines() if line.startswith('test/') and '::' in line]
     if not nodes or len(set(nodes)) != len(nodes):
         raise ValueError('test collection must be nonempty and unique')
+    deselected = []
+    if PROFILES[profile] is not None:
+        chosen = subprocess.run(base+['--collect-only', '-q', '-m', PROFILES[profile], str(test_root/'test')],
+            cwd=workspace, env=environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            timeout=120)
+        (output/'collection_profile.log').write_text(chosen.stdout)
+        if chosen.returncode:
+            raise RuntimeError(f'profile collection failed; see {output}/collection_profile.log')
+        selected = [line.strip() for line in chosen.stdout.splitlines() if line.startswith('test/') and '::' in line]
+        deselected = cpu_ci_selection(nodes, selected)
+        (output/'deselected.txt').write_text('\n'.join(deselected)+'\n')
+        nodes = selected
     groups = partition(nodes, history(report), workers)
     if sorted(node for group in groups for node in group) != sorted(nodes):
         raise ValueError('parallel plan differs from full collection')
@@ -132,7 +163,8 @@ def run(workspace, workers=4, output=None):
 
     paths = [output/f'python_{index}.xml' for index in range(len(groups))]
     with ThreadPoolExecutor(max_workers=workers+1) as pool:
-        cpp = pool.submit(execute, 'cpp', ['colcon', 'test', '--packages-skip', 'ssb_tools'])
+        cpp = pool.submit(execute, 'cpp', ['colcon', 'test', '--packages-skip', 'ssb_tools'] if profile == 'full'
+                          else ['colcon', 'test', '--packages-select', 'ssb_core'])
 
         def python_group(index, group):
             if any(node.startswith(GPU_TEST_PREFIXES) for node in group):
@@ -145,7 +177,8 @@ def run(workspace, workers=4, output=None):
         codes = [cpp.result(), *(job.result() for job in jobs)]
     count = merge_results(paths, [{junit_identity(node) for node in group} for group in groups], report)
     result_code = execute('results', ['colcon', 'test-result', '--all'])
-    summary = dict(python_tests=count, python_workers=len(groups), return_codes=codes,
+    summary = dict(profile=profile, python_tests=count, python_deselected=len(deselected),
+                   python_workers=len(groups), return_codes=codes,
                    result_code=result_code, wall_s=time.monotonic()-started, logs=str(output))
     (output/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
     print(json.dumps(summary))
@@ -157,9 +190,11 @@ def main():
     parser.add_argument('--workspace', default=Path.cwd(), type=Path)
     parser.add_argument('--workers', type=int, default=4, help='maximum Python processes (default: 4)')
     parser.add_argument('--output', type=Path, help='new directory for logs and worker XML files')
+    parser.add_argument('--profile', choices=tuple(PROFILES), default='full',
+                        help='full (default, local GPU gate) or cpu-ci (hosted CI, -DSSB_IMAGING=OFF build)')
     args = parser.parse_args()
     try:
-        return run(args.workspace, args.workers, args.output)
+        return run(args.workspace, args.workers, args.output, args.profile)
     except (ValueError, RuntimeError, OSError, ET.ParseError, subprocess.TimeoutExpired) as error:
         print(str(error), file=sys.stderr)
         return 1

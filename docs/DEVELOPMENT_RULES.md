@@ -32,6 +32,7 @@
 - 至少一组测试跑到实际规模（20 m、完整 240°、真实行数），检查内存与耗时（W#32）。
 - 优化器每新增一个自由度（e、dy/dz、β、姿态样条），先确认它有无独立于已有退化方向的证据；没有则加先验锚定，并用明显错误的假匹配测试它不会被吸收（W#34）。
 - 系统偏置不能当噪声加权。轮径、零位等偏差场景至少取负、名义、正三档；只跑名义值看不到随条件变化的偏置（W#30）。
+- 合入 main 前必须在 GPU 主机上跑 `python3 tools/run_tests.py` 全套（默认 `full` 档，零剔除、零跳过）。GitHub CI（`.github/workflows/ci.yml`）只做 `-DSSB_IMAGING=OFF` 的 CPU 构建并运行 `--profile cpu-ci`：仍先收集全部用例，只剔除 `requires_cuda` 标记的 CUDA 用例；被剔除的用例 ID 写入 `deselected.txt`，若该标记出现在两个 CUDA 模块之外则直接报错。CI 通过不代表 OptiX、CUDA、Gazebo、RViz 通过；README 的测试数字只引用本机全套结果。CPU 构建不包含渲染器，不能用于采集。
 - 日常完整回归可用 `python3 tools/run_tests.py`，默认 4 个 Python 工作进程，CPU 用例与 C++ 测试并行，Python CUDA 与 C++ OptiX 串行。分组只依据公开用例身份和历史耗时，必须覆盖完整收集集合；结果按身份核验后合并，缺少、重复、替换或崩溃不能变成通过。保留 `--workers 1` 和普通 `colcon test` 的排查入口，不减少用例、采样规模或验收要求。
 
 ## 仿真与场景

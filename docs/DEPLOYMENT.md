@@ -69,7 +69,7 @@ colcon build --symlink-install --cmake-args \
 
 构建同时安装 `libssb_ray_numeric.so` 与 `libssb_ray_cuda.so`。D3 生产 CLI 默认 CUDA 残差/雅可比，支持 `--geometry-backend cpu` 显式使用融合 CPU；公开留出脚本可设 `SSB_D3_BACKEND=cpu`。CUDA 优化工作分配上限 4 GiB，20 m 实测约 2.11 GiB，另需约 7.57 GiB 主机峰值 RSS，详见 [性能与范围](D3_PERFORMANCE.md)。
 
-缺少 CUDA 或 OptiX 会直接使配置失败，项目不静默降级成其他成像后端。每次更新 Git 提交或源码后，采集前重新构建；采集会核对构建版本与运行源码身份，包括文档提交。
+缺少 CUDA 或 OptiX 会直接使配置失败，项目不静默降级成其他成像后端。唯一例外是显式的 `-DSSB_IMAGING=OFF`，只构建 `ssb_core` 的 CPU 部分（时序、会话存储、采集管线、数值库）和 `ssb_tools`，供没有 GPU 的 CI 使用：不生成渲染器、`ssb_render`/`ssb_probe` 和 CUDA 重建库，构建印记记为 `imaging: false`，因此不能采集。本地开发不要使用该开关；测试用 `python3 tools/run_tests.py --profile cpu-ci`。每次更新 Git 提交或源码后，采集前重新构建；采集会核对构建版本与运行源码身份，包括文档提交。
 
 ```bash
 # 实际射线后端自检；ssb_runtime.sh 自动选择 WSL 隔离运行库或原生驱动（SSB_RUNTIME 可显式指定）。

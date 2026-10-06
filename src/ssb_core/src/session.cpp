@@ -239,7 +239,8 @@ nlohmann::json ProvenanceJson(const std::vector<std::string>& argv) {
   const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
   const std::string lib = ThisLibraryPath();
   const nlohmann::json build = {{"git_head", SSB_BUILD_GIT_HEAD}, {"git_dirty", SSB_BUILD_GIT_DIRTY != 0},
-                                {"source_digest", SSB_BUILD_GIT_DIFF_SHA256}, {"build_type", SSB_BUILD_TYPE}};
+                                {"source_digest", SSB_BUILD_GIT_DIFF_SHA256}, {"build_type", SSB_BUILD_TYPE},
+                                {"imaging", SSB_BUILD_IMAGING != 0}};
   const nlohmann::json run = {{"git_head", head}, {"git_dirty", dirty != 0}, {"source_digest", digest}};
   // False means the running binary was built from a different source tree than the
   // one on disk now: rebuild before treating the session as evidence.

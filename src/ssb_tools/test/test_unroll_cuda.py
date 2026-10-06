@@ -9,6 +9,7 @@ from ssb_tools.unroll_cuda import CudaRaster
 from ssb_tools.wall_coverage import target_grid
 
 
+@pytest.mark.requires_cuda
 @pytest.mark.parametrize('fraction', [-.03, .03])
 def test_global_scale_cuda_and_cpu_keep_remote_shifted_band_and_same_pixels(fraction):
     from ssb_tools.global_geometry import GeometrySettings, Trajectory
@@ -41,6 +42,7 @@ def test_global_scale_cuda_and_cpu_keep_remote_shifted_band_and_same_pixels(frac
         raster.close()
 
 
+@pytest.mark.requires_cuda
 @pytest.mark.parametrize('missing', [False, True])
 @pytest.mark.parametrize('tile', [(1, 1), (7, 5), (32, 8192)])
 def test_cuda_matches_reference_with_missing_lines_and_native_saturation(tmp_path, missing, tile):
@@ -72,6 +74,7 @@ def test_cuda_matches_reference_with_missing_lines_and_native_saturation(tmp_pat
     assert np.any(reference[0] == 65535) and np.any(reference[1] > 1)
 
 
+@pytest.mark.requires_cuda
 def test_cuda_public_only_end_to_end_retains_provenance_and_trace(tmp_path):
     root = tmp_path/'public'; calibration, _ = public_fixture(root)
     output = tmp_path/'cuda'
@@ -99,6 +102,7 @@ def test_cuda_errors_do_not_fall_back_to_cpu(monkeypatch):
     with pytest.raises(OSError, match='intentional'): CudaRaster(sampler)
 
 
+@pytest.mark.requires_cuda
 def test_cuda_rejects_nonmonotonic_geometry_and_excessive_tile():
     with pytest.raises(ValueError, match='uint8'): CudaRaster(analytic_sampler())  # float cache: CPU only
     sampler = analytic_sampler(raw=True)
@@ -114,6 +118,7 @@ def test_cuda_rejects_nonmonotonic_geometry_and_excessive_tile():
     with pytest.raises(ValueError, match='mapping'): CudaRaster(sampler)
 
 
+@pytest.mark.requires_cuda
 def test_feature_search_failure_releases_real_cuda_context():
     from ssb_tools.feature_review import feature_raster
     sampler = analytic_sampler(raw=True)
@@ -128,6 +133,7 @@ def test_feature_search_failure_releases_real_cuda_context():
     assert next_raster.handle is None
 
 
+@pytest.mark.requires_cuda
 @pytest.mark.parametrize('missing', [False, True])
 @pytest.mark.parametrize('fields', [4, 5, 6, 'coarse6', 7])
 def test_global_cuda_matches_cpu_coupled_rays_and_invalid_native_samples(tmp_path, missing, fields):
@@ -160,6 +166,7 @@ def test_global_cuda_matches_cpu_coupled_rays_and_invalid_native_samples(tmp_pat
     assert np.count_nonzero(counts) and np.any(counts == 0) and np.any(counts > 1)
 
 
+@pytest.mark.requires_cuda
 def test_global_cuda_zero_correction_matches_d1_and_preserves_shifted_band_candidates(tmp_path):
     from ssb_tools.global_geometry import Trajectory
     from ssb_tools.global_cuda import GlobalCudaRaster
@@ -190,6 +197,7 @@ def test_global_cuda_zero_correction_matches_d1_and_preserves_shifted_band_candi
         corrected.close()
 
 
+@pytest.mark.requires_cuda
 @pytest.mark.parametrize('coupled', [False, True])
 @pytest.mark.parametrize('kind', ['constant', 'groove', 'partial'])
 def test_global_cuda_applies_shared_relief_and_matches_cpu_across_tiles(coupled, kind):
@@ -233,6 +241,7 @@ def test_global_cuda_applies_shared_relief_and_matches_cpu_across_tiles(coupled,
         raster.close()
 
 
+@pytest.mark.requires_cuda
 def test_global_cuda_rejects_old_depthless_abi_and_releases_context(monkeypatch):
     import ctypes
     from ssb_tools.global_cuda import GlobalCudaRaster
@@ -255,6 +264,7 @@ def test_global_cuda_rejects_old_depthless_abi_and_releases_context(monkeypatch)
     assert len(closed) == 1
 
 
+@pytest.mark.requires_cuda
 @pytest.mark.parametrize('coupled', [False, True])
 def test_cuda_inverse_preserves_finite_nearest_row_footprints_and_real_gaps(coupled):
     from ssb_tools.global_geometry import Trajectory
@@ -292,6 +302,7 @@ def test_cuda_inverse_preserves_finite_nearest_row_footprints_and_real_gaps(coup
         raster.close()
 
 
+@pytest.mark.requires_cuda
 def test_cuda_row_centre_ignores_only_zero_weight_neighbours():
     from test_evaluate_global_geometry import independent_fixture
     from ssb_tools.global_cuda import GlobalCudaRaster
@@ -331,6 +342,7 @@ def test_global_cuda_row_vectors_match_independent_matrix_ray_equations(yaw):
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-14)
 
 
+@pytest.mark.requires_cuda
 @pytest.mark.parametrize('saturated', [False, True])
 @pytest.mark.parametrize('relief', [False, True])
 def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_path, saturated, relief):
@@ -416,6 +428,7 @@ def test_full_global_mosaic_public_only_quantized_output_and_exact_coverage(tmp_
         run(d1, fit, d1/'wrong')
 
 
+@pytest.mark.requires_cuda
 def test_global_cuda_rejects_nonfinite_or_unbounded_parameters_and_excessive_tiles():
     from ssb_tools.global_geometry import Trajectory
     from ssb_tools.global_cuda import GlobalCudaRaster
@@ -436,6 +449,7 @@ def test_global_cuda_rejects_nonfinite_or_unbounded_parameters_and_excessive_til
         raster.close()
 
 
+@pytest.mark.requires_cuda
 def test_global_cuda_matches_cpu_at_declared_motion_bounds_and_large_native_window(tmp_path):
     from ssb_tools.global_geometry import Trajectory, GeometrySettings
     from ssb_tools.global_cuda import GlobalCudaRaster
@@ -465,6 +479,7 @@ def test_global_cuda_matches_cpu_at_declared_motion_bounds_and_large_native_wind
         engine.close()
 
 
+@pytest.mark.requires_cuda
 @pytest.mark.parametrize('missing', [False, True])
 @pytest.mark.parametrize('relief', [False, True])
 def test_narrow_fusion_cuda_matches_independent_cpu_and_preserves_coverage(missing, relief):
@@ -500,6 +515,7 @@ def test_narrow_fusion_cuda_matches_independent_cpu_and_preserves_coverage(missi
         raster.close(); ordinary.close()
 
 
+@pytest.mark.requires_cuda
 def test_fusion_full_output_validator_and_baseline_tamper_rejection(tmp_path):
     from ssb_tools.global_geometry import Trajectory, GeometrySettings
     from ssb_tools.global_mosaic import run as mosaic_run
