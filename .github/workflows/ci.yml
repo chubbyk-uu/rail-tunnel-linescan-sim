@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # lint compares changed lines with the push/PR base
 
       - uses: ros-tooling/setup-ros@v0.7
         with:
@@ -39,6 +41,16 @@ jobs:
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
           python3 tools/run_tests.py --profile cpu-ci --output ci_test_logs
+
+      - name: Lint (pyflakes everywhere; style on changed lines only)
+        shell: bash
+        run: |
+          python3 -m venv /tmp/lint
+          /tmp/lint/bin/pip install --quiet 'ruff==0.6.9' 'clang-format==18.1.8'
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          PATH=/tmp/lint/bin:$PATH python3 tools/lint_changed.py \
+            --base "${{ github.event.pull_request.base.sha || github.event.before }}"
 
       - name: Keep test logs
         if: always()

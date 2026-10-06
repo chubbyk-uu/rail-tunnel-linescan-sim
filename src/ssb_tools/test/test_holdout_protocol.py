@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 import numpy as np
-from test_wall_coverage import nominal
+from test_wall_coverage import nominal  # noqa: F401 -- pytest fixture
 
 from ssb_tools.holdout_protocol import capture_checks, public_run_valid
 from ssb_tools.session import sha256_file

@@ -1,0 +1,3 @@
+# Applied to changed lines only (tools/lint_changed.py uses git clang-format).
+BasedOnStyle: Google
+ColumnLimit: 120

@@ -37,7 +37,7 @@ def main():
                  output='', command_result={}, error='', task={},
                  mission_limits=dict(inspection_x_m=[0.,20.],minimum_distance_m=1.))
     publishing = [True]
-    timer = node.create_timer(.1, lambda: status.publish(String(data=json.dumps(state)))
+    _timer = node.create_timer(.1, lambda: status.publish(String(data=json.dumps(state)))
                              if publishing[0] else None)
 
     def wait(predicate, timeout=20):

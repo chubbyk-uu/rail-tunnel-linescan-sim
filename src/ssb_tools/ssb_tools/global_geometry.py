@@ -247,7 +247,6 @@ def cylinder_points(axis, theta, tangent, correction, radius, height, radial_dep
     vx = cb*tangent+sb*rz
     vy = ry
     vz = -sb*tangent+cb*rz
-    raw_vx = vx
     if correction.shape[1] == 7:
         cy, syaw = np.cos(correction[:, 6]), np.sin(correction[:, 6])
         vx, vy = cy*vx-syaw*vy, syaw*vx+cy*vy

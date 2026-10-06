@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
-from ssb_tools.sensor_noise_demo import prepare,validate_profile
+from ssb_tools.sensor_noise_demo import prepare
 from ssb_tools.optical_bench import prepare as prepare_bench
 from ssb_tools.package_paths import share_file
 from ssb_tools.session import sha256_file

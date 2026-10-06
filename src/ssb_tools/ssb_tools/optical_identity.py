@@ -2,7 +2,6 @@
 import re
 import secrets
 import subprocess
-from pathlib import Path
 
 
 def ensure_optical_key(config):

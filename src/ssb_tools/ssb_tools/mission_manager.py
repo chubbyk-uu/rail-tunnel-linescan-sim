@@ -7,7 +7,6 @@ import math
 import os
 from pathlib import Path
 import queue
-import signal
 import subprocess
 import threading
 import time

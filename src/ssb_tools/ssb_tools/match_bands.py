@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 from .band_matching import MatchSettings, match_window
 from .matching_structures import STRUCTURE_MODEL, LK_STRUCTURE_RADIUS
-from .initial_unroll import load_bands, release_pages, display
+from .initial_unroll import load_bands, display
 from . import public_audit
 from .parallel_budget import resolve_workers
 from .public_capture import confined_file

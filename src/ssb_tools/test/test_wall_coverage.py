@@ -10,7 +10,7 @@ from ssb_tools.mission_plan import wall_plan, plan
 from ssb_tools.session import sha256_file
 from ssb_tools.unroll import row_axis_coordinates
 from ssb_tools.wall_coverage import (calibrated_spans, calibrated_row_footprint, target_grid,
-                                     coverage_runs, inspect_session, RUN_DTYPE)
+                                     coverage_runs, inspect_session)
 
 
 @pytest.fixture

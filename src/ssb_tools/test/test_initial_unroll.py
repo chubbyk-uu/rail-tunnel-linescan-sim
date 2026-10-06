@@ -1,11 +1,10 @@
 import json
 import math
-from pathlib import Path
 import numpy as np
 import pytest
 from ssb_tools.initial_unroll import (BandSampler, PROJECTION, rasterize, reconstruct, trace_pixel, preview_sample,
                                       cpu_tile, MOSAIC_INVALID)
-from ssb_tools.native_rows import MemoryRows, NativeRows, correct
+from ssb_tools.native_rows import MemoryRows, NativeRows
 from ssb_tools.optical_calibration import flat_correct
 from ssb_tools.wall_coverage import RUN_DTYPE
 from ssb_tools.public_capture import PublicCapture

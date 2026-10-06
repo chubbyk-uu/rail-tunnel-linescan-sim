@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 import xml.etree.ElementTree as ET
 import numpy as np
 import yaml

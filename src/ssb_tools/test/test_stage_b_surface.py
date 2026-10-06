@@ -1,4 +1,3 @@
-import copy
 import json
 import math
 from pathlib import Path
@@ -9,7 +8,7 @@ import pytest
 import yaml
 
 from ssb_tools.stage_b_surface import inverse_orientation, quilt_layout, QuiltSampler, TEXEL
-from ssb_tools.stage_b_defects import assemble, build_grid, exact_composition
+from ssb_tools.stage_b_defects import assemble, build_grid
 from ssb_tools.stage_b_scene import load_spec
 
 ROOT=Path(__file__).resolve().parents[3]

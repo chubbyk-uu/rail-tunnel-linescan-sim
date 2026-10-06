@@ -11,7 +11,7 @@ from ssb_tools.stage_b_scene import make_world
 from ssb_tools.physical_world import check
 from ssb_tools.optical_bench import prepare
 
-from test_physical_world import built, failed
+from test_physical_world import built, failed  # noqa: F401 -- built is a pytest fixture
 
 
 @pytest.mark.parametrize('field,value', [('dy_m',.02),('dz_m',-.02),

@@ -14,7 +14,6 @@ from pathlib import Path
 import time
 import numpy as np
 from PIL import Image
-from .optical_calibration import flat_correct
 from .provenance import stage_record
 from .public_capture import PublicCapture, confined_file
 from .session import sha256_file

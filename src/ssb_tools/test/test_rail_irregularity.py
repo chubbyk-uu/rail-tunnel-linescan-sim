@@ -1,5 +1,4 @@
 import copy
-import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -7,7 +6,7 @@ import numpy as np
 import pytest
 import yaml
 
-from ssb_tools.rail_irregularity import (chord_offsets, cross_shape, decode_heightmap, profile, rails, segments,
+from ssb_tools.rail_irregularity import (cross_shape, decode_heightmap, profile, rails, segments,
                                          settings, shape, twist, SDF_SIZE_FACTOR, SEGMENT_MAX_M, SEGMENT_SAMPLES,
                                          SEGMENT_OVERLAP_M)
 from ssb_tools.stage_b_scene import load_spec

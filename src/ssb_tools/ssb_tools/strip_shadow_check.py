@@ -8,7 +8,6 @@ from pathlib import Path
 import signal
 import subprocess
 import threading
-import time
 import xml.etree.ElementTree as ET
 
 import numpy as np

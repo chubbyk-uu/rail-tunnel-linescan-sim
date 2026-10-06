@@ -1,0 +1,15 @@
+# Repository-wide: pyflakes rules only. Line length and one statement per line are
+# enforced on changed lines by tools/lint_changed.py, so old code is not reformatted.
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["F"]
+
+[lint.per-file-ignores]
+# Parameters named after imported pytest fixtures.
+"src/ssb_tools/test/test_holdout_protocol.py" = ["F811"]
+"src/ssb_tools/test/test_mount_assembly.py" = ["F811"]
+
+[format]
+quote-style = "preserve"

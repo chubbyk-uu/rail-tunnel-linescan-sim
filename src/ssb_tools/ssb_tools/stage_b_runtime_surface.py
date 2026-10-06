@@ -184,7 +184,7 @@ def build_macro(item, sources_root, output, period, x0, x1, panels, seed):
         xs=x0+(np.arange(nx)+.5)*pitch;qs=-period/2+(np.arange(nq)+.5)*pitch
         ring=np.floor(xs/panels['ring_width_m']).astype(int)
         edges=np.cumsum([0]+list(panels['angles_deg']))
-        factors={};srng=np.random.default_rng(seed+1)
+        srng=np.random.default_rng(seed+1)
         deg=np.degrees(qs/(period/(2*math.pi)))
         for r in np.unique(ring):
             a0=-panels['angles_deg'][0]/2+(r%2)*panels['alternating_stagger_deg']

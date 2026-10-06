@@ -2,7 +2,6 @@
 import argparse
 import html
 import json
-import math
 from pathlib import Path
 import time
 

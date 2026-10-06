@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -20,7 +19,7 @@ from ssb_tools.mission_plan import plan, wall_plan
 from ssb_tools.optical_identity import check_calibration
 from ssb_tools.physical_world import check, write_manifest
 from ssb_tools.provenance import stage_record
-from ssb_tools.session import read_json, sha256_file
+from ssb_tools.session import read_json
 from ssb_tools.stage_b_gui_world import prepare
 from ssb_tools.validate_contact import validate
 
