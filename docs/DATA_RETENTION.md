@@ -23,6 +23,12 @@
 
 逻辑文件量约 12.63 GiB，按唯一 inode 估算实际约 2.43 GiB，不能按硬链接目录重复相加宣称释放更多空间。正式原图、独立重成像、最终全图及综合包完整保留；首次失败和首次评价不覆盖。
 
+### 2026-10-06 清理
+
+先用 `tools/inventory_data.py` 只读盘点（按 inode 计占用；引用检查覆盖仓库所有被跟踪文本、`local_data/evaluation` 记录和符号链接；只按目录名匹配到的逐条人工核对），再由用户按类别批准。删除 72 个开发期会话及导出目录，释放 283.1 GB。删除前归档了 6936 个小记录（报告、配置、日志、provenance、小预览），每个都回读比对 SHA-256；原图块、大数组和每会话重复的 `optical_assets.json` 未归档，它们的哈希仍保存在已归档的会话清单中。记录见 `local_data/evaluation/cleanup_20261006/`（`cleanup.json`、`archive_hashes.json`、`retained_records.tar.gz`），盘点见 `local_data/inventory_2026-10-06_v2.json`。
+
+属于可删类别但保留的有：`sessions/scale20_holdout_seed20261201_20261005`、`sessions/d3_perf_fused_20261005`（里程碑专项诊断的输入）、`sessions/seam_fusion_holdout_seed20270107_20261005`（[SEAM_FUSION](SEAM_FUSION.md) 声明保留）、`local_data/rviz_preview`（任务管理器的运行时缓存）、`local_data/patent_review`（人工笔记）。清理后，在 `milestone-20m-code` 检出中复核里程碑协议，19 项全部通过（`protocol_verification_after_cleanup_20261006.json`）。被删会话对应的历史评价记录仍保留，但无法再用原数据重跑。
+
 ## 3. 清理规则
 
 1. 查运行与评价依赖、进程占用、符号链接目标和硬链接，再判断是否可删除。不能仅依据目录命名像中间产物就清理。

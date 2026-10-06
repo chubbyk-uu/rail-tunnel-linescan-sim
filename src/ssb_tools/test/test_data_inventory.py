@@ -29,3 +29,9 @@ def test_any_current_or_retention_reference_keeps_a_directory():
     assert classify({'evaluation_records': ['e']}) == 'evaluation_referenced'
     assert classify({'history_docs': ['h']}) == 'history_only'
     assert classify({}) == 'unreferenced'
+
+
+def test_bare_directory_names_in_current_docs_need_review_not_deletion():
+    assert classify({'current_docs_by_name': ['docs/SEAM_FUSION.md']}) == 'needs_review'
+    assert classify({'retention_list_by_name': ['docs/DATA_RETENTION.md'], 'history_docs': ['h']}) == 'needs_review'
+    assert classify({'history_docs_by_name': ['h']}) == 'unreferenced'

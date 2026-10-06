@@ -17,6 +17,8 @@ import sys
 import time
 
 ROOTS = ('sessions', 'local_data')
+TEXT_SUFFIXES = {'.md', '.json', '.py', '.sh', '.yaml', '.yml', '.cpp', '.hpp', '.txt', '.cfg', '.toml', '.xml',
+                 '.sdf', '.config', '.rviz', '.html'}
 
 
 def walk(top):
@@ -51,12 +53,15 @@ def attribute(owners):
 def references(repo, names):
     """{directory: {kind: [referring files]}} from tracked docs and evaluation records.
 
-    A reference must name the repository-relative path (e.g. sessions/foo) ending at a
-    path boundary, so ordinary words and longer sibling names do not match.
+    A full reference names the repository-relative path (e.g. sessions/foo) ending at a
+    path boundary. Docs often name only the directory, so a bare-name match at word
+    boundaries is reported under '<kind>_by_name' for manual review.
     """
     found = defaultdict(lambda: defaultdict(list))
-    patterns = [(name, re.compile(re.escape(name)+r'(?![\w.-])')) for name in names]
-    tracked = subprocess.check_output(['git', 'ls-files', '*.md', '*.json'], cwd=repo, text=True).split()
+    patterns = [(name, re.compile(re.escape(name)+r'(?![\w.-])'),
+                 re.compile(r'(?<![\w.-])'+re.escape(name.split('/', 1)[1])+r'(?![\w.-])')) for name in names]
+    tracked = subprocess.check_output(['git', 'ls-files'], cwd=repo, text=True).split()
+    tracked = [name for name in tracked if Path(name).suffix.lower() in TEXT_SUFFIXES]
     sources = [(name, 'history_docs' if name.startswith('docs/history/') else
                 'media_manifest' if name == 'docs/media/manifest.json' else
                 'retention_list' if name == 'docs/DATA_RETENTION.md' else 'current_docs') for name in tracked]
@@ -69,15 +74,19 @@ def references(repo, names):
             text = (repo/name).read_text(encoding='utf-8', errors='ignore')
         except OSError:
             continue
-        for directory, pattern in patterns:
-            if pattern.search(text):
+        for directory, full, bare in patterns:
+            if full.search(text):
                 found[directory][kind].append(name)
+            elif bare.search(text):
+                found[directory][kind+'_by_name'].append(name)
     return found
 
 
 def classify(refs):
     if refs.get('retention_list') or refs.get('current_docs') or refs.get('symlinked_from_retained'):
         return 'required'
+    if refs.get('retention_list_by_name') or refs.get('current_docs_by_name'):
+        return 'needs_review'
     if refs.get('media_manifest'):
         return 'media_source'
     if refs.get('evaluation_records'):
