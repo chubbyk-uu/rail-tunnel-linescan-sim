@@ -148,7 +148,8 @@ def run(output):
             assert moved>=.5*expected and moved>5*flat_ptp, \
                 f'irregular track must move the body: {moved:.3g} m vs relief {expected:.3g} m, flat {flat_ptp:.3g} m'
             results.append({'name':name,'rows':s.summary['rows'],'complete':True,'body_z_ptp_m':moved,
-                            'rail_relief_ptp_m':expected,'flat_body_z_ptp_m':flat_ptp});continue
+                            'rail_relief_ptp_m':expected,'flat_body_z_ptp_m':flat_ptp})
+            continue
         results.append({'name':name,'rows':s.summary['rows'],'complete':True})
     (output/'report.json').write_text(json.dumps(results,indent=2)+'\n')
     print(json.dumps(results))
