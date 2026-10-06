@@ -1,6 +1,6 @@
 # 2026-10-06 全面审核修复计划
 
-状态：阶段 0、1 完成，其余进行中（分支 `repair/2026-10-06`）。来源是 2026-10-06 全项目审核；用户已确认四项取舍（见 §0.2）。完成后按惯例移入 `docs/history/` 并在索引登记。
+状态：阶段 0–3 完成，其余进行中（分支 `repair/2026-10-06`）。来源是 2026-10-06 全项目审核；用户已确认四项取舍（见 §0.2）。完成后按惯例移入 `docs/history/` 并在索引登记。
 
 审核基线：HEAD `6eba2ab`，工作树干净；`tools/run_tests.py` 全部通过，995 项（906 Python + 84 gtest + 5 ctest 包装），0 跳过，34 s。
 
@@ -176,6 +176,12 @@
 
 **验收**：完整构建后跑全套测试；再按 `tools/integration/mission.py`（§6.3 改名后的路径）跑一次 WSL 任务冒烟，确认 RViz 面板对完成和失败的显示正常。
 
+### 阶段 2 执行记录（2026-10-06）
+
+- `443a24d`：`TimingStats` 统计右测量轮边沿，`session.json` 增加 `odometer_right_edges` 且等于元数据表行数。生产端错误或提交失败后，Progress 返回 phase `failed`；`merge_capture` 把 `failed` 视为终态。新增 1 项 gtest 断言组和 2 项 pytest。
+- 回退检验：去掉右轮计数，`test_timing` 1 项失败；Progress 恢复旧逻辑，`test_pipeline_failure` 2 项失败；`merge_capture` 去掉 `failed`，pytest 2 项失败。恢复后全部通过。
+- WSL 任务冒烟（`run_mission.sh` / `tools/test_mission.py`）需要界面，并会做 20 m 级采集，移到阶段 8 总验收。
+
 ## 阶段 3：运行时可移植（审核 P1-1）
 
 ### 3.1 统一运行时入口
@@ -216,6 +222,13 @@
 - **新增 pytest**：分别伪造 WSL 和原生的 osrelease，检查生成的环境：wsl 模式的 `LD_LIBRARY_PATH` 与旧脚本逐字相同；native 模式不含 `/usr/lib/wsl/lib`。版本匹配到零个或多个时报错。
 - **本机（WSL）**：全套测试，加一次 `run_mission.sh` 冒烟。
 - **原生 Linux**：本机无法验证。LINUX.md 改写为"脚本已支持 native 模式，尚未在原生主机验收"，在另一台主机实测前不删除这条警示。
+
+### 阶段 3 执行记录（2026-10-06）
+
+- `ef6f455`：新增 `tools/ssb_runtime.sh`；`with_optix_runtime.sh` 改为从目录读取版本；替换全部调用点；capture provenance 增加 `runtime`。新增 12 项 pytest，用伪造的 osrelease 和运行库目录覆盖 WSL、原生、GUI、缺件、多版本、无法判断等分支；新增 1 项 gtest 检查 provenance。全套 1047 项通过，C++ GPU 测试已经通过新入口运行。
+- 本机实测：WSL 分支输出的 `LD_LIBRARY_PATH` 与旧脚本逐字相同。真实 Gazebo 插件回归（`tools/test_gazebo_plugins.py`）中，除下一条外 16 个工况全部通过新入口：采集完成，各类不匹配都在采集前被拒绝；provenance 记录了 `mode=wsl` 和驱动版本。
+- **新发现（早已存在，与本计划无关）**：该回归的 `irregular` 工况报错 `irregular track must move the body`，车体 z 峰峰值 0.130 mm，低于阈值 0.2 mm。在独立工作树中构建未改动的 `main`（`6eba2ab`）后失败完全相同，z 峰峰值逐位一致。脚本最后一次运行是 10-04，之后 `db94890`（10-05，导向接触与停车）改过接触代码，原因待查。这里没有放宽阈值，列入阶段 6.3 的集成脚本处理。
+- 原生分支只在伪造环境下测试过，没有在原生主机上实测。
 
 ## 阶段 4：许可证与 CI（审核 P1-2）
 
@@ -293,6 +306,7 @@ DEVELOPMENT_RULES 增加一条：合入 main 前必须本机跑 `tools/run_tests
 - `tools/test_*.py`（11 个）移到 `tools/integration/` 并去掉 `test_` 前缀，例如 `tools/integration/mission.py`。
 - 新增 `tools/integration/README.md`，表格列出每个脚本的前置条件（Gazebo / OptiX / RViz / 资产包）、用途、典型耗时和建议运行时机（采集链改动后、发布前）。
 - 更新引用：`docs/WHEEL_ERROR.md`，以及脚本 docstring 中互相引用的路径。history 中的旧路径不改，并在 history/README 中加一句说明改名。
+- 查明 `gazebo_plugins` 的 `irregular` 工况从何时开始失败：二分 `434ce48..6eba2ab`，确认是物理行为变化还是 8 cm 短程试验阈值本身不合理。结论记录后再改，不直接放宽阈值。
 
 ### 6.4 文档链接检查
 
