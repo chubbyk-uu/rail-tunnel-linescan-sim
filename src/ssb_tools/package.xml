@@ -13,6 +13,7 @@
   <exec_depend>python3-matplotlib</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>ssb_core</exec_depend>
+  <exec_depend>gz_sim_vendor</exec_depend>
   <exec_depend>gz_transport_vendor</exec_depend>
   <exec_depend>gz_msgs_vendor</exec_depend>
   <exec_depend>rclpy</exec_depend>
