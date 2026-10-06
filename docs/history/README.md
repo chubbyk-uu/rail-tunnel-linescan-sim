@@ -19,6 +19,7 @@
 | [阶段 B 快照](STAGE_B_SNAPSHOT_2026-10-03.md) | 旧画质复核、生成链、任务测试与轨道/车轮参数扫描 |
 | [数据清理快照](DATA_RETENTION_SNAPSHOT_2026-10-03.md) | 历次清理、去重、报告覆盖失误与保留范围 |
 | [已完成的修复计划](REPAIR_PLAN_2026-10-02.md) | 第 0–7 项实现、验证及后续审核修复记录 |
+| [2026-10-06 全面审核修复](REPAIR_PLAN_2026-10-06.md) | 协议搬迁复核、D3 入口与 IRLS 报告、运行时入口、CPU CI、lint、文档链接、集成脚本、数据清理 |
 
 2026-10-06 起集成回归脚本 `tools/test_<名称>.py` 移到 `tools/integration/<名称>.py`（例如 `tools/test_distance_stop.py` → `tools/integration/distance_stop.py`）；归档文中的旧路径不改，见 [集成脚本说明](../../tools/integration/README.md)。
 

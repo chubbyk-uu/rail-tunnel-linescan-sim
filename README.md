@@ -78,6 +78,6 @@ RViz 用 **Wall coverage** 指定壁面起点/长度，最短 1 米，支持 Sta
 | [后续计划](docs/ROADMAP.md) / [数据保留](docs/DATA_RETENTION.md) | 50 米前的容量方案、保留与安全清理 |
 | [开发守则](docs/DEVELOPMENT_RULES.md) / [历史归档](docs/history/README.md) | 构建溯源、WSL I/O 与旧失败/旧结果 |
 
-2026-10-05 里程碑回归为 **990 项通过**（906 Python、84 C++），零失败/跳过；这是已保存的测试记录，不保证未来版本的数量不变。运行 `python3 tools/run_tests.py > /tmp/ssb_test.log 2>&1`，结果查看 `colcon test-result --all`。采集、独立重成像和几何验收另行执行。
+2026-10-06 本机全套回归 **1060 项通过**（975 Python、85 C++），零失败/跳过（10-05 里程碑时为 990 项）；这是已保存的测试记录，不保证未来版本的数量不变。运行 `python3 tools/run_tests.py > /tmp/ssb_test.log 2>&1`，结果查看 `colcon test-result --all`；合入前必须在 GPU 主机上跑全套。GitHub CI 只运行无 GPU 的 `--profile cpu-ci`，不能代替全套。真实 Gazebo/RViz 集成脚本见 [tools/integration](tools/integration/README.md)。采集、独立重成像和几何验收另行执行。
 
 `src/ssb_core` 负责时序/成像/存储，`ssb_gazebo` 负责动力学与 GUI，`ssb_rviz` 负责面板，`ssb_tools` 负责生成、标定和重建。资产、原始会话、构建和日志不进 Git。
