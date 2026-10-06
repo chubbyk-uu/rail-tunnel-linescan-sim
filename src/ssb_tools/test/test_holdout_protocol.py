@@ -290,3 +290,80 @@ def test_v6_verification_detects_changed_matching_density_or_window_plan(tmp_pat
     if relief:
         assert result['checks']['surface_relief_settings_unchanged'] is (change != 'relief_settings')
     assert result['status'] == ('pass' if change is None else 'fail')
+
+
+def relocation_fixture(tmp_path, monkeypatch):
+    """A frozen protocol whose recorded workspace no longer exists, plus a git checkout."""
+    import subprocess
+    import ssb_tools.holdout_protocol as module
+    checkout = tmp_path/'checkout'
+    names = ('src/ssb_tools/ssb_tools/optimize_bands.py', 'src/ssb_core/CMakeLists.txt')
+    for name in names:
+        (checkout/name).parent.mkdir(parents=True, exist_ok=True)
+        (checkout/name).write_text('# frozen '+name+'\n')
+    git = ['git', '-C', str(checkout), '-c', 'user.name=t', '-c', 'user.email=t@t']
+    subprocess.run(['git', 'init', '-q', str(checkout)], check=True)
+    subprocess.run(git+['add', '.'], check=True)
+    subprocess.run(git+['commit', '-q', '-m', 'frozen'], check=True)
+    commit = subprocess.check_output(git+['rev-parse', 'HEAD'], text=True).strip()
+    frozen = tmp_path/'gone/workspace'
+    root = tmp_path/'run'
+    source = dict(git_head=commit, git_dirty=False)
+    for name in ('unroll', 'matches', 'fit'):
+        (root/name).mkdir(parents=True)
+        (root/name/'provenance.json').write_text(json.dumps(dict(source=source)))
+    (root/'unroll/report.json').write_text(json.dumps(dict(grid=dict(target_x_m=[12., 15.]))))
+    (root/'matches/report.json').write_text(json.dumps(dict(settings={})))
+    (root/'fit/report.json').write_text(json.dumps(dict(settings={})))
+    (root/'capture/config').mkdir(parents=True)
+    (root/'capture/config/provenance.json').write_text(json.dumps(dict(source_at_run=source)))
+    marker = tmp_path/'input'; marker.write_text('unchanged input')
+    protocol = dict(schema='ssb.d3_holdout_protocol.v5', code_commit=commit, holdout_roi_m=[12., 15.],
+        d2=dict(spacing_m=.2, settings={}), d3={}, input_hashes={str(marker): sha256_file(marker)},
+        sampling=dict(schema=module.SAMPLING_SCHEMA, spacing_q_m=.2, phase_fractions=[.25, .75],
+            samples_across=9, column_guard_pixels=2, original_nominal_probes_retained=True,
+            outside_target_requires_public_footprint_proof=True, angular_gaps_not_trimmed=True,
+            exact_plan_saved_before_truth=True),
+        production_sources={str(frozen/name): sha256_file(checkout/name) for name in names})
+    protocol_file = tmp_path/'evaluation/protocol.json'; protocol_file.parent.mkdir()
+    protocol_file.write_text(json.dumps(protocol))
+    monkeypatch.setattr(module, 'Session', lambda path: SimpleNamespace(root=path, summary=dict(status='complete')))
+    monkeypatch.setattr(module, 'capture_checks', lambda *a, **k: dict(binary_matches_source=True))
+    monkeypatch.setattr(module, 'public_run_valid', lambda *a, **k: True)
+    return module, protocol_file, root, checkout, frozen, git
+
+
+@pytest.mark.parametrize('change', [None, 'byte', 'missing', 'commit'])
+def test_relocated_source_root_reads_only_the_named_checkout(tmp_path, monkeypatch, change):
+    import subprocess
+    module, protocol_file, root, checkout, frozen, git = relocation_fixture(tmp_path, monkeypatch)
+    target = checkout/'src/ssb_tools/ssb_tools/optimize_bands.py'
+    if change == 'byte':
+        target.write_text(target.read_text()+' ')
+    elif change == 'missing':
+        target.unlink()
+    elif change == 'commit':
+        (checkout/'later.txt').write_text('later\n')
+        subprocess.run(git+['add', 'later.txt'], check=True)
+        subprocess.run(git+['commit', '-q', '-m', 'later'], check=True)
+    # The frozen workspace is gone: without relocation the source check cannot pass.
+    plain = module.verify(protocol_file, root, tmp_path/'evaluation/plain.json')
+    assert plain['checks']['production_sources_unchanged'] is False and 'source_relocation' not in plain
+    result = module.verify(protocol_file, root, tmp_path/'evaluation/relocated.json', checkout)
+    assert result['checks']['production_sources_unchanged'] is (change in (None, 'commit'))
+    assert result['checks']['source_checkout_matches_protocol'] is (change is None)
+    assert result['status'] == ('pass' if change is None else 'fail')
+    relocation = result['source_relocation']
+    assert relocation['frozen_workspace'] == str(frozen)
+    assert relocation['mapped'][str(frozen/'src/ssb_core/CMakeLists.txt')] == str(
+        checkout.resolve()/'src/ssb_core/CMakeLists.txt')
+
+
+@pytest.mark.parametrize('entries', [
+    {}, {'relative/src/ssb_core/a.cpp': 'x'}, {'/ws/lib/a.py': 'x'},
+    {'/ws/src/ssb_core/../../escape.py': 'x'},
+    {'/ws1/src/ssb_core/a.cpp': 'x', '/ws2/src/ssb_tools/b.py': 'x'}])
+def test_unmappable_frozen_sources_are_rejected(tmp_path, entries):
+    from ssb_tools.holdout_protocol import relocated_sources
+    with pytest.raises(ValueError):
+        relocated_sources(entries, tmp_path)

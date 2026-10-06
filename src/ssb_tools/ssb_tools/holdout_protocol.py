@@ -203,7 +203,40 @@ def expected_matching_plan(protocol,root):
     return expected
 
 
-def verify(protocol_file, root, output):
+def relocated_sources(entries, source_root):
+    """Map frozen absolute production sources into an explicit checkout.
+
+    The frozen workspace is derived from the entries themselves (each lies under
+    <workspace>/src/ssb_*); a path that cannot be mapped is an error, never a
+    fallback to the current workspace.
+    """
+    source_root = Path(source_root).resolve()
+    if not entries or not source_root.is_dir():
+        raise ValueError('frozen production sources and an existing source root are required')
+    workspaces, mapped = set(), {}
+    for frozen in entries:
+        parts = Path(frozen).parts
+        if not Path(frozen).is_absolute() or '..' in parts:
+            raise ValueError('frozen production source must be an absolute normalized path: '+frozen)
+        index = next((i for i in range(1, len(parts)-1) if parts[i] == 'src' and parts[i+1].startswith('ssb_')), None)
+        if index is None:
+            raise ValueError('frozen production source is outside <workspace>/src/ssb_*: '+frozen)
+        workspaces.add(Path(*parts[:index]))
+        mapped[frozen] = source_root.joinpath(*parts[index:])
+    if len(workspaces) != 1:
+        raise ValueError('frozen production sources span several workspaces')
+    return workspaces.pop(), mapped
+
+
+def source_checkout(source_root):
+    """HEAD and dirty state of the checkout that supplies relocated sources."""
+    git = ['git', '-C', str(Path(source_root).resolve())]
+    head = subprocess.check_output(git+['rev-parse', 'HEAD'], text=True).strip()
+    dirty = bool(subprocess.check_output(git+['status', '--porcelain', '--untracked-files=no'], text=True).strip())
+    return head, dirty
+
+
+def verify(protocol_file, root, output, source_root=None):
     protocol_file, root, output = Path(protocol_file), Path(root), evaluation_path(output)
     if output.exists():
         raise ValueError('verification records must be fresh; preserve earlier evidence')
@@ -215,6 +248,14 @@ def verify(protocol_file, root, output):
     def hashes_match(entries):
         return bool(entries) and all(Path(p).is_file() and sha256_file(p) == digest
                                      for p, digest in entries.items())
+    production = protocol['production_sources']
+    relocation = None
+    if source_root is not None:
+        workspace, mapped = relocated_sources(production, source_root)
+        head, dirty = source_checkout(source_root)
+        production = {str(mapped[p]): digest for p, digest in protocol['production_sources'].items()}
+        relocation = dict(frozen_workspace=str(workspace), source_root=str(Path(source_root).resolve()),
+                          head=head, dirty=dirty, mapped={p: str(m) for p, m in mapped.items()})
     checks = dict(
         clean_worktree=all(s.get('git_dirty') is False for s in [source, *stages]),
         code_commit_unchanged=all(s.get('git_head') == protocol['code_commit'] for s in [source, *stages]),
@@ -222,7 +263,9 @@ def verify(protocol_file, root, output):
         d3_settings_unchanged=read_json(root/'fit/report.json')['settings'] == protocol['d3'],
         holdout_roi_correct=read_json(root/'unroll/report.json')['grid']['target_x_m'] == protocol['holdout_roi_m'],
         input_hashes_unchanged=hashes_match(protocol['input_hashes']),
-        production_sources_unchanged=hashes_match(protocol['production_sources']))
+        production_sources_unchanged=hashes_match(production))
+    if relocation is not None:
+        checks['source_checkout_matches_protocol'] = relocation['head'] == protocol['code_commit'] and not relocation['dirty']
     if protocol.get('schema') in ('ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         checks['d2_planning_unchanged'] = read_json(root/'matches/report.json').get('planning') == expected_matching_plan(protocol,root)
     if protocol.get('schema') == 'ssb.d3_holdout_protocol.v7':
@@ -260,6 +303,9 @@ def verify(protocol_file, root, output):
         matching_halo_contract='halo_m is base; relative policy adds 3% of half the public exposure span',
         capture_build=provenance.get('build'), capture_source_at_run=source,
         interpretation='unchanged C++ code is explanatory evidence, not an exemption from build identity')
+    if relocation is not None:
+        report['source_relocation'] = dict(relocation,
+            scope='production source hashes read from this checkout; all other checks read archived records')
     if protocol.get('schema') in ('ssb.d3_holdout_protocol.v5', 'ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         from .validate_stage_b import identity_path
         report_file = session.root/'evaluation/reports/stage_b_smoke.json'
@@ -290,6 +336,8 @@ def main():
     verification = sub.add_parser('verify')
     for name in ('protocol', 'root', 'output'):
         verification.add_argument('--'+name, required=True)
+    verification.add_argument('--source-root',
+        help='clean checkout of the protocol code_commit (e.g. a worktree of tag milestone-20m-code)')
     audit = sub.add_parser('audit-public', help='verify retained public products, optionally through an explicit relocation')
     audit.add_argument('--root', required=True)
     audit.add_argument('--relocation')
@@ -314,7 +362,7 @@ def main():
         output.write_text(json.dumps(report, indent=2)+'\n')
         print(json.dumps(report))
         return 0 if valid else 1
-    report = verify(args.protocol, args.root, args.output)
+    report = verify(args.protocol, args.root, args.output, args.source_root)
     print(json.dumps(report))
     return 0 if report['status'] == 'pass' else 1
 
