@@ -81,9 +81,9 @@
 
 核对 4WIDS 当前实现后，将按需生成提升为首选架构，不再先全量物化高清壁面：
 
-- [现行道路资产说明](../../../4WIDS_agv/docs/ROAD_ASSETS.md)的 100×10 m 默认道路启用 `--runtime-material`；实际 manifest 为 `agv.ground_material.recipe.v1`，0.25 mm 间距、2048 核心、2 像素边缘冗余、32 个缓存槽。它保存源图、裁片布局和混合掩码，由 [RuntimeMaterial](../../../4WIDS_agv/src/agv_linescan/src/optix/runtime_material.cu) 在 GPU 生成当前需要的纹理块，[MaterialCache](../../../4WIDS_agv/src/agv_linescan/src/optix/material_cache.cpp)负责预取、固定当前使用块及逐出。
+- 现行道路资产说明（相邻私有项目 `4WIDS_agv/docs/ROAD_ASSETS.md`，未公开）的 100×10 m 默认道路启用 `--runtime-material`；实际 manifest 为 `agv.ground_material.recipe.v1`，0.25 mm 间距、2048 核心、2 像素边缘冗余、32 个缓存槽。它保存源图、裁片布局和混合掩码，由 RuntimeMaterial（相邻私有项目 `4WIDS_agv/src/agv_linescan/src/optix/runtime_material.cu`，未公开） 在 GPU 生成当前需要的纹理块，MaterialCache（相邻私有项目 `4WIDS_agv/src/agv_linescan/src/optix/material_cache.cpp`，未公开）负责预取、固定当前使用块及逐出。
 - 本次只读统计 `runtime_fullwidth_100m_diverse_final_v8` 目录内 332 个文件，逻辑大小约 **2.242 GB**，包含场景网格、显示图和配方源数据，不含外部下载缓存和采集图像；硬链接不在跨目录间去重，不把这个数称为整个工程的磁盘占用。
-- [历史 20 m 配方对照](../../../4WIDS_agv/results/runtime_material_recipe_probe.json)记录：展开高清纹素约 13.34 GB，紧凑场景约 0.921 GB；1056 块颜色/法线逐字节一致，96 个采集图块一致。这是历史样例的等价性证据，不直接证明本项目移植后的精度或实时率。
+- 历史 20 m 配方对照（相邻私有项目 `4WIDS_agv/results/runtime_material_recipe_probe.json`，未公开）记录：展开高清纹素约 13.34 GB，紧凑场景约 0.921 GB；1056 块颜色/法线逐字节一致，96 个采集图块一致。这是历史样例的等价性证据，不直接证明本项目移植后的精度或实时率。
 - 本项目保留 16 位反照率、可变粗糙度和法线精度，不盲目照搬 4WIDS 的 8 位单灰度+双分量 8 位法线、常量粗糙度格式。单张 16K 来源按现有 8 字节打包约 **2 GiB**，不是整条隧道的 82 GB；原下载文件、分块源、布局、GUI 图及网格另计。源数据显存不能与生成块缓存重复使用同一份预算，需要源页缓存或单独预留预算。
 - 先实现并验证源图/配方→局部块的确定性生成，与小范围离线烘焙逐块比较；布局、掩码、色调和源图哈希存档。圆柱 q 周期接缝、旋转后的法线、边缘冗余、跨块采样和缓存重建必须一致。裂缝保持独立物理尺度表达，不随材质缓存重新随机生成。
 - 预取依据后续实际曝光的圆柱壁面区域，涵盖像素足迹、曝光运动及光学偏移；不能套用道路的平面矩形预取公式。按需生成不是每条射线重新拼一次源图，块生成后在有界缓存中复用。

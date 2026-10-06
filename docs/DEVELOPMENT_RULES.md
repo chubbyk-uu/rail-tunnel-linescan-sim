@@ -2,7 +2,7 @@
 
 本文以 DESIGN.md §12 的相邻项目教训为基础，补充本项目验证过的实施约束。
 
-来源：4WIDS [现行教训](../../4WIDS_agv/docs/LESSONS.md)（下称 WL#n）与[完整调查](../../4WIDS_agv/docs/archive/maintenance/LESSONS_20260923_FULL.md)（W#n），climbot [隐蔽故障记录](../../climbot_sim/docs/INCIDENTS.md)（C#n）。只列会改变本项目做法的条目。两个项目反复出现的共性是：测试全绿、摘要通过、图像看起来对齐，但实际加载的代码、被测的量或验收的范围不是以为的那个。
+来源是两个未随本仓库公开的相邻私有项目：4WIDS_agv 的现行教训 `docs/LESSONS.md`（下称 WL#n）与完整调查 `docs/archive/maintenance/LESSONS_20260923_FULL.md`（W#n），以及 climbot_sim 的隐蔽故障记录 `docs/INCIDENTS.md`（C#n）。编号仅用于追溯，各条所需内容已写在本页，不依赖读取原文。只列会改变本项目做法的条目。两个项目反复出现的共性是：测试全绿、摘要通过、图像看起来对齐，但实际加载的代码、被测的量或验收的范围不是以为的那个。
 
 ## 证据链：代码、构建、运行分三层
 
