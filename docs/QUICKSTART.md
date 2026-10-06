@@ -49,7 +49,7 @@ python3 -m ssb_tools.public_reconstruction \
   > /tmp/ssb_reconstruction.log 2>&1
 ```
 
-这组命令采用名义流程的默认匹配密度；不能冒充综合误差冻结方案。严格图像一致性检查也不等于独立几何验收。D1 小型索引仍依赖原图，不删除 `raw/`；移动原图后显式使用 `--raw`，详见 [STAGE_D](STAGE_D.md)。
+这组命令采用名义流程的默认匹配密度；不能冒充综合误差冻结方案（与冻结协议对应的参数见 [STAGE_D](STAGE_D.md#运行流程)）。严格图像一致性检查也不等于独立几何验收。D1 小型索引仍依赖原图，不删除 `raw/`；移动原图后显式使用 `--raw`，详见 [STAGE_D](STAGE_D.md)。
 
 ## 4. 查看原图、名义展开和优化结果
 
