@@ -18,6 +18,7 @@ jobs:
     container: ros:jazzy-ros-base
     defaults:
       run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
