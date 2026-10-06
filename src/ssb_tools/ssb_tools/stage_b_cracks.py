@@ -154,7 +154,7 @@ def catalog(source, spec_path, output):
     if out.exists():
         raise ValueError('catalog output already exists')
     out.parent.mkdir(parents=True,exist_ok=True)
-    result = dict(schema='ssb.crack_candidates.v1',source_file=str(source),source_sha256=digest(source),
+    result = dict(schema='ssb.crack_candidates.v1',source_file=Path(source).name,source_sha256=digest(source),
                   source_size_px=[alpha.shape[1],alpha.shape[0]],generator='built-in image_gen',
                   spec_sha256=digest(spec_path),motifs=items,ignored_small_components=count-1-len(selected),
                   width_distribution=spec['cracks'],procedural_paths=False,
@@ -292,7 +292,7 @@ def catalog_long(source, spec_path, output):
     length=spec['cracks']['required_long_crack_length_m']
     widths=sample_widths(len(motifs),spec['cracks'],spec['seed'])
     instances=[calibrate_long(m,length,float(w)) for m,w in zip(motifs,widths)]
-    result=dict(schema='ssb.long_crack_candidates.v1',source_file=str(source),source_sha256=digest(source),
+    result=dict(schema='ssb.long_crack_candidates.v1',source_file=Path(source).name,source_sha256=digest(source),
                 spec_sha256=digest(spec_path),generator='built-in image_gen',motifs=motifs,
                 metric_candidates=instances,selected_candidate='long_01',selection_basis='slender unbranched main course',
                 source_shape_limit='Source pixel scale bounds shape detail; physical width is assigned independently.',

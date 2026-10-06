@@ -43,7 +43,7 @@ python3 tools/download_demo_sources.py --output local_data/stage_b/sources --ver
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 
-# WSL：用已配置的隔离 OptiX 运行库渲染标定靶。
+# WSL：经 tools/ssb_runtime.sh 用隔离 OptiX 运行库渲染标定靶。
 python3 tools/build_demo_from_sources.py --runtime wsl \
   --sources local_data/stage_b/sources \
   --work local_data/stage_b/build_from_sources_NEW \
@@ -51,7 +51,7 @@ python3 tools/build_demo_from_sources.py --runtime wsl \
   > /tmp/ssb_asset_generation.log 2>&1
 ```
 
-原生 Linux 将 `--runtime wsl` 改为 `--runtime native`，其标靶直接运行已安装的 `ssb_probe`，使用系统驱动侧 OptiX 库。生成不需要 Gazebo/RViz GUI 或私有 Mesa，但需要 `libvips-tools`、ROS/Gazebo Python 绑定和真实可用的 OptiX 后端。原生主机整套部署验收尚未完成。
+原生 Linux 将 `--runtime wsl` 改为 `--runtime native`，标靶仍经 `ssb_runtime.sh` 运行已安装的 `ssb_probe`，但不加载 WSL 组件，使用系统驱动侧 OptiX 库。生成不需要 Gazebo/RViz GUI 或私有 Mesa，但需要 `libvips-tools`、ROS/Gazebo Python 绑定和真实可用的 OptiX 后端。原生主机整套部署验收尚未完成。
 
 `work`、`output` 必须是新目录且互不嵌套。已有默认演示时，可把输出改为 `local_data/stage_b/contact_demo_buffered_NEW`；工具拒绝覆盖。失败后查阅工作目录的 `generation.log` 和 `FAILED`，修复原因后用新工作目录重跑，下载原图可继续复用。
 
@@ -69,6 +69,10 @@ python3 tools/build_demo_from_sources.py --runtime wsl \
 8. 准备并渲染独立标靶，拟合当前演示的镜头/暗场/平场标定，核对光学身份，再由 `demo_bundle` 导出全部运行依赖并改成相对引用。
 
 这些步骤的具体参数可查 [build_demo_from_sources.py](../tools/build_demo_from_sources.py)；逐模块命令见 [历史逐模块生成记录](history/STAGE_B_SNAPSHOT_2026-10-03.md#4-重新生成资产)。首次部署使用本页入口，它处理了历史裂缝目录中的原机器绝对路径，并避免演示生成器的默认旧资产输入。
+
+## 许可
+
+仓库代码与随仓库发布的生成素材（`assets/cracks/generated/` 中的裂缝图集、矢量目录与生成提示词）采用根目录 [LICENSE](../LICENSE) 的 Apache-2.0。Concrete034 等官网原图不入库，由使用者按 §1 下载，适用各自来源的许可（ambientCG 为 CC0）；本机生成的资产包放在 `local_data/`，不随仓库分发。现有 v1 目录的 `source_file` 字段是本机绝对路径，仅作来源记录；文件哈希受下游绑定，因此不改写。之后生成的新版本只记录文件名，身份由同一记录中的 `source_sha256` 确定。
 
 ## 3. 输出与验证边界
 
