@@ -20,6 +20,8 @@
 | [数据清理快照](DATA_RETENTION_SNAPSHOT_2026-10-03.md) | 历次清理、去重、报告覆盖失误与保留范围 |
 | [已完成的修复计划](REPAIR_PLAN_2026-10-02.md) | 第 0–7 项实现、验证及后续审核修复记录 |
 
+2026-10-06 起集成回归脚本 `tools/test_<名称>.py` 移到 `tools/integration/<名称>.py`（例如 `tools/test_distance_stop.py` → `tools/integration/distance_stop.py`）；归档文中的旧路径不改，见 [集成脚本说明](../../tools/integration/README.md)。
+
 现行重建见 [STAGE_D](../STAGE_D.md)，验收见 [EVALUATION](../EVALUATION.md)，待办见 [ROADMAP](../ROADMAP.md)。历史文中的“待完成”和“最新”只针对归档时，不能替代现行文档。
 
 ## 数据清理说明

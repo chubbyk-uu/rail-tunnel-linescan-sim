@@ -21,7 +21,7 @@ from std_msgs.msg import String
 
 def run(output):
     output = Path(output).resolve(); output.mkdir(parents=True, exist_ok=False)
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[2]
     env = dict(os.environ, GZ_PARTITION='ssb_telemetry_'+uuid.uuid4().hex,
         GZ_SIM_SYSTEM_PLUGIN_PATH=str(repo/'install/ssb_gazebo/lib')+':'+os.environ.get('GZ_SIM_SYSTEM_PLUGIN_PATH', ''))
     os.environ['GZ_PARTITION'] = env['GZ_PARTITION']

@@ -24,7 +24,7 @@ def main():
     parser.add_argument('--telemetry-only', action='store_true', help='quick stale Gazebo telemetry regression')
     args = parser.parse_args()
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=False)
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[2]
     rclpy.init(); node = rclpy.create_node('ssb_panel_watchdog_test')
     qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     status = node.create_publisher(String, '/ssb/mission/status', qos)

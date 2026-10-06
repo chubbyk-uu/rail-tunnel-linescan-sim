@@ -23,7 +23,7 @@ from ssb_tools.session import read_json
 from ssb_tools.stage_b_gui_world import prepare
 from ssb_tools.validate_contact import validate
 
-REPO=Path(__file__).resolve().parents[1]
+REPO=Path(__file__).resolve().parents[2]
 
 
 def command(argv, log, env=None):

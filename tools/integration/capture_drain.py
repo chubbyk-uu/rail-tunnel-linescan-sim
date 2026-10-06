@@ -17,7 +17,7 @@ from ssb_tools.process_drain import stop_group
 
 
 def run(output):
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[2]
     output = Path(output).resolve(); output.mkdir(parents=True, exist_ok=False)
     os.environ['GZ_PARTITION'] = f'ssb_drain_test_{os.getpid()}'
     node = Node()

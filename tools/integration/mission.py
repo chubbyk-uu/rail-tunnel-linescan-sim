@@ -40,7 +40,7 @@ def main():
         if not (demo/name).is_file():
             p.error('missing demo asset: '+str(demo/name))
     output.mkdir(parents=True, exist_ok=False)
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[2]
     os.environ['GZ_SIM_SYSTEM_PLUGIN_PATH'] = str(repo/'install/ssb_gazebo/lib')+(
         ':'+os.environ['GZ_SIM_SYSTEM_PLUGIN_PATH'] if os.environ.get('GZ_SIM_SYSTEM_PLUGIN_PATH') else '')
     os.environ['GZ_GUI_PLUGIN_PATH'] = str(repo/'install/ssb_gazebo/lib')+(

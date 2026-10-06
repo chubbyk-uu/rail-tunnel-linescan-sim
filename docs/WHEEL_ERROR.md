@@ -20,10 +20,10 @@
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 # 先提交并完整构建，再运行作为证据保存的场景。
-python3 tools/test_distance_stop.py \
+python3 tools/integration/distance_stop.py \
   --output local_data/evaluation/distance_stop_control
 # 增加 3 m 壁面目标的完整原图、独立重成像和阶段 B 验收。
-bash tools/ssb_runtime.sh python3 tools/test_distance_stop.py \
+bash tools/ssb_runtime.sh python3 tools/integration/distance_stop.py \
   --capture --output sessions/wheel_error_capture
 ```
 

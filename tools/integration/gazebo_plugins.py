@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import yaml
 
-REPO=Path(__file__).resolve().parents[1]
+REPO=Path(__file__).resolve().parents[2]
 from ssb_tools.stage_b_scene import make_world,load_spec
 from ssb_tools.session import Session, sha256_file
 

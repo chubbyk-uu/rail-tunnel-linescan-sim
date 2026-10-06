@@ -18,7 +18,7 @@ from gz.msgs10.stringmsg_pb2 import StringMsg
 
 
 def run(output, contact_only=False):
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[2]
     output = Path(output).resolve(); output.mkdir(parents=True, exist_ok=False)
     base = yaml.safe_load((repo/'src/ssb_core/config/stage_b.yaml').read_text())
     spec = load_spec(repo/'src/ssb_tools/config/stage_b_scene.yaml')
