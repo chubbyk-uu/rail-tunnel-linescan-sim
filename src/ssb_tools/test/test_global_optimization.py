@@ -481,3 +481,34 @@ def test_trajectory_fit_does_not_depend_on_thread_count(monkeypatch):
         results.append((c, scores))
     np.testing.assert_array_equal(results[0][0], results[1][0])
     assert results[0][1] == results[1][1]
+
+
+def test_reversed_or_nonadjacent_pairs_cannot_fake_a_connected_band_chain():
+    """Three bands, pairs (0,1) and (1,0): two distinct pairs, yet band 2 is unconnected.
+
+    Counting unique pairs (== bands-1) accepted this; adjacency and an explicit
+    component search must not.
+    """
+    from ssb_tools.optimize_bands import PreparedFit
+    model, table, grid = synthetic_matches()
+    later = table['band_a'] == 1
+    table['band_a'][later], table['band_b'][later] = 1, 0
+    with pytest.raises(ValueError, match='adjacent'):
+        PreparedFit.prepare(model, table, grid)
+    model, table, grid = synthetic_matches()
+    table['band_b'][table['band_a'] == 1] = 3
+    with pytest.raises(ValueError, match='adjacent'):
+        PreparedFit.prepare(model, table, grid)
+
+
+def test_one_coefficient_budget_bounds_trajectory_refinement_and_reports():
+    from ssb_tools.global_geometry import MAX_COEFFICIENTS
+    from ssb_tools.optimize_bands import refine_attitude_knots
+    model, table, grid = synthetic_matches()
+    lo, hi = model.domain
+    dense = np.r_[[lo]*4, np.linspace(lo, hi, MAX_COEFFICIENTS//2)[1:-1], [hi]*4]
+    with pytest.raises(ValueError, match=str(MAX_COEFFICIENTS)):
+        Trajectory(model.sampler, model.radius, model.height, model.settings, [*model.knots[:2], dense, dense])
+    residual = np.zeros((len(table), 2))
+    _, report = refine_attitude_knots(model, table, residual, grid, .01)
+    assert report['coefficient_limit'] == MAX_COEFFICIENTS

@@ -10,8 +10,9 @@ import numpy as np
 from scipy.sparse import csr_matrix, diags, vstack
 from scipy.sparse.linalg import splu
 
-from .global_geometry import (GeometrySettings, Trajectory, add_reconstruction_arguments, curvature_stencil,
-                              cylinder_derivatives, in_chunks, refined_attitude_coefficients, settings_from_arguments)
+from .global_geometry import (MAX_COEFFICIENTS, GeometrySettings, Trajectory, add_reconstruction_arguments,
+                              curvature_stencil, cylinder_derivatives, in_chunks, refined_attitude_coefficients,
+                              settings_from_arguments)
 from .quality_targets import SEAM_P95_PX
 from .match_bands import MATCH, verified_bands, graph_components
 from .provenance import stage_record
@@ -162,9 +163,12 @@ class PreparedFit:
         holdout = table['inlier'].astype(bool) & table['holdout'].astype(bool)
         if not holdout.any():
             raise ValueError('independent held-out image matches required')
+        if np.any(table['band_b'].astype(int) != table['band_a'].astype(int)+1):
+            raise ValueError('match windows must pair adjacent bands')
         for mask in (train, holdout):
-            pairs = np.unique(np.column_stack((table['band_a'][mask], table['band_b'][mask])), axis=0)
-            if len(pairs) != len(model.sampler.segments)-1:
+            pairs = np.unique(np.column_stack((table['band_a'][mask], table['band_b'][mask])).astype(int), axis=0)
+            edges = [dict(status='accepted', bands=[int(a), int(b)]) for a, b in pairs]
+            if len(graph_components(len(model.sampler.segments), edges)) != 1:
                 raise ValueError('training or held-out match graph is disconnected')
         training = table[train]
         by_window = dict(window_groups(training))
@@ -179,6 +183,7 @@ class PreparedFit:
 
 
 def observability(a, b, coefficients, weights, pitch):
+    """Dense spectrum of the training normal matrix; Trajectory caps it at MAX_COEFFICIENTS."""
     ja, jb = a.jacobian(coefficients), b.jacobian(coefficients)
     matrix = vstack([diags(weights[:, k]/pitch[k]) @ (jb[k]-ja[k]) for k in range(2)], format='csr')
     eigenvalues = np.maximum(np.linalg.eigvalsh((matrix.T @ matrix).toarray()), 0.)
@@ -582,7 +587,7 @@ def refine_attitude_knots(model, table, residual_m, grid, minimum_step_m):
     """One bounded refinement from coherent TRAINING residuals, never holdout/truth.
 
     Split a supported interval only when both halves have at least two independent
-    accepted windows. Keep the observation-spacing guard and the 2048 coefficient
+    accepted windows. Keep the observation-spacing guard and the MAX_COEFFICIENTS
     cap; rank scarce knots by training median error and report unallocated nodes.
     Position knots, raw pixels and geometry acceptance samples are unchanged.
     """
@@ -625,7 +630,7 @@ def refine_attitude_knots(model, table, residual_m, grid, minimum_step_m):
             if min(counts) < 2:
                 continue
             candidates[mid] = max(candidates.get(mid, 0.), score)
-    capacity = max(0, (2048-model.size)//2)
+    capacity = max(0, (MAX_COEFFICIENTS-model.size)//2)
     priority = sorted(candidates, key=lambda x: (-candidates[x], x))
     selected = priority[:capacity]
     knots = [k.copy() for k in model.knots]
@@ -635,7 +640,7 @@ def refine_attitude_knots(model, table, residual_m, grid, minimum_step_m):
         trigger_median_px=threshold, minimum_child_step_m=float(minimum_step_m),
         windows_per_child=2, triggered_windows=[w for _, w in bad],
         inserted_progress_m=sorted(selected), candidate_nodes=len(priority),
-        budget_deferred_progress_m=sorted(priority[capacity:]), coefficient_limit=2048,
+        budget_deferred_progress_m=sorted(priority[capacity:]), coefficient_limit=MAX_COEFFICIENTS,
         before_coefficients=model.size, after_coefficients=model.size+2*len(selected))
     return knots, report
 

@@ -15,6 +15,11 @@ from .parallel_budget import resolve_workers
 from .reconstruction_support import RELATIVE_SCALE_BOUND
 from .fast_geometry import ray_values
 
+# One D3 coefficient budget: native normal accumulation and the CUDA ray kernel
+# are built for at most this many columns, and the dense observability report
+# (eigenvalues of the full normal matrix) is sized by it. 50 m needs segments.
+MAX_COEFFICIENTS = 2048
+
 
 @dataclass(frozen=True)
 class GeometrySettings:
@@ -362,8 +367,8 @@ class Trajectory:
         self.scale_index = self.spline_size if settings.relative_encoder_scale else None
         self.scale_reference_m = sum(self.domain)/2
         self.size = self.spline_size+int(settings.relative_encoder_scale)
-        if self.size > 2048:
-            raise ValueError('trajectory exceeds 2048-coefficient resource budget')
+        if self.size > MAX_COEFFICIENTS:
+            raise ValueError(f'trajectory exceeds {MAX_COEFFICIENTS}-coefficient resource budget: {self.size}')
 
     def bases(self, axis):
         result = []

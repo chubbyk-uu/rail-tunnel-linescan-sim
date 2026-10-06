@@ -11,7 +11,7 @@ import numpy as np
 import yaml
 
 from .band_matching import MatchSettings
-from .global_geometry import Trajectory, add_reconstruction_arguments, settings_from_arguments
+from .global_geometry import MAX_COEFFICIENTS, Trajectory, add_reconstruction_arguments, settings_from_arguments
 from .initial_unroll import BandSampler, PROJECTION, sensor_geometry
 from .match_bands import plan_windows, WINDOW_BUDGET, DIAGNOSTIC_WINDOW_BUDGET
 from .mission_plan import wall_plan
@@ -69,7 +69,7 @@ def plan(config, calibration, start, length, settings, spacing_m=.1, height=256,
         task=task, settings=asdict(settings),
         d2=dict(spacing_m=spacing_m, height=height, max_q_shift_mm=max_q_shift_mm),
         estimated_rows=len(p), bands=len(sampler.bounds), trajectory_coefficients=model.size,
-        coefficient_limit=2048, available_refinement_coefficients=2048-model.size,
+        coefficient_limit=MAX_COEFFICIENTS, available_refinement_coefficients=MAX_COEFFICIENTS-model.size,
         matching=dict(descriptors=len(windows), image_windows=sum(w['status'] == 'planned' for w in windows),halo_m=halo,
                       image_window_limit=WINDOW_BUDGET, descriptor_limit=DIAGNOSTIC_WINDOW_BUDGET),
         scale_margin_m=model.scale_margin_m(), projection_bytes=p.nbytes, grid=grid,
