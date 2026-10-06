@@ -106,7 +106,8 @@ def test_missing_or_incomplete_stage_b_evidence_is_rejected(tmp_path, change):
 @pytest.mark.parametrize('spacing,adaptive,height', [(.2, False, 512), (.1, True, 256)])
 @pytest.mark.parametrize('relief', [False, True])
 @pytest.mark.parametrize('slow,yaw', [(False, None), (True, None), (True, False)])
-def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp_path, monkeypatch, nominal, start, length, valid, spacing, adaptive, height, relief, slow, yaw):
+def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(
+        tmp_path, monkeypatch, nominal, start, length, valid, spacing, adaptive, height, relief, slow, yaw):
     import ssb_tools.holdout_protocol as module
     config, calibration = nominal
     demo = tmp_path/'demo'
@@ -318,7 +319,8 @@ def relocation_fixture(tmp_path, monkeypatch):
     (root/'fit/report.json').write_text(json.dumps(dict(settings={})))
     (root/'capture/config').mkdir(parents=True)
     (root/'capture/config/provenance.json').write_text(json.dumps(dict(source_at_run=source)))
-    marker = tmp_path/'input'; marker.write_text('unchanged input')
+    marker = tmp_path/'input'
+    marker.write_text('unchanged input')
     protocol = dict(schema='ssb.d3_holdout_protocol.v5', code_commit=commit, holdout_roi_m=[12., 15.],
         d2=dict(spacing_m=.2, settings={}), d3={}, input_hashes={str(marker): sha256_file(marker)},
         sampling=dict(schema=module.SAMPLING_SCHEMA, spacing_q_m=.2, phase_fractions=[.25, .75],
@@ -326,7 +328,8 @@ def relocation_fixture(tmp_path, monkeypatch):
             outside_target_requires_public_footprint_proof=True, angular_gaps_not_trimmed=True,
             exact_plan_saved_before_truth=True),
         production_sources={str(frozen/name): sha256_file(checkout/name) for name in names})
-    protocol_file = tmp_path/'evaluation/protocol.json'; protocol_file.parent.mkdir()
+    protocol_file = tmp_path/'evaluation/protocol.json'
+    protocol_file.parent.mkdir()
     protocol_file.write_text(json.dumps(protocol))
     monkeypatch.setattr(module, 'Session', lambda path: SimpleNamespace(root=path, summary=dict(status='complete')))
     monkeypatch.setattr(module, 'capture_checks', lambda *a, **k: dict(binary_matches_source=True))

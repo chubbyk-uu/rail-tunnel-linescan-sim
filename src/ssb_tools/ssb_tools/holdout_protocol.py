@@ -39,8 +39,8 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     config = yaml.safe_load((demo/'capture.yaml').read_text())
     wall_plan(config, start, length, read_json(demo/'calibration.json'), relative_encoder_scale=relative_encoder_scale)
     check_calibration(demo/'capture.yaml', demo/'calibration.json')
-    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation, relative_encoder_scale, geometry_backend,
-                                       fit_axis_yaw)
+    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation, relative_encoder_scale,
+                                       geometry_backend, fit_axis_yaw)
     settings.validate()
     if not isinstance(spacing_m, (int, float)) or not 0 < spacing_m <= .4:
         raise ValueError('holdout matching spacing must be positive and at most 0.4 m')
@@ -267,7 +267,8 @@ def verify(protocol_file, root, output, source_root=None):
         input_hashes_unchanged=hashes_match(protocol['input_hashes']),
         production_sources_unchanged=hashes_match(production))
     if relocation is not None:
-        checks['source_checkout_matches_protocol'] = relocation['head'] == protocol['code_commit'] and not relocation['dirty']
+        checks['source_checkout_matches_protocol'] = (relocation['head'] == protocol['code_commit']
+                                                      and not relocation['dirty'])
     if protocol.get('schema') in ('ssb.d3_holdout_protocol.v6', 'ssb.d3_holdout_protocol.v7'):
         checks['d2_planning_unchanged'] = read_json(root/'matches/report.json').get('planning') == expected_matching_plan(protocol,root)
     if protocol.get('schema') == 'ssb.d3_holdout_protocol.v7':

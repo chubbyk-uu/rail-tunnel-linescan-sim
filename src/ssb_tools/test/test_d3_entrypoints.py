@@ -55,16 +55,19 @@ def optimize_bands(monkeypatch, tmp_path, flags):
 
 def reconstruction_budget(monkeypatch, tmp_path, flags):
     import ssb_tools.reconstruction_budget as module
-    (tmp_path/'capture.yaml').write_text('{}\n'); (tmp_path/'calibration.json').write_text('{}\n')
-    return captured(monkeypatch, module, 'plan', 4, ['x', '--demo', str(tmp_path), '--output', str(tmp_path/'budget.json'),
-                                                     '--start', '0', '--length', '3', *flags])
+    (tmp_path/'capture.yaml').write_text('{}\n')
+    (tmp_path/'calibration.json').write_text('{}\n')
+    return captured(monkeypatch, module, 'plan', 4, ['x', '--demo', str(tmp_path), '--output',
+                                                     str(tmp_path/'budget.json'), '--start', '0', '--length', '3',
+                                                     *flags])
 
 
 def holdout_declaration(monkeypatch, tmp_path, flags):
     """The CLI forwards the shared switches; declare() itself is covered in test_holdout_protocol."""
     import ssb_tools.holdout_protocol as module
-    arguments = captured(monkeypatch, module, 'declare', None, ['x', 'declare', '--workspace', 'w', '--demo', 'd',
-                                                               '--output', 'o', '--start', '0', '--length', '3', *flags])
+    arguments = captured(monkeypatch, module, 'declare', None,
+                         ['x', 'declare', '--workspace', 'w', '--demo', 'd', '--output', 'o',
+                          '--start', '0', '--length', '3', *flags])
     adaptive, slow, relative, backend, yaw = arguments[6], *arguments[-4:]
     return reconstruction_settings(.02, adaptive, slow, relative, backend, yaw)
 

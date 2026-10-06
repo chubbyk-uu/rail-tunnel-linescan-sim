@@ -71,14 +71,16 @@ def test_ambiguous_or_incomplete_optix_runtime_is_refused(tmp_path, case):
     elif case == 'no_gpucomp':
         fake_optix(home/'optix-runtime-1.2.3', gpucomp=False)
     elif case == 'two_runtimes':
-        fake_optix(home/'optix-runtime-1.2.3'); fake_optix(home/'optix-runtime-1.2.4', ('1.2.4',))
+        fake_optix(home/'optix-runtime-1.2.3')
+        fake_optix(home/'optix-runtime-1.2.4', ('1.2.4',))
     code, env, error = launch(tmp_path, 'microsoft')
     assert code == 1 and 'LD_LIBRARY_PATH' not in env and error
 
 
 def test_explicit_version_or_directory_resolves_several_installed_runtimes(tmp_path):
     home = tmp_path/'home/opt'
-    fake_optix(home/'optix-runtime-1.2.3'); chosen = fake_optix(home/'optix-runtime-1.2.4', ('1.2.4',))
+    fake_optix(home/'optix-runtime-1.2.3')
+    chosen = fake_optix(home/'optix-runtime-1.2.4', ('1.2.4',))
     for extra in (dict(SSB_OPTIX_DRIVER_VERSION='1.2.4'), dict(SSB_OPTIX_RUNTIME=str(chosen))):
         code, env, _ = launch(tmp_path, 'microsoft', **extra)
         assert code == 0 and env['SSB_OPTIX_RUNTIME'] == str(chosen) and env['SSB_OPTIX_DRIVER_VERSION'] == '1.2.4'

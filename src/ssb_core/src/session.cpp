@@ -1,19 +1,18 @@
 #include "ssb_core/session.hpp"
 
-#include <cstdlib>
-
 #include <dlfcn.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <cerrno>
-#include <chrono>
-#include <system_error>
+#include <unistd.h>
 
 #include <array>
+#include <cerrno>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 #include "ssb_core/build_stamp.hpp"
 
@@ -238,8 +237,10 @@ nlohmann::json ProvenanceJson(const std::vector<std::string>& argv) {
   std::error_code ec;
   const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
   const std::string lib = ThisLibraryPath();
-  const nlohmann::json build = {{"git_head", SSB_BUILD_GIT_HEAD}, {"git_dirty", SSB_BUILD_GIT_DIRTY != 0},
-                                {"source_digest", SSB_BUILD_GIT_DIFF_SHA256}, {"build_type", SSB_BUILD_TYPE},
+  const nlohmann::json build = {{"git_head", SSB_BUILD_GIT_HEAD},
+                                {"git_dirty", SSB_BUILD_GIT_DIRTY != 0},
+                                {"source_digest", SSB_BUILD_GIT_DIFF_SHA256},
+                                {"build_type", SSB_BUILD_TYPE},
                                 {"imaging", SSB_BUILD_IMAGING != 0}};
   const nlohmann::json run = {{"git_head", head}, {"git_dirty", dirty != 0}, {"source_digest", digest}};
   // False means the running binary was built from a different source tree than the

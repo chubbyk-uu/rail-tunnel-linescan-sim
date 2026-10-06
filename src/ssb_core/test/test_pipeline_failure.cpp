@@ -55,7 +55,7 @@ TEST(PipelineFailure, StopsLocalPoseDrainAndNeverRepeatsTableRecords) {
     for(const auto& sample:samples) p.Push(sample);
     p.Finish();
     EXPECT_THROW(p.Wait(),std::runtime_error);
-    EXPECT_EQ(p.Progress().at("phase"),"failed");
+    EXPECT_EQ(p.Progress().at("phase"), "failed");
     EXPECT_TRUE(p.Progress().at("failed"));
     // Input after failure is discarded, including after Finish().
     p.Push(samples.back());
@@ -108,7 +108,7 @@ TEST(PipelineFailure, ProducerFailureDrainsAcceptedInputAndKeepsTailIndex) {
   EXPECT_TRUE(p.Progress().at("failed"));
   EXPECT_THROW(p.Wait(),std::runtime_error);
   // A drained but failed session is never reported as a completed capture.
-  EXPECT_EQ(p.Progress().at("phase"),"failed");
+  EXPECT_EQ(p.Progress().at("phase"), "failed");
   nlohmann::json summary,index;std::ifstream(root/"session.json")>>summary;
   std::ifstream(root/"raw/index.json")>>index;
   EXPECT_EQ(summary.at("status"),"failed");
@@ -132,7 +132,7 @@ TEST(PipelineCompletion, WaitFinishesInputWithoutExplicitFinish) {
   for(const auto& sample:samples)p.Push(sample);
   const auto summary=p.Wait();
   EXPECT_EQ(summary.at("status"),"complete");
-  EXPECT_EQ(p.Progress().at("phase"),"complete");
+  EXPECT_EQ(p.Progress().at("phase"), "complete");
   EXPECT_FALSE(p.Progress().at("failed"));
   EXPECT_GT(summary.at("rows").get<int64_t>(),0);
   EXPECT_THROW(p.Push(samples.back()),std::logic_error);
@@ -225,9 +225,9 @@ TEST(Pipeline, DistanceTaskDrainDoesNotImplyReachedTarget) {
     EXPECT_EQ(summary.at("motion").at("complete"),reached);
     EXPECT_EQ(summary.at("motion").at("completion_basis"),"dual_encoder_distance_and_park");
     nlohmann::json manifest;
-    std::ifstream(root/"metadata"/"manifest.json")>>manifest;
-    for(const char* table:{"odometer_edges","odometer_right_edges"})
-      EXPECT_EQ(summary.at("timing").at(table),manifest.at(table).at("count"))<<table;
+    std::ifstream(root / "metadata" / "manifest.json") >> manifest;
+    for (const char* table : {"odometer_edges", "odometer_right_edges"})
+      EXPECT_EQ(summary.at("timing").at(table), manifest.at(table).at("count")) << table;
     std::filesystem::remove_all(root);
   }
 }
@@ -258,16 +258,22 @@ TEST(Replay, ArchivedPlannedEndRequiresTheCompleteHashChain) {
 }
 
 TEST(Provenance, RecordsTheLaunchRuntimeOrNullWithoutAWrapper) {
-  setenv("SSB_RUNTIME_MODE","native",1);unsetenv("SSB_OPTIX_RUNTIME");unsetenv("SSB_OPTIX_DRIVER_VERSION");
-  auto provenance=ssb::ProvenanceJson({"test"});
-  EXPECT_EQ(provenance.at("runtime").at("mode"),"native");
+  setenv("SSB_RUNTIME_MODE", "native", 1);
+  unsetenv("SSB_OPTIX_RUNTIME");
+  unsetenv("SSB_OPTIX_DRIVER_VERSION");
+  auto provenance = ssb::ProvenanceJson({"test"});
+  EXPECT_EQ(provenance.at("runtime").at("mode"), "native");
   EXPECT_TRUE(provenance.at("build").at("imaging").is_boolean());
   EXPECT_TRUE(provenance.at("runtime").at("optix_runtime").is_null());
-  setenv("SSB_RUNTIME_MODE","wsl",1);setenv("SSB_OPTIX_RUNTIME","/opt/rt",1);setenv("SSB_OPTIX_DRIVER_VERSION","1.2.3",1);
-  provenance=ssb::ProvenanceJson({"test"});
-  EXPECT_EQ(provenance.at("runtime").at("mode"),"wsl");
-  EXPECT_EQ(provenance.at("runtime").at("optix_runtime"),"/opt/rt");
-  EXPECT_EQ(provenance.at("runtime").at("optix_driver_version"),"1.2.3");
-  unsetenv("SSB_RUNTIME_MODE");unsetenv("SSB_OPTIX_RUNTIME");unsetenv("SSB_OPTIX_DRIVER_VERSION");
+  setenv("SSB_RUNTIME_MODE", "wsl", 1);
+  setenv("SSB_OPTIX_RUNTIME", "/opt/rt", 1);
+  setenv("SSB_OPTIX_DRIVER_VERSION", "1.2.3", 1);
+  provenance = ssb::ProvenanceJson({"test"});
+  EXPECT_EQ(provenance.at("runtime").at("mode"), "wsl");
+  EXPECT_EQ(provenance.at("runtime").at("optix_runtime"), "/opt/rt");
+  EXPECT_EQ(provenance.at("runtime").at("optix_driver_version"), "1.2.3");
+  unsetenv("SSB_RUNTIME_MODE");
+  unsetenv("SSB_OPTIX_RUNTIME");
+  unsetenv("SSB_OPTIX_DRIVER_VERSION");
   EXPECT_TRUE(ssb::ProvenanceJson({"test"}).at("runtime").at("mode").is_null());
 }

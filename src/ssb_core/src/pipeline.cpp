@@ -1,8 +1,8 @@
 #include "ssb_core/pipeline.hpp"
 
 #include <atomic>
-#include <cmath>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -164,17 +164,19 @@ void Pipeline::Push(const PoseSample& sample) {
   s.cv.notify_all();
 }
 
-void Pipeline::FinishDistanceMotion(double distance,double speed) {
-  auto& s=*impl_;
-  const auto& d=s.config.distance_stop;
-  if(!d.Enabled() || !std::isfinite(distance) || !std::isfinite(speed) ||
-     std::abs(distance-d.target_m)>d.tolerance_m || std::abs(speed)>d.speed_tolerance_m_s)
+void Pipeline::FinishDistanceMotion(double distance, double speed) {
+  auto& s = *impl_;
+  const auto& d = s.config.distance_stop;
+  if (!d.Enabled() || !std::isfinite(distance) || !std::isfinite(speed) ||
+      std::abs(distance - d.target_m) > d.tolerance_m || std::abs(speed) > d.speed_tolerance_m_s)
     throw std::invalid_argument("distance motion cannot complete before target and parking");
   {
     std::lock_guard<std::mutex> lock(s.mutex);
-    if(s.input_finished) throw std::logic_error("distance motion reported after Finish");
-    s.distance_motion={{"target_estimated_m",d.target_m},{"estimated_distance_m",distance},
-      {"estimated_speed_m_s",speed},{"completion_basis","dual_encoder_distance_and_park"}};
+    if (s.input_finished) throw std::logic_error("distance motion reported after Finish");
+    s.distance_motion = {{"target_estimated_m", d.target_m},
+                         {"estimated_distance_m", distance},
+                         {"estimated_speed_m_s", speed},
+                         {"completion_basis", "dual_encoder_distance_and_park"}};
   }
   Finish();
 }
@@ -200,10 +202,13 @@ nlohmann::json Pipeline::Progress() const {
           {"sim_time_pushed", s.latest_pushed.load()},
           {"sim_time_written", s.latest_written_center.load()},
           {"activity_sequence", s.activity_sequence.load()},
-          {"phase", s.complete ? "complete" : s.ended_failed || s.failed ? "failed" :
-                    s.finalizing ? "finalizing" :
-                    s.write_done ? "joining" : s.render_done ? "syncing" :
-                    s.input_finished ? "draining" : "capturing"},
+          {"phase", s.complete                   ? "complete"
+                    : s.ended_failed || s.failed ? "failed"
+                    : s.finalizing               ? "finalizing"
+                    : s.write_done               ? "joining"
+                    : s.render_done              ? "syncing"
+                    : s.input_finished           ? "draining"
+                                                 : "capturing"},
           {"failed", s.failed || !s.producer_error.empty()}};
 }
 
@@ -300,12 +305,18 @@ void Pipeline::Impl::TimingLoop() {
                           &drop_table,&pose_table,&truth_table}) table_io.Merge(table->Statistics());
     metadata_tables = meta;
     evaluation_tables = evalj;
-    timing_stats = {{"samples", st.samples}, {"scan_edges", st.scan_edges}, {"odometer_edges", st.odo_edges},
+    timing_stats = {{"samples", st.samples},
+                    {"scan_edges", st.scan_edges},
+                    {"odometer_edges", st.odo_edges},
                     {"odometer_right_edges", st.right_odo_edges},
-                    {"gate_events", st.gate_events}, {"triggers", st.triggers},
-                    {"triggers_outside_gate", st.triggers_outside_gate}, {"rows", st.rows},
-                    {"dropped_early_edge", st.dropped_early_edge}, {"dropped_no_period", st.dropped_no_period},
-                    {"dropped_reverse", st.dropped_reverse}, {"dropped_overrun", st.dropped_overrun},
+                    {"gate_events", st.gate_events},
+                    {"triggers", st.triggers},
+                    {"triggers_outside_gate", st.triggers_outside_gate},
+                    {"rows", st.rows},
+                    {"dropped_early_edge", st.dropped_early_edge},
+                    {"dropped_no_period", st.dropped_no_period},
+                    {"dropped_reverse", st.dropped_reverse},
+                    {"dropped_overrun", st.dropped_overrun},
                     {"dropped_stream_end", st.dropped_stream_end}};
     timing_done = true;
     ++activity_sequence;
@@ -453,11 +464,11 @@ nlohmann::json Pipeline::Wait() {
     const double tolerance = 0.5 * s.config.sample_period_s;
     nlohmann::json motion = {{"first_sample_s", s.have_first ? nlohmann::json(sim_first) : nlohmann::json()},
                              {"last_sample_s", s.latest_pushed.load()}};
-    if(s.config.distance_stop.Enabled() && s.options.pose_source=="gazebo_contact") {
-      motion["complete"]=!s.distance_motion.is_null();
-      motion["planned_end_s"]=s.latest_pushed.load(); // permits exact archived replay
-      motion["completion_basis"]="dual_encoder_distance_and_park";
-      if(!s.distance_motion.is_null()) motion.update(s.distance_motion);
+    if (s.config.distance_stop.Enabled() && s.options.pose_source == "gazebo_contact") {
+      motion["complete"] = !s.distance_motion.is_null();
+      motion["planned_end_s"] = s.latest_pushed.load();  // permits exact archived replay
+      motion["completion_basis"] = "dual_encoder_distance_and_park";
+      if (!s.distance_motion.is_null()) motion.update(s.distance_motion);
     } else if (std::isfinite(planned)) {
       motion["planned_end_s"] = planned;
       motion["complete"] = s.latest_pushed.load() >= planned - tolerance;
@@ -468,12 +479,12 @@ nlohmann::json Pipeline::Wait() {
     // Content identity of the descriptive files at completion; tables and blocks carry
     // their own hashes in the manifests listed here.
     nlohmann::json files;
-    for (const char* name : {"config/observable_config.json", "config/provenance.json", "config/backend.json",
-                             "evaluation/truth.json", "evaluation/config_source.yaml", "evaluation/manifest.json",
-                             "metadata/manifest.json", "raw/index.json"})
+    for (const char* name :
+         {"config/observable_config.json", "config/provenance.json", "config/backend.json", "evaluation/truth.json",
+          "evaluation/config_source.yaml", "evaluation/manifest.json", "metadata/manifest.json", "raw/index.json"})
       files[name] = Sha256File(s.root / name);
-    if(std::filesystem::exists(s.root / "evaluation" / "optical_assets.json"))
-      files["evaluation/optical_assets.json"]=Sha256File(s.root / "evaluation" / "optical_assets.json");
+    if (std::filesystem::exists(s.root / "evaluation" / "optical_assets.json"))
+      files["evaluation/optical_assets.json"] = Sha256File(s.root / "evaluation" / "optical_assets.json");
     // Protect the complete archived physical input set, including SDF, spec, config and images.
     const auto physical = s.root / "evaluation" / "physical";
     if (std::filesystem::exists(physical)) {
@@ -482,26 +493,28 @@ nlohmann::json Pipeline::Wait() {
         if (entry.is_directory()) directories.push_back(entry.path());
         if (!entry.is_regular_file()) continue;
         files[entry.path().lexically_relative(s.root).generic_string()] = Sha256File(entry.path());
-        const auto begin=Clock::now();SyncFile(entry.path());
+        const auto begin = Clock::now();
+        SyncFile(entry.path());
         ++s.activity_sequence;
-        const double seconds=Seconds(begin,Clock::now());
-        s.physical_io.sync_seconds+=seconds;
-        s.physical_io.longest_sync_s=std::max(s.physical_io.longest_sync_s,seconds);
-        ++s.physical_io.files;s.physical_io.bytes+=entry.file_size();
+        const double seconds = Seconds(begin, Clock::now());
+        s.physical_io.sync_seconds += seconds;
+        s.physical_io.longest_sync_s = std::max(s.physical_io.longest_sync_s, seconds);
+        ++s.physical_io.files;
+        s.physical_io.bytes += entry.file_size();
       }
-      for(auto directory=directories.rbegin();directory!=directories.rend();++directory) {
+      for (auto directory = directories.rbegin(); directory != directories.rend(); ++directory) {
         SyncDirectory(*directory);
         ++s.activity_sequence;
       }
     }
     // Persist directory entries for initial files, snapshots and the session itself.
-    for(const char* name:{"metadata","evaluation","config","logs"}) {
-      SyncDirectory(s.root/name);
+    for (const char* name : {"metadata", "evaluation", "config", "logs"}) {
+      SyncDirectory(s.root / name);
       ++s.activity_sequence;
     }
     SyncDirectory(s.root);
     SyncDirectory(s.root.parent_path().empty() ? "." : s.root.parent_path());
-    const auto end=Clock::now();
+    const auto end = Clock::now();
     const double wall = Seconds(s.start_wall, end);
     const double imaging_wall = s.have_first ? Seconds(s.first_push_wall, end) : 0;
     const double producer_wall = s.have_first && s.finish_called ? Seconds(s.first_push_wall, s.finish_called_wall) : 0;
