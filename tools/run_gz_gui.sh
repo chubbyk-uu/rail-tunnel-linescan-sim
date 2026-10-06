@@ -9,9 +9,6 @@ world=$(realpath "${3:-$(dirname "$config")/world/world.sdf}")
 calibration=${SSB_OPTICAL_CALIBRATION:-$(dirname "$config")/calibration.json}
 "$repo/install/ssb_core/lib/ssb_core/ssb_optical_identity" --config "$config" --calibration "$calibration" >/dev/null
 [[ ! -e "$session" ]] || { echo "Session already exists: $session" >&2; exit 2; }
-mesa_wrapper=${SSB_MESA_WRAPPER:-$repo/tools/with_mesa_runtime.py}
-[[ -f "$mesa_wrapper" ]] || { echo "Private Mesa launcher missing: $mesa_wrapper" >&2; exit 2; }
-export GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA QT_QPA_PLATFORM=xcb
 export GZ_PARTITION="${GZ_PARTITION:-ssb_gui_$$}" SSB_CONFIG="$config" SSB_SESSION="$session" SSB_WORLD="$world"
 log_dir="$repo/local_data/gui_logs/$(date +%Y%m%d_%H%M%S)_$$"
 mkdir -p "$log_dir"
@@ -19,7 +16,7 @@ export SSB_GUI_LOG_DIR="$log_dir"
 echo "World: $world"
 echo "Paused: click Play to capture. Session: $session"
 echo "Gazebo log: $log_dir/gazebo.log"
-python3 "$mesa_wrapper" bash "$repo/tools/with_optix_runtime.sh" bash -c '
+bash "$repo/tools/ssb_runtime.sh" --gui bash -c '
   set -eo pipefail
   source /opt/ros/jazzy/setup.bash
   source "$1/install/setup.bash"

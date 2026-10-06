@@ -118,8 +118,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_pipeline_failure ssb_core)
   target_compile_definitions(test_pipeline_failure PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
 
-  # GPU tests run inside the OptiX runtime wrapper against the build-tree PTX.
-  set(SSB_WRAPPER "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/with_optix_runtime.sh")
+  # GPU tests run in the host's runtime (tools/ssb_runtime.sh) against the build-tree PTX.
+  set(SSB_WRAPPER "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/ssb_runtime.sh")
   ament_add_gtest_executable(test_render test/test_render.cpp test/test_surface_render.cpp)
   target_link_libraries(test_render ssb_core)
   target_compile_definitions(test_render PRIVATE SSB_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")

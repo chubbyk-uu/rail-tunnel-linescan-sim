@@ -8,7 +8,7 @@
 2. 安装[公共部署页](../DEPLOYMENT.md)中的依赖及 OptiX SDK。确认 `nvidia-smi`、`nvcc` 和系统的 `libnvoptix.so.1` 正常。
 3. 使用系统 OpenGL 驱动和正常桌面显示，不设置 WSL 的 `GALLIUM_DRIVER=d3d12`，不加载私有 WSL Mesa，也不复制上述 WSL 隔离库。
 
-**当前 `run_mission.sh`、`run_gz_gui.sh`、`run_gz.sh` 及 GPU 测试包装器默认面向 WSL。** 原生 Linux 请使用 [原生 Linux 启动步骤](#原生-linux-启动)，直接运行相同的管理器、Gazebo 和 RViz；不要直接套用 WSL 启动脚本。原生路线能否正常运行以该机器的后端自检和实际采集结果为准。
+**2026-10-06 起启动脚本、GPU 测试和生产自检统一经 `tools/ssb_runtime.sh` 选择运行环境**：内核版本含 Microsoft 时走 WSL 隔离 OptiX（GUI 另加 d3d12 Mesa），否则走原生，保持系统驱动环境不变；也可用 `SSB_RUNTIME=wsl|native` 显式指定，无法判断时报错。**原生分支已实现，但尚未在原生主机上验收**，因此下文仍保留不依赖脚本的手动步骤；原生路线是否可用，以该机器的后端自检和实际采集结果为准。
 
 ## 原生 Linux 启动
 
@@ -90,7 +90,7 @@ python3 -m ssb_tools.wall_coverage \
 
 ### 原生测试边界
 
-当前 CMake 的 GPU 测试仍调用 `with_optix_runtime.sh`，`optical_bench --render` 等部分生成工具也使用该包装器。这些工具属于现有 WSL 路径，不能直接宣称原生整套 `colcon test` 已通过。
+CMake 的 GPU 测试和 `build_demo_from_sources.py --runtime native` 均经 `ssb_runtime.sh`，在原生主机上不加载 WSL 组件。但原生整套 `colcon test` 尚未在原生主机实际跑过，不能宣称已通过。
 
 原生主机可以在正常 ROS/工作区终端中直接运行构建后的 GPU 测试，使用构建目录 PTX：
 

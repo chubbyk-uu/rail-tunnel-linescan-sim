@@ -2,11 +2,11 @@
 # RViz remains open after capture; one manager owns all simulation processes.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
-export GZ_PARTITION="ssb_mission_$$" GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA QT_QPA_PLATFORM=xcb
+export GZ_PARTITION="ssb_mission_$$"
 log_dir="$repo/local_data/mission_logs/$(date +%Y%m%d_%H%M%S)_$$"
 mkdir -p "$log_dir"
 echo "RViz task panel; logs: $log_dir"
-python3 "$repo/tools/with_mesa_runtime.py" bash "$repo/tools/with_optix_runtime.sh" bash -c '
+bash "$repo/tools/ssb_runtime.sh" --gui bash -c '
   set -eo pipefail
   source /opt/ros/jazzy/setup.bash
   source "$1/install/setup.bash"

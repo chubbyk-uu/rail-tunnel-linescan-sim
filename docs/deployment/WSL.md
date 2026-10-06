@@ -30,7 +30,7 @@ printf 'DISPLAY=%s\nWAYLAND_DISPLAY=%s\n' "$DISPLAY" "$WAYLAND_DISPLAY"
 
 ## WSL OptiX 运行库
 
-SDK 提供头文件和 API，实际光线追踪还依赖驱动侧的 `libnvoptix.so.1`。当前 WSL 运行包装器明确检查 610.57.04 组件；更换组件版本必须重新核对包装器和运行兼容性，不能混合不同驱动包的文件。
+SDK 提供头文件和 API，实际光线追踪还依赖驱动侧的 `libnvoptix.so.1`。WSL 运行包装器从隔离目录读取实际版本（本机为 610.57.04），并检查三个组件版本一致；更换驱动包时整体替换该目录，不能混合不同驱动包的文件。
 
 参考 [NVIDIA 论坛中的 WSL 实验方案](https://forums.developer.nvidia.com/t/running-optix-on-wsl-2026-version/382414)，以下仅解包用户态组件，不安装 Linux 驱动、不改 Windows 驱动目录和 `/usr/lib/wsl/lib`。这是项目使用的实验部署方式，不是 NVIDIA 对所有 WSL/驱动组合的兼容保证。
 
@@ -57,10 +57,10 @@ ln -s libnvoptix.so.610.57.04 "$SSB_OPTIX_RUNTIME/libnvoptix.so.1"
 
 回到项目根目录，执行公共部署页的 WSL `ssb_selfcheck`。驱动更新后再次自检。仅把 CUDA `stubs` 用于必要的链接检查，不能把它放进运行时 `LD_LIBRARY_PATH`。需要代理时在当前终端设置自己的代理环境，不把地址或凭据写入仓库。
 
-`tools/with_optix_runtime.sh` 只影响子进程，设置隔离库、WSL CUDA 接口和 Toolkit 的运行库路径。包装器会丢弃继承的 `LD_LIBRARY_PATH`，ROS 命令必须在它内部加载环境，例如：
+统一入口为 `tools/ssb_runtime.sh`，它在 WSL 上调用 `tools/with_optix_runtime.sh`，GUI 用 `--gui` 时再加私有 Mesa 与 d3d12。后者只影响子进程，设置隔离库、WSL CUDA 接口和 Toolkit 的运行库路径。运行库目录取 `SSB_OPTIX_RUNTIME`；未设置时取唯一的 `~/opt/optix-runtime-*`。驱动版本取目录中唯一的 `libnvidia-rtcore.so.<版本>`，也可用 `SSB_OPTIX_DRIVER_VERSION` 指定。找不到或找到多个都会报错，不混用不同驱动包的文件。包装器会丢弃继承的 `LD_LIBRARY_PATH`，ROS 命令必须在它内部加载环境，例如：
 
 ```bash
-bash tools/with_optix_runtime.sh bash -c '
+bash tools/ssb_runtime.sh bash -c '
   source /opt/ros/jazzy/setup.bash
   source install/setup.bash
   # 在这里运行需要 ROS 和 OptiX 的命令。

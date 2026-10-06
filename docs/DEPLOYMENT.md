@@ -72,13 +72,9 @@ colcon build --symlink-install --cmake-args \
 缺少 CUDA 或 OptiX 会直接使配置失败，项目不静默降级成其他成像后端。每次更新 Git 提交或源码后，采集前重新构建；采集会核对构建版本与运行源码身份，包括文档提交。
 
 ```bash
-# WSL：通过隔离运行库执行实际射线后端自检。
-bash tools/with_optix_runtime.sh \
+# 实际射线后端自检；ssb_runtime.sh 自动选择 WSL 隔离运行库或原生驱动（SSB_RUNTIME 可显式指定）。
+bash tools/ssb_runtime.sh \
   install/ssb_core/lib/ssb_core/ssb_selfcheck \
-  src/ssb_core/config/stage_a.yaml > /tmp/ssb_selfcheck.log 2>&1
-
-# 原生 Linux：在已加载 ROS/工作区的终端中直接执行。
-install/ssb_core/lib/ssb_core/ssb_selfcheck \
   src/ssb_core/config/stage_a.yaml > /tmp/ssb_selfcheck.log 2>&1
 ```
 

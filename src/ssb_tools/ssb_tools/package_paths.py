@@ -12,4 +12,4 @@ def core_executable(name):
 
 
 def probe_command():
-    return ['bash', str(share_file('tools/with_optix_runtime.sh')), str(core_executable('ssb_probe'))]
+    return ['bash', str(share_file('tools/ssb_runtime.sh')), str(core_executable('ssb_probe'))]

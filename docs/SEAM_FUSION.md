@@ -30,7 +30,7 @@ python3 -m ssb_tools.validate_global_mosaic \
   > /tmp/ssb_fusion_validation.log 2>&1
 ```
 
-WSL 下用 `tools/with_optix_runtime.sh` 包装以上 Python 命令，并在包装器内部加载 ROS/工作区；原生 Linux 直接使用系统 CUDA 运行库。默认 CUDA，可显式选 `--backend cpu` 作为参考，不建议用 CPU 生成全图。
+用 `tools/ssb_runtime.sh` 包装以上 Python 命令，并在包装器内部加载 ROS/工作区；WSL 上使用隔离运行库，原生 Linux 使用系统 CUDA 运行库。默认 CUDA，可显式选 `--backend cpu` 作为参考，不建议用 CPU 生成全图。
 
 `report.json` 保存增益、取点规则、每对训练/留出数量、增益边界衰减及留出 DN 差；`fusion_report.json` 保存与原未融合图的完整覆盖文件哈希相等证明及阶段耗时；`fusion_provenance.json` 绑定原未融合图、公开输入、轨迹和融合报告。CLI 的 `public_audit.json` 记录实际 Python 读事件，原生/外部 I/O 不在完整覆盖范围。
 

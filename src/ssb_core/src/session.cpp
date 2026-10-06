@@ -1,5 +1,7 @@
 #include "ssb_core/session.hpp"
 
+#include <cstdlib>
+
 #include <dlfcn.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -242,7 +244,16 @@ nlohmann::json ProvenanceJson(const std::vector<std::string>& argv) {
   // False means the running binary was built from a different source tree than the
   // one on disk now: rebuild before treating the session as evidence.
   const bool matches = head == SSB_BUILD_GIT_HEAD && digest == SSB_BUILD_GIT_DIFF_SHA256;
+  // Set by tools/ssb_runtime.sh and the WSL OptiX wrapper; null when launched without them.
+  auto environment = [](const char* name) -> nlohmann::json {
+    const char* value = std::getenv(name);
+    return value ? nlohmann::json(value) : nlohmann::json();
+  };
+  const nlohmann::json runtime = {{"mode", environment("SSB_RUNTIME_MODE")},
+                                  {"optix_runtime", environment("SSB_OPTIX_RUNTIME")},
+                                  {"optix_driver_version", environment("SSB_OPTIX_DRIVER_VERSION")}};
   return {{"schema", "ssb.provenance.v1"},
+          {"runtime", runtime},
           {"argv", argv},
           {"source_dir", source},
           {"build", build},

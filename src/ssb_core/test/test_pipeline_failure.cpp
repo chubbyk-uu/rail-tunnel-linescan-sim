@@ -256,3 +256,17 @@ TEST(Replay, ArchivedPlannedEndRequiresTheCompleteHashChain) {
   EXPECT_FALSE(ssb::ArchivedPlannedEnd(poses));                          // unlinked stream
   std::filesystem::remove_all(root);
 }
+
+TEST(Provenance, RecordsTheLaunchRuntimeOrNullWithoutAWrapper) {
+  setenv("SSB_RUNTIME_MODE","native",1);unsetenv("SSB_OPTIX_RUNTIME");unsetenv("SSB_OPTIX_DRIVER_VERSION");
+  auto provenance=ssb::ProvenanceJson({"test"});
+  EXPECT_EQ(provenance.at("runtime").at("mode"),"native");
+  EXPECT_TRUE(provenance.at("runtime").at("optix_runtime").is_null());
+  setenv("SSB_RUNTIME_MODE","wsl",1);setenv("SSB_OPTIX_RUNTIME","/opt/rt",1);setenv("SSB_OPTIX_DRIVER_VERSION","1.2.3",1);
+  provenance=ssb::ProvenanceJson({"test"});
+  EXPECT_EQ(provenance.at("runtime").at("mode"),"wsl");
+  EXPECT_EQ(provenance.at("runtime").at("optix_runtime"),"/opt/rt");
+  EXPECT_EQ(provenance.at("runtime").at("optix_driver_version"),"1.2.3");
+  unsetenv("SSB_RUNTIME_MODE");unsetenv("SSB_OPTIX_RUNTIME");unsetenv("SSB_OPTIX_DRIVER_VERSION");
+  EXPECT_TRUE(ssb::ProvenanceJson({"test"}).at("runtime").at("mode").is_null());
+}

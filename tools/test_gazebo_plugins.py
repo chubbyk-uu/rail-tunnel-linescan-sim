@@ -116,7 +116,7 @@ def run(output):
         if name.startswith('loaded_'):
             # Bypass Python preflight to prove the plugin checks loaded ECM entities itself.
             env.update(SSB_CONFIG=str(cfg),SSB_SESSION=str(session))
-            command=['bash',str(REPO/'tools/with_optix_runtime.sh'),'bash','-c',
+            command=['bash',str(REPO/'tools/ssb_runtime.sh'),'bash','-c',
                      'source /opt/ros/jazzy/setup.bash; source "$1/install/setup.bash"; '
                      'export GZ_SIM_SYSTEM_PLUGIN_PATH="$1/install/ssb_gazebo/lib"; '
                      'gz sim -s -r --iterations 1300 "$SSB_WORLD"','_',str(REPO)]

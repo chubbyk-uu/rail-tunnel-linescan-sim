@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Installed mission stack integration: pause, drain, restart, replay and GUI rates.
 
-Run inside tools/with_mesa_runtime.py + tools/with_optix_runtime.sh, sourcing ROS and
-install/setup.bash inside the wrappers. Full stdout belongs in a saved log.
+Run inside `bash tools/ssb_runtime.sh --gui bash -c ...`, sourcing ROS and
+install/setup.bash inside the wrapper. Full stdout belongs in a saved log.
 """
 import argparse
 import json

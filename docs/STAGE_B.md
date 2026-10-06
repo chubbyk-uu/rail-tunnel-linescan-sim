@@ -47,7 +47,7 @@ GUI 环境散光 0.6，无顶部固定灯；4 盏 90° 工作灯与 17 束窄锥
 已有完成会话可使用存档私有位姿独立重新渲染，属于生成/验收用途，不是生产重建输入。先 source ROS/install；WSL 运行库内再次 source：
 
 ```bash
-bash tools/with_optix_runtime.sh bash -c '
+bash tools/ssb_runtime.sh bash -c '
   source /opt/ros/jazzy/setup.bash
   source install/setup.bash
   install/ssb_core/lib/ssb_core/ssb_render \

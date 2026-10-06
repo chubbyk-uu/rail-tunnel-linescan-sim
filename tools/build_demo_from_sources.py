@@ -80,9 +80,8 @@ def build(sources, work, output, runtime):
         from ssb_tools.package_paths import core_executable
         bench = json.loads((work/'demo/bench/bench.json').read_text())
         for name, target in bench['targets'].items():
-            command = [core_executable('ssb_probe')]
-            if runtime == 'wsl':
-                command = ['bash', REPO/'tools/with_optix_runtime.sh', *command]
+            command = ['env', f'SSB_RUNTIME={runtime}', 'bash', REPO/'tools/ssb_runtime.sh',
+                       core_executable('ssb_probe')]
             run(f'8/8 Render {name} target', [*command, '--config', work/'demo/bench'/target['config'],
                 '--output', work/'demo/bench'/target['capture'], '--rows', '256',
                 '--x', str(target['camera_x_m']), '--theta', str(target['theta_rad'])])

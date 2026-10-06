@@ -23,7 +23,7 @@ source install/setup.bash
 python3 tools/test_distance_stop.py \
   --output local_data/evaluation/distance_stop_control
 # 增加 3 m 壁面目标的完整原图、独立重成像和阶段 B 验收。
-bash tools/with_optix_runtime.sh python3 tools/test_distance_stop.py \
+bash tools/ssb_runtime.sh python3 tools/test_distance_stop.py \
   --capture --output sessions/wheel_error_capture
 ```
 

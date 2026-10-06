@@ -45,8 +45,8 @@ python3 -m ssb_tools.holdout_protocol declare --workspace "$repo" --demo "$demo"
   --start "${3:-12}" --length "${4:-3}" --output "$evaluation/protocol.json" \
   --spacing-m "${SSB_D2_SPACING_M:-.2}" --height "${SSB_D2_HEIGHT:-512}" "${refinement_args[@]}" "${search_args[@]}"
 
-# Re-enter the WSL runtime and source ROS inside it (the wrapper resets LD_LIBRARY_PATH).
-bash "$repo/tools/with_optix_runtime.sh" bash -s -- "$repo" "$root" "$evaluation" "$demo" "${3:-12}" "${4:-3}" <<'SH'
+# Re-enter the host runtime and source ROS inside it (the WSL wrapper resets LD_LIBRARY_PATH).
+bash "$repo/tools/ssb_runtime.sh" bash -s -- "$repo" "$root" "$evaluation" "$demo" "${3:-12}" "${4:-3}" <<'SH'
 set -eo pipefail
 repo=$1; root=$2; evaluation=$3; demo=$4; start=$5; length=$6
 source /opt/ros/jazzy/setup.bash

@@ -10,7 +10,7 @@ import sys,yaml,math
 c=yaml.safe_load(open(sys.argv[1]));m=c['motion'];print(math.ceil((c['contact'].get('settle_s',2)+m.get('distance_stop',{}).get('timeout_s',m['profile'][-1][0]))/m['sample_period_s'])+2)
 PY
 )
-bash "$repo/tools/with_optix_runtime.sh" bash -c '
+bash "$repo/tools/ssb_runtime.sh" bash -c '
  source /opt/ros/jazzy/setup.bash
  source "$1/install/setup.bash"
  export GZ_SIM_SYSTEM_PLUGIN_PATH="$1/install/ssb_gazebo/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
