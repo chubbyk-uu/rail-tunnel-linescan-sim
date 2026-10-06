@@ -72,6 +72,12 @@ def main(argv=None):
     diff = subprocess.check_output(['git', 'diff', '-U0', '--no-color', '--no-ext-diff', base, '--'],
                                    cwd=root, text=True)
     changed = changed_lines(diff)
+    # New files not yet added are entirely changed; git diff alone would skip them.
+    untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=root,
+                                        text=True).split()
+    for name in untracked:
+        with open(root/name, 'rb') as handle:
+            changed[name] = set(range(1, sum(1 for _ in handle)+2))
     problems = []
     ruff = tool('ruff', 'RUFF')
     whole = subprocess.run([ruff, 'check', '--quiet', 'src', 'tools'], cwd=root, capture_output=True, text=True)

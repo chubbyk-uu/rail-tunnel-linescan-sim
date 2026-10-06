@@ -22,7 +22,7 @@ def test_dead_outside_and_anchor_links_are_reported_but_code_and_urls_are_not(tm
         '[ok](b.md#real-heading) [web](https://example.com/x) [self](#top)\n# Top\n'
         '[bad anchor](b.md#missing) [gone](c.md) [out](../../x.md)\n'
         '```\n[in code](nowhere.md)\n```\n`[inline](nowhere.md)`\n')
-    problems = check(tmp_path, ['docs/a.md'])
+    problems = check(tmp_path, ['docs/a.md'], ['docs/a.md', 'docs/b.md'])
     assert len(problems) == 3
     assert any('b.md#missing anchor' in p for p in problems)
     assert any('c.md target' in p for p in problems)
@@ -39,4 +39,5 @@ def test_links_to_untracked_local_files_are_dead_in_clones(tmp_path):
     (tmp_path/'docs').mkdir()
     (tmp_path/'local.pdf').write_text('only on this machine')
     (tmp_path/'docs/a.md').write_text('[pdf](../local.pdf) [dir](../docs)\n')
-    assert check(tmp_path, ['docs/a.md']) == ['docs/a.md:1: ../local.pdf target is not tracked by git (missing from clones)']
+    assert check(tmp_path, ['docs/a.md']) == [
+        'docs/a.md:1: ../local.pdf target is not tracked by git (missing from clones)']

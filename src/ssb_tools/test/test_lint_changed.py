@@ -35,7 +35,8 @@ def test_hunks_give_new_side_lines_and_ignore_pure_deletions():
 
 def test_only_diagnostics_on_changed_lines_are_reported(tmp_path):
     changed = {'src/a.py': {3, 19}}
-    diagnostics = [dict(filename=str(tmp_path/'src/a.py'), code='E501', message='long', location=dict(row=row, column=1))
-                   for row in (3, 4, 19)] + [dict(filename=str(tmp_path/'src/b.py'), code='E702', message='semi',
-                                                  location=dict(row=3, column=5))]
+    diagnostics = [dict(filename=str(tmp_path/'src/a.py'), code='E501', message='long',
+                        location=dict(row=row, column=1)) for row in (3, 4, 19)]
+    diagnostics.append(dict(filename=str(tmp_path/'src/b.py'), code='E702', message='semi',
+                            location=dict(row=3, column=5)))
     assert on_changed_lines(diagnostics, changed, tmp_path) == ['src/a.py:3:1: E501 long', 'src/a.py:19:1: E501 long']
