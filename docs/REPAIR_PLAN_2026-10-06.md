@@ -1,6 +1,6 @@
 # 2026-10-06 全面审核修复计划
 
-状态：阶段 0–4 完成（GitHub 上的 CI 尚未实际运行），其余进行中（分支 `repair/2026-10-06`）。来源是 2026-10-06 全项目审核；用户已确认四项取舍（见 §0.2）。完成后按惯例移入 `docs/history/` 并在索引登记。
+状态：阶段 0–5 完成（GitHub 上的 CI 尚未实际运行），其余进行中（分支 `repair/2026-10-06`）。来源是 2026-10-06 全项目审核；用户已确认四项取舍（见 §0.2）。完成后按惯例移入 `docs/history/` 并在索引登记。
 
 审核基线：HEAD `6eba2ab`，工作树干净；`tools/run_tests.py` 全部通过，995 项（906 Python + 84 gtest + 5 ctest 包装），0 跳过，34 s。
 
@@ -298,6 +298,18 @@ DEVELOPMENT_RULES 增加一条：合入 main 前必须本机跑 `tools/run_tests
 | `global_geometry.py:218` `raw_vx` | 删除 |
 | `stage_b_runtime_surface.py:187` `factors` | 删除；先确认它没有被用于随机数流的副作用，以免改变生成结果 |
 | `tools/test_mission_panel.py:40` `timer` | rclpy 节点自己持有定时器，改名为 `_timer`，表明是有意保留引用，行为不变 |
+
+### 阶段 5 执行记录（2026-10-06）
+
+- 工具没有用 `sudo apt` 安装，改为装在临时 venv 中：`ruff 0.6.9`、`clang-format 18.1.8`（PyPI wheel，自带 `git-clang-format`）。CI 使用相同版本。
+- `ba5b5a4`：
+  - 新增 `ruff.toml`（全仓库 F 规则）、`.clang-format`（Google，列宽 120；比较过几种配置，这一种对现有规整代码改动最少），以及 `tools/lint_changed.py`（风格只查改动行）和它的 2 项测试。
+  - 修复全部 29 处 pyflakes 问题：22 处未使用导入（逐一确认都不是被转出的符号，也不是 monkeypatch 目标），3 处死赋值，4 处 F811（被导入的 pytest fixture，改为标注 noqa，不删除）。`raw_vx` 在文件中出现两次，只删了未使用的那一处。
+- `bc7490e`（只改格式）：
+  - C++ 的命名代码块和本分支改动行：去掉空白后与改动前逐字相同，只有两处 include 顺序变化，include 集合相同。
+  - `stage_b_runtime_surface.py`：用 `ruff format`（保留引号）重排，再把 4 个长字符串拆开；AST 与改动前完全相同。
+  - 本分支改动的 Python 行折到 120 列。
+- 全套 1057 项（967 Python）通过；`lint_changed.py` 对整个分支 0 问题。
 
 ## 阶段 6：文档与集成脚本（审核 P2-7、P2-8、P1-3 文档部分）
 
