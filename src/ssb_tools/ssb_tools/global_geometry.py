@@ -3,6 +3,7 @@
 The fitted attitudes are regularized image-derived corrections, not measured poses.
 No renderer, scene, reference geometry or evaluation module is imported here.
 """
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import math
@@ -84,13 +85,39 @@ class GeometrySettings:
 
 
 def reconstruction_settings(attitude_spacing_m=.02, adaptive_attitude=False, slow_translation=False,
-                            relative_encoder_scale=False, geometry_backend='cpu'):
-    """Public, declared priors; no rig truth used to choose coefficients."""
+                            relative_encoder_scale=False, geometry_backend='cpu', fit_axis_yaw=None):
+    """Public, declared priors; no rig truth used to choose coefficients.
+
+    fit_axis_yaw=None keeps the frozen v4 coupling (yaw follows slow_translation),
+    so earlier declarations produce identical settings; an explicit Boolean
+    separates the two degrees of freedom.
+    """
     return GeometrySettings(geometry_backend=geometry_backend, attitude_spacing_m=attitude_spacing_m, observed_knots=True,
         adaptive_attitude=adaptive_attitude, fit_translation=slow_translation,
         coarse_translation=slow_translation, translation_bound_mm=30. if slow_translation else 5.,
         translation_prior_mm=10. if slow_translation else 2., relative_encoder_scale=relative_encoder_scale,
-        fit_axis_yaw=slow_translation)
+        fit_axis_yaw=slow_translation if fit_axis_yaw is None else fit_axis_yaw)
+
+
+def add_reconstruction_arguments(parser, attitude_spacing=True):
+    """The one command-line surface for D3 model switches, shared by every entry point."""
+    if attitude_spacing:
+        parser.add_argument('--attitude-spacing-m', type=float, default=.02)
+    parser.add_argument('--geometry-backend', choices=('numpy', 'cpu', 'cuda'), default='cuda')
+    parser.add_argument('--adaptive-attitude', action='store_true',
+                        help='training-only bounded local refinement; use --spacing-m .1 for finer supported nodes')
+    parser.add_argument('--slow-translation', action='store_true',
+                        help='bounded image-derived lateral/heave on 0.6 m knots; nominal priors, no mount truth')
+    parser.add_argument('--relative-encoder-scale', action='store_true',
+                        help='single image-constrained relative progress scale; bounded local dx remains separate')
+    parser.add_argument('--fit-axis-yaw', action=argparse.BooleanOptionalAction, default=None,
+                        help='constant image-fitted scan-axis yaw (requires --slow-translation); default follows it')
+
+
+def settings_from_arguments(args):
+    return reconstruction_settings(getattr(args, 'attitude_spacing_m', .02), args.adaptive_attitude,
+                                   args.slow_translation, args.relative_encoder_scale, args.geometry_backend,
+                                   args.fit_axis_yaw)
 
 
 def spline_knots(lower, upper, spacing):

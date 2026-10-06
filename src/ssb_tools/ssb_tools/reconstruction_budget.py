@@ -11,7 +11,7 @@ import numpy as np
 import yaml
 
 from .band_matching import MatchSettings
-from .global_geometry import Trajectory, reconstruction_settings
+from .global_geometry import Trajectory, add_reconstruction_arguments, settings_from_arguments
 from .initial_unroll import BandSampler, PROJECTION, sensor_geometry
 from .match_bands import plan_windows, WINDOW_BUDGET, DIAGNOSTIC_WINDOW_BUDGET
 from .mission_plan import wall_plan
@@ -87,14 +87,12 @@ def main():
     parser.add_argument('--start', type=float, required=True); parser.add_argument('--length', type=float, required=True)
     parser.add_argument('--spacing-m', type=float, default=.1); parser.add_argument('--height', type=int, default=256)
     parser.add_argument('--max-q-shift-mm', type=float)
-    parser.add_argument('--adaptive-attitude', action='store_true'); parser.add_argument('--slow-translation', action='store_true')
-    parser.add_argument('--relative-encoder-scale', action='store_true')
-    parser.add_argument('--geometry-backend', choices=('numpy', 'cpu', 'cuda'), default='cuda')
+    add_reconstruction_arguments(parser, attitude_spacing=False)
     parser.add_argument('--surface-relief', action='store_true', help='accepted for the shared pipeline arguments')
     args = parser.parse_args(); demo, output = Path(args.demo).resolve(), Path(args.output).resolve()
     if output.exists():
         raise ValueError('resource report must be fresh')
-    settings = reconstruction_settings(.02, args.adaptive_attitude, args.slow_translation, args.relative_encoder_scale, args.geometry_backend)
+    settings = settings_from_arguments(args)
     report = plan(yaml.safe_load((demo/'capture.yaml').read_text()), json.loads((demo/'calibration.json').read_text()),
                   args.start, args.length, settings, args.spacing_m, args.height, args.max_q_shift_mm)
     report['input_hashes'] = {str(demo/name): sha256_file(demo/name) for name in ('capture.yaml', 'calibration.json')}

@@ -10,8 +10,8 @@ import numpy as np
 from scipy.sparse import csr_matrix, diags, vstack
 from scipy.sparse.linalg import splu
 
-from .global_geometry import (GeometrySettings, Trajectory, curvature_stencil, cylinder_derivatives,
-                              in_chunks, refined_attitude_coefficients)
+from .global_geometry import (GeometrySettings, Trajectory, add_reconstruction_arguments, curvature_stencil,
+                              cylinder_derivatives, in_chunks, refined_attitude_coefficients, settings_from_arguments)
 from .quality_targets import SEAM_P95_PX
 from .match_bands import MATCH, verified_bands, graph_components
 from .provenance import stage_record
@@ -731,22 +731,10 @@ def main():
     parser.add_argument('--unroll', required=True); parser.add_argument('--matches', required=True)
     parser.add_argument('--observable', required=True); parser.add_argument('--output', required=True)
     parser.add_argument('--raw', help='relocated public raw directory')
-    parser.add_argument('--attitude-spacing-m', type=float, default=.05)
-    parser.add_argument('--geometry-backend', choices=('numpy', 'cpu', 'cuda'), default='cuda')
-    parser.add_argument('--observed-knots', action='store_true', help='fine pose knots only in recorded exposure spans')
-    parser.add_argument('--adaptive-attitude', action='store_true', help='one training-only, observation-supported local attitude refinement')
-    parser.add_argument('--relative-encoder-scale', action='store_true')
-    translation = parser.add_mutually_exclusive_group()
-    translation.add_argument('--fit-translation', action='store_true', help='image-derived continuous lateral/heave corrections; no pose truth')
-    translation.add_argument('--fit-heave', action='store_true', help='image-derived continuous vertical correction only; no pose truth')
+    add_reconstruction_arguments(parser)
     args = parser.parse_args()
-    report = run(args.unroll, args.matches, args.observable, args.output,
-                 GeometrySettings(geometry_backend=args.geometry_backend, attitude_spacing_m=args.attitude_spacing_m, fit_translation=args.fit_translation,
-                                  fit_heave=args.fit_heave, observed_knots=args.observed_knots,
-                                  adaptive_attitude=args.adaptive_attitude,
-                                  relative_encoder_scale=args.relative_encoder_scale), args.raw)
+    report = run(args.unroll, args.matches, args.observable, args.output, settings_from_arguments(args), args.raw)
     print(json.dumps({k: report[k] for k in ('status', 'coefficients', 'image_consistency', 'performance')}))
-
 
 if __name__ == '__main__':
     main()

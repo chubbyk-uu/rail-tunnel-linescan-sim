@@ -279,7 +279,7 @@ def write_review(sampler, grid, windows, table, output):
     (output/'review.html').write_text('\n'.join(html))
 
 
-def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSettings(), halo_m=.25, raw_root=None,
+def run(root, output, spacing_m=.2, height=512, max_width=1024, settings=MatchSettings(), halo_m=.25, raw_root=None,
         workers=1, relative_encoder_scale=False):
     workers = resolve_workers(workers)
     started = time.monotonic(); sampler, upstream, inputs = verified_bands(root, raw_root)
@@ -354,7 +354,7 @@ def run(root, output, spacing_m=.4, height=512, max_width=1024, settings=MatchSe
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--unroll', required=True); parser.add_argument('--output', required=True)
-    parser.add_argument('--spacing-m', type=float, default=.4)
+    parser.add_argument('--spacing-m', type=float, default=.2)
     parser.add_argument('--height', type=int, default=512); parser.add_argument('--max-width', type=int, default=1024)
     parser.add_argument('--max-shift-mm', type=float, default=40.)
     parser.add_argument('--keep-long-structures', action='store_true',

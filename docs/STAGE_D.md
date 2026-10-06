@@ -29,11 +29,10 @@ python3 -m ssb_tools.match_bands --unroll sessions/d1_NEW \
 python3 -m ssb_tools.optimize_bands \
   --unroll sessions/d1_NEW --matches sessions/d2_NEW \
   --observable SESSION/config/observable_config.json \
-  --attitude-spacing-m 0.02 --observed-knots \
   --output sessions/d3_NEW > /tmp/ssb_d3.log 2>&1
 ```
 
-D1 默认 CUDA；`--backend cpu` 是显式选择，CUDA 失败不静默回退。可用 `--target-x A B` 在原定目标内诊断子区间，报告保留原目标；子区间不能冒充完整任务验收。下例名义参数为匹配间距 0.2 m、姿态节点 0.02 m、只在有曝光支撑的区间设置细节点；不依赖工具旧的 0.4/0.05 m 默认值。
+D1 默认 CUDA；`--backend cpu` 是显式选择，CUDA 失败不静默回退。可用 `--target-x A B` 在原定目标内诊断子区间，报告保留原目标；子区间不能冒充完整任务验收。下例为名义基础模型：匹配间距 0.2 m、姿态节点 0.02 m、只在有曝光支撑的区间设置细节点。自 2026-10-06 起 `match_bands` 默认间距与 `public_reconstruction`、`holdout_protocol` 统一为 0.2 m；`optimize_bands`、`public_reconstruction`、`holdout_protocol declare` 与 `reconstruction_budget` 共用同一组 D3 开关与默认值（`--adaptive-attitude`、`--slow-translation`、`--relative-encoder-scale`、`--fit-axis-yaw/--no-fit-axis-yaw`、`--geometry-backend`，默认 cuda）；`--fit-axis-yaw` 默认跟随 `--slow-translation`，与已冻结协议一致。单独的 `optimize_bands` 不再提供旧的 `--observed-knots`、`--fit-translation`、`--fit-heave`（前者恒开，后两者为早期实验模型，仅保留 Python 接口）。`reconstruction_budget` 默认按里程碑密度 0.1 m/256 估算容量。
 
 ## D1 输出与资源
 

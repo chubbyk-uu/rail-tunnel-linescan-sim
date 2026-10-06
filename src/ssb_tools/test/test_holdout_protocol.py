@@ -105,8 +105,8 @@ def test_missing_or_incomplete_stage_b_evidence_is_rejected(tmp_path, change):
 @pytest.mark.parametrize('start,length,valid', [(12., 3., True), (19., 3., False), (12., .5, False)])
 @pytest.mark.parametrize('spacing,adaptive,height', [(.2, False, 512), (.1, True, 256)])
 @pytest.mark.parametrize('relief', [False, True])
-@pytest.mark.parametrize('slow', [False, True])
-def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp_path, monkeypatch, nominal, start, length, valid, spacing, adaptive, height, relief, slow):
+@pytest.mark.parametrize('slow,yaw', [(False, None), (True, None), (True, False)])
+def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp_path, monkeypatch, nominal, start, length, valid, spacing, adaptive, height, relief, slow, yaw):
     import ssb_tools.holdout_protocol as module
     config, calibration = nominal
     demo = tmp_path/'demo'
@@ -133,7 +133,7 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
     output = tmp_path/'evaluation/protocol.json'
     if valid:
         record = module.declare(tmp_path, demo, output, start, length, spacing, adaptive, height,
-                                10. if adaptive else None, relief, slow)
+                                10. if adaptive else None, relief, slow, fit_axis_yaw=yaw)
         assert record['holdout_roi_m'] == [12., 15.]
         assert record['required_evidence'] == ['binary_matches_source', 'stage_b_acceptance',
                                                'stage_b_report_hash_valid', 'public_only_production_run']
@@ -151,6 +151,7 @@ def test_declaration_uses_measured_calibration_and_rejects_invalid_wall_task(tmp
         assert record['d3']['coarse_translation'] is slow
         assert record['d3']['fit_translation'] is slow
         assert record['d3']['translation_bound_mm'] == (30. if slow else 5.)
+        assert record['d3']['fit_axis_yaw'] is (slow if yaw is None else yaw)
         if slow:assert len(record['normal_backend_sha256'])==64
         assert record['code_commit'] == 'frozen' and output.exists()
         assert record['sampling']['schema'] == 'ssb.public_common_overlap.v4'

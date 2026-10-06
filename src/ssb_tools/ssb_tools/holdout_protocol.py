@@ -10,7 +10,7 @@ import numpy as np
 import yaml
 
 from .band_matching import MatchSettings
-from .global_geometry import GeometrySettings, reconstruction_settings
+from .global_geometry import add_reconstruction_arguments, reconstruction_settings
 from .optical_identity import check_calibration
 from .session import Session, read_json, sha256_file
 from .evaluate_global_geometry import SAMPLING_SCHEMA
@@ -26,7 +26,8 @@ def evaluation_path(path):
 
 
 def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attitude=False, height=512, max_q_shift_mm=None,
-            surface_relief=False, slow_translation=False, relative_encoder_scale=False, geometry_backend='cpu'):
+            surface_relief=False, slow_translation=False, relative_encoder_scale=False, geometry_backend='cpu',
+            fit_axis_yaw=None):
     workspace, demo, output = Path(workspace).resolve(), Path(demo).resolve(), evaluation_path(output)
     state = subprocess.check_output(['sh', str(workspace/'src/ssb_core/cmake/source_state.sh'),
                                      str(workspace)], text=True).split()
@@ -38,7 +39,8 @@ def declare(workspace, demo, output, start, length, spacing_m=.2, adaptive_attit
     config = yaml.safe_load((demo/'capture.yaml').read_text())
     wall_plan(config, start, length, read_json(demo/'calibration.json'), relative_encoder_scale=relative_encoder_scale)
     check_calibration(demo/'capture.yaml', demo/'calibration.json')
-    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation, relative_encoder_scale, geometry_backend)
+    settings = reconstruction_settings(.02, adaptive_attitude, slow_translation, relative_encoder_scale, geometry_backend,
+                                       fit_axis_yaw)
     settings.validate()
     if not isinstance(spacing_m, (int, float)) or not 0 < spacing_m <= .4:
         raise ValueError('holdout matching spacing must be positive and at most 0.4 m')
@@ -328,11 +330,8 @@ def main():
     declaration.add_argument('--spacing-m', type=float, default=.2)
     declaration.add_argument('--height', type=int, default=512)
     declaration.add_argument('--max-q-shift-mm', type=float)
-    declaration.add_argument('--adaptive-attitude', action='store_true')
     declaration.add_argument('--surface-relief', action='store_true')
-    declaration.add_argument('--slow-translation', action='store_true')
-    declaration.add_argument('--relative-encoder-scale', action='store_true')
-    declaration.add_argument('--geometry-backend', choices=('numpy', 'cpu', 'cuda'), default='cuda')
+    add_reconstruction_arguments(declaration, attitude_spacing=False)
     verification = sub.add_parser('verify')
     for name in ('protocol', 'root', 'output'):
         verification.add_argument('--'+name, required=True)
@@ -346,7 +345,7 @@ def main():
     if args.action == 'declare':
         declare(args.workspace, args.demo, args.output, args.start, args.length,
                 args.spacing_m, args.adaptive_attitude, args.height, args.max_q_shift_mm, args.surface_relief,
-                args.slow_translation, args.relative_encoder_scale, args.geometry_backend)
+                args.slow_translation, args.relative_encoder_scale, args.geometry_backend, args.fit_axis_yaw)
         return 0
     if args.action == 'audit-public':
         output = evaluation_path(args.output)
