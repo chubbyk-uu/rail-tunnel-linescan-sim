@@ -35,13 +35,6 @@ jobs:
           colcon build --packages-select ssb_core ssb_tools --symlink-install \
             --cmake-args -DSSB_IMAGING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
-      - name: Tests (cpu-ci profile; CUDA tests are listed as deselected)
-        shell: bash
-        run: |
-          source /opt/ros/jazzy/setup.bash
-          source install/setup.bash
-          python3 tools/run_tests.py --profile cpu-ci --output ci_test_logs
-
       - name: Lint (pyflakes everywhere; style on changed lines only)
         shell: bash
         run: |
@@ -51,6 +44,13 @@ jobs:
           source install/setup.bash
           PATH=/tmp/lint/bin:$PATH python3 tools/lint_changed.py \
             --base "${{ github.event.pull_request.base.sha || github.event.before }}"
+
+      - name: Tests (cpu-ci profile; CUDA tests are listed as deselected)
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          python3 tools/run_tests.py --profile cpu-ci --output ci_test_logs
 
       - name: Keep test logs
         if: always()

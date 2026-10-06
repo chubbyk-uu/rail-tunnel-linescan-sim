@@ -9,3 +9,4 @@ __pycache__/
 .pytest_cache/
 /sessions/
 /local_data/
+/ci_test_logs/

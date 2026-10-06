@@ -76,6 +76,8 @@ def main(argv=None):
     untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=root,
                                         text=True).split()
     for name in untracked:
+        if (root/name).is_symlink() or not (root/name).is_file():
+            continue  # e.g. pytest's *_current links to directories in test logs
         with open(root/name, 'rb') as handle:
             changed[name] = set(range(1, sum(1 for _ in handle)+2))
     problems = []
