@@ -1,8 +1,9 @@
 """Read-only inventory of sessions/ and local_data/ for retention decisions (DATA_RETENTION.md).
 
 One lstat pass, no hashing, symlinks never followed. Disk use is attributed per inode:
-`exclusive_bytes` is what deleting a directory would actually free, `shared_bytes` stays
-allocated through hard links elsewhere. Each directory lists who refers to it: current
+`exclusive_bytes` includes only inodes whose every hard link was seen in that directory.
+`shared_bytes` includes links in other directories or outside the scan. Each entry lists
+who refers to it: current
 docs, history docs, the media manifest, evaluation/protocol records and symlinks.
 Nothing is deleted or modified.
 """
@@ -41,12 +42,17 @@ def walk(top):
 
 
 def attribute(owners):
-    """owners: {inode: (allocated_bytes, set(directories))} -> per-directory byte split."""
+    """owners: {inode: (bytes, directories, observed_links, st_nlink)} -> byte split.
+
+    A link-count mismatch is conservative: missing links may live outside ROOTS,
+    in an unreadable folder or in a concurrently changing directory.
+    """
     usage = defaultdict(lambda: dict(logical_inode_bytes=0, exclusive_bytes=0, shared_bytes=0))
-    for size, directories in owners.values():
+    for size, directories, observed_links, total_links in owners.values():
+        exclusive = len(directories) == 1 and observed_links == total_links
         for directory in directories:
             usage[directory]['logical_inode_bytes'] += size
-            usage[directory]['exclusive_bytes' if len(directories) == 1 else 'shared_bytes'] += size
+            usage[directory]['exclusive_bytes' if exclusive else 'shared_bytes'] += size
     return usage
 
 
@@ -146,7 +152,9 @@ def inventory(repo):
                 continue
             inode = (info.st_dev, info.st_ino)
             allocated = info.st_blocks*512
-            owners.setdefault(inode, (allocated, set()))[1].add(key)
+            size, directories, observed_links, total_links = owners.get(inode, (allocated, set(), 0, 0))
+            directories.add(key)
+            owners[inode] = size, directories, observed_links+1, max(total_links, info.st_nlink)
     usage = attribute(owners)
     names = [str(top.relative_to(repo)) for top in tops]
     refs = references(repo, names)
@@ -174,7 +182,8 @@ def inventory(repo):
         row['class'] = classify(row['references'])
     return dict(schema='ssb.data_inventory.v1', generated_at=time.strftime('%Y-%m-%dT%H:%M:%S%z'),
                 repo=str(repo), wall_s=time.monotonic()-started,
-                note='read-only; exclusive_bytes is freed only if every hard link to it is deleted',
+                note='read-only; exclusive_bytes requires all st_nlink links observed in one entry; '
+                     'shared_bytes also includes unobserved links outside or within the scan',
                 directories=sorted(rows, key=lambda row: -row['exclusive_bytes']))
 
 

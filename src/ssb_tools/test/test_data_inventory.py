@@ -8,7 +8,7 @@ from ssb_tools.data_inventory import attribute, classify, inventory, walk
 
 
 def test_hard_links_are_shared_not_double_counted():
-    owners = {(1, 1): (100, {'sessions/a'}), (1, 2): (40, {'sessions/a', 'sessions/b'})}
+    owners = {(1, 1): (100, {'sessions/a'}, 1, 1), (1, 2): (40, {'sessions/a', 'sessions/b'}, 2, 2)}
     usage = attribute(owners)
     assert usage['sessions/a'] == dict(logical_inode_bytes=140, exclusive_bytes=100, shared_bytes=40)
     assert usage['sessions/b'] == dict(logical_inode_bytes=40, exclusive_bytes=0, shared_bytes=40)
@@ -84,3 +84,42 @@ def test_dangling_root_symlink_remains_visible_for_review(inventory_repo):
     assert rows['sessions/missing']['kind'] == 'symlink'
     assert rows['sessions/missing']['class'] == 'required'
     assert rows['sessions/missing']['symlink_target'] == str(repo/'sessions/deleted')
+
+
+@pytest.mark.parametrize('outside_repo', [False, True])
+def test_unobserved_hard_link_cannot_count_as_reclaimable(inventory_repo, outside_repo):
+    repo = inventory_repo
+    retained = repo.parent/(repo.name+'_retained') if outside_repo else repo/'retained'
+    retained.mkdir()
+    payload = repo/'sessions/target/payload'
+    os.link(payload, retained/'payload')
+    allocated = payload.stat().st_blocks*512
+    rows = referenced_rows(repo, 'sessions/target')
+    assert rows['sessions/target']['exclusive_bytes'] == 0
+    assert rows['sessions/target']['shared_bytes'] == allocated
+    payload.unlink()
+    assert (retained/'payload').stat().st_blocks*512 == allocated
+
+
+def test_all_hard_links_inside_one_directory_are_reclaimable_once(inventory_repo):
+    repo = inventory_repo
+    payload = repo/'sessions/target/payload'
+    os.link(payload, payload.parent/'copy')
+    allocated = payload.stat().st_blocks*512
+    rows = referenced_rows(repo, 'sessions/target')
+    assert rows['sessions/target']['files'] == 2
+    assert rows['sessions/target']['logical_inode_bytes'] == allocated
+    assert rows['sessions/target']['exclusive_bytes'] == allocated
+    assert rows['sessions/target']['shared_bytes'] == 0
+
+
+def test_hard_links_in_two_scanned_directories_are_shared(inventory_repo):
+    repo = inventory_repo
+    (repo/'sessions/second').mkdir()
+    payload = repo/'sessions/target/payload'
+    os.link(payload, repo/'sessions/second/payload')
+    allocated = payload.stat().st_blocks*512
+    rows = referenced_rows(repo, 'sessions/target')
+    for name in ('sessions/target', 'sessions/second'):
+        assert rows[name]['logical_inode_bytes'] == rows[name]['shared_bytes'] == allocated
+        assert rows[name]['exclusive_bytes'] == 0
