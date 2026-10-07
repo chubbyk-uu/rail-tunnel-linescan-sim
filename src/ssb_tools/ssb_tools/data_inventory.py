@@ -121,17 +121,26 @@ def inventory(repo):
     repo = Path(repo).resolve()
     started = time.monotonic()
     owners, files, apparent, symlinks = {}, defaultdict(int), defaultdict(int), defaultdict(set)
-    tops = [repo/root/entry for root in ROOTS if (repo/root).is_dir() for entry in sorted(os.listdir(repo/root))
-            if (repo/root/entry).is_dir() and not (repo/root/entry).is_symlink()]
+    tops = []
+    for root in ROOTS:
+        if not (repo/root).is_dir():
+            continue
+        with os.scandir(repo/root) as entries:
+            tops.extend(Path(entry.path) for entry in sorted(entries, key=lambda entry: entry.name)
+                        if entry.is_dir(follow_symlinks=False) or entry.is_symlink())
     for top in tops:
         key = str(top.relative_to(repo))
-        for path, info in walk(str(top)):
+        # Root aliases are inventoried as links, never traversed as duplicate data.
+        entries = [(str(top), top.lstat())] if top.is_symlink() else walk(str(top))
+        for path, info in entries:
             files[key] += 1
             apparent[key] += info.st_size
             if os.path.islink(path):
-                target = os.path.realpath(path)
+                immediate = os.path.abspath(os.path.join(os.path.dirname(path), os.readlink(path)))
+                targets = (immediate, os.path.realpath(path))
                 for other in tops:
-                    if target.startswith(str(other)+os.sep) or target == str(other):
+                    # Keep an immediate alias as well as the final target of a link chain.
+                    if any(target.startswith(str(other)+os.sep) or target == str(other) for target in targets):
                         if other != top:
                             symlinks[str(other.relative_to(repo))].add(key)
                 continue
@@ -148,6 +157,8 @@ def inventory(repo):
         if symlinks.get(name):
             entry_refs['symlinked_from'] = sorted(symlinks[name])
         rows.append(dict(directory=name, files=files[name], apparent_bytes=apparent[name], **usage[name],
+                         kind='symlink' if top.is_symlink() else 'directory',
+                         **({'symlink_target': os.path.realpath(top)} if top.is_symlink() else {}),
                          references=entry_refs, busy=str(top) in busy))
     retained = {row['directory'] for row in rows if classify(row['references']) == 'required'}
     changed = True
@@ -178,9 +189,9 @@ def main(argv=None):
     result = inventory(repo)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=1)+'\n')
-    lines = ['directory\tclass\tfiles\texclusive_GiB\tshared_GiB\tbusy\treferenced_by']
+    lines = ['directory\tkind\tclass\tfiles\texclusive_GiB\tshared_GiB\tbusy\treferenced_by']
     for row in result['directories']:
-        lines.append('\t'.join([row['directory'], row['class'], str(row['files']),
+        lines.append('\t'.join([row['directory'], row['kind'], row['class'], str(row['files']),
                                 f"{row['exclusive_bytes']/2**30:.2f}", f"{row['shared_bytes']/2**30:.2f}",
                                 str(row['busy']), ','.join(sorted(row['references']))]))
     args.output.with_suffix('.tsv').write_text('\n'.join(lines)+'\n')
