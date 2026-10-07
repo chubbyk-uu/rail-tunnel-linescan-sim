@@ -13,6 +13,7 @@
 
 namespace {
 std::atomic<bool> reject_block_sync{false};
+std::atomic<bool> reject_manifest_sync{false};
 std::mutex sync_mutex;
 std::vector<std::string> sync_trace;
 }
@@ -21,6 +22,10 @@ extern "C" int fsync(int fd) {
   char name[4096];const auto n=readlink(("/proc/self/fd/"+std::to_string(fd)).c_str(),name,sizeof(name)-1);
   const std::string path=n>=0 ? std::string(name,size_t(n)) : "";
   if(reject_block_sync && path.find("/raw/block_")!=std::string::npos) {errno=EIO;return -1;}
+  if (reject_manifest_sync && path.find("/metadata/manifest.json.tmp") != std::string::npos) {
+    errno = EIO;
+    return -1;
+  }
   const int result=int(syscall(SYS_fsync,fd));
   if(result==0) {std::lock_guard<std::mutex> lock(sync_mutex);sync_trace.push_back(path);}
   return result;
@@ -156,6 +161,30 @@ TEST(Persistence, SyncFailureCannotProduceACompleteSession) {
   EXPECT_NE(summary.at("error").get<std::string>().find("fsync"),std::string::npos);
   EXPECT_FALSE(std::filesystem::exists(root/"raw/index.json"));
   EXPECT_TRUE(std::filesystem::exists(root/"raw/block_000000.u8"));
+  std::filesystem::remove_all(root);
+}
+
+TEST(Persistence, FinalCommitFailureReportsFailedProgress) {
+  auto c = ssb::Config::Load(std::string(SSB_CONFIG_DIR) + "/stage_a.yaml");
+  c.profile = {{0, 1}, {.002, 1}};
+  c.start_theta_rad = 0;
+  c.batch_rows = 4096;
+  c.debug_column_stride = 0;
+  const auto root = std::filesystem::temp_directory_path() / ("ssb_commit_failure_" + std::to_string(getpid()));
+  std::filesystem::remove_all(root);
+  ssb::Pipeline p(c, std::make_unique<FailingRenderer>(c.width), {root, {"test"}, "kinematic"});
+  for (const auto& sample : ssb::KinematicSource(c).Sample()) p.Push(sample);
+  reject_manifest_sync = true;
+  EXPECT_THROW(p.Wait(), std::system_error);
+  reject_manifest_sync = false;
+  const auto progress = p.Progress();
+  EXPECT_EQ(progress.at("phase"), "failed");
+  EXPECT_TRUE(progress.at("failed"));
+  EXPECT_GT(progress.at("rows_saved").get<int64_t>(), 0);
+  nlohmann::json summary;
+  std::ifstream(root / "session.json") >> summary;
+  EXPECT_EQ(summary.at("status"), "failed");
+  EXPECT_NE(summary.at("error").get<std::string>().find("fsync"), std::string::npos);
   std::filesystem::remove_all(root);
 }
 

@@ -209,7 +209,7 @@ nlohmann::json Pipeline::Progress() const {
                     : s.render_done              ? "syncing"
                     : s.input_finished           ? "draining"
                                                  : "capturing"},
-          {"failed", s.failed || !s.producer_error.empty()}};
+          {"failed", s.ended_failed || s.failed || !s.producer_error.empty()}};
 }
 
 void Pipeline::Impl::TimingLoop() {
